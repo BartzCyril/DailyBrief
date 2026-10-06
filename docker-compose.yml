@@ -1,11 +1,15 @@
 services:
+  mailpit:
+    image: axllent/mailpit:v1.27
+    profiles: ["mail"]
+    ports: ["127.0.0.1:1025:1025", "127.0.0.1:8025:8025"]
   ollama:
     image: ollama/ollama:0.12.6
     ports: ["127.0.0.1:${OLLAMA_PORT:-11434}:11434"]
     volumes: ["ollama_data:/root/.ollama"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD", "env", "OLLAMA_HOST=http://127.0.0.1:11434", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 15

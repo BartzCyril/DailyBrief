@@ -66,3 +66,52 @@ docker compose exec postgres psql -U dailybrief -d postgres -c 'CREATE DATABASE 
 `TEST_DATABASE_URL` doit se terminer par `_test`. Les tests créent et retirent
 leurs propres comptes. Les tests de scraping utilisent de vraies pages Chromium
 avec un transport contrôlé, jamais des sites publics instables.
+
+## Collecte, IA et newsletter
+
+L'heure quotidienne (`HH:mm`) et le fuseau IANA sont configurés via
+`GET/PATCH /settings/dailybrief`. Le scheduler vérifie les échéances chaque minute.
+Les heures absentes au printemps sont décalées vers l'avant ; les heures
+doubles à l'automne s'exécutent une seule fois à leur première occurrence.
+Le déclenchement manuel conserve la prochaine échéance quotidienne.
+Un verrou Redis avec renouvellement et libération conditionnelle protège chaque compte.
+
+```sh
+docker compose up -d --wait ollama
+docker compose exec -e OLLAMA_HOST=http://127.0.0.1:11434 ollama ollama pull qwen3:4b
+docker compose exec -e OLLAMA_HOST=http://127.0.0.1:11434 ollama ollama list
+# Réception locale des emails, sans destinataire externe :
+docker compose --profile mail up -d mailpit
+```
+
+`OLLAMA_MODEL` permet de changer de modèle. Le défaut `qwen3:4b` nécessite
+environ 3 Gio pour le modèle et plusieurs Gio de RAM ; le calcul CPU peut être
+lent. `OLLAMA_BASE_URL` vaut `http://ollama:11434` depuis un conteneur du même
+réseau, ou `http://127.0.0.1:11434` depuis Bun sur l'hôte.
+`GET /ai/health` distingue disponibilité, modèle absent et timeout ;
+`POST /ai/summarize/test` accepte `{title,content,url?}` et renvoie
+`{title,summary,keyPoints}`. L'IA utilise du JSON validé, des entrées nettoyées
+et tronquées à `AI_MAX_INPUT_CHARS`, un timeout et une concurrence limitée.
+Les tests mockent Ollama : aucun téléchargement de modèle n'est nécessaire pour eux.
+
+`POST /collection/run` et le scheduler appellent le même pipeline. GUID, URL
+canonique sans tracking et hash détectent les doublons. Le fingerprint déterministe
+identifie les articles connus ; les relations vers les newsletters envoyées
+déterminent ceux déjà livrés. Les échecs IA sont conservés et exclus du mail ;
+ils peuvent être retentés. Les résumés sont persistés avant l'envoi SMTP.
+Un échec SMTP laisse la newsletter `FAILED` et les articles réutilisables sans
+nouvelle génération IA. Aucun email vide n'est envoyé.
+
+SMTP se configure dans `.env`. Le destinataire provient exclusivement de
+`User.email`. Mailpit utilise les valeurs locales proposées et permet de consulter
+les messages sur le port 8025. Le template fournit HTML échappé et texte brut.
+Pour un serveur SMTP réel, utilisez vos identifiants et `SMTP_SECURE` conformément
+à sa configuration ; ne désactivez pas la vérification TLS.
+
+SMTP et PostgreSQL ne partagent pas de transaction : un crash après acceptation
+du mail peut laisser la newsletter `SENDING`. Ces articles ne sont pas renvoyés
+automatiquement. Vérifiez la livraison auprès du serveur SMTP avant de corriger
+le statut en base (`SENT` si livré, `FAILED` si non livré). Une réponse SMTP
+ambiguë exige également cette vérification. Le `Message-ID` contient l'identifiant
+de newsletter pour faciliter le diagnostic ; il ne garantit pas la déduplication
+par tous les serveurs de réception.
