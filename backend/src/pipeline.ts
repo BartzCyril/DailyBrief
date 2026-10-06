@@ -179,7 +179,15 @@ export class DailyBriefPipelineService implements CollectionRunner {
               total: pending.length,
             });
             try {
-              const content = await this.articleContent.fetch(article.url);
+              const content = await this.articleContent.fetch(article.url, (message) =>
+                report({
+                  stage: "content",
+                  status: "running",
+                  message: `${article.title} : ${message}`,
+                  completed: processed,
+                  total: pending.length,
+                }),
+              );
               article = {
                 ...article,
                 ...(await this.db.article.update({
