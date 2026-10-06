@@ -1,0 +1,6 @@
+{
+  "name": "@dailybrief/frontend", "private": true, "type": "module",
+  "scripts": { "dev": "vite --host 0.0.0.0", "build": "tsc --noEmit && vite build", "typecheck": "tsc --noEmit", "test": "vitest run" },
+  "dependencies": { "react": "19.3.0", "react-dom": "19.3.0" },
+  "devDependencies": { "vite": "8.3.3", "@vitejs/plugin-react": "latest", "typescript": "^5.9.0", "@types/react": "latest", "@types/react-dom": "latest", "vitest": "latest" }
+}
