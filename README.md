@@ -107,6 +107,23 @@ un timeout et une concurrence limitée. `AI_MAX_INPUT_CHARS` borne chaque portio
 envoyée au modèle : les articles plus longs sont découpés, résumés par portion,
 puis synthétisés. La fin du texte n'est pas supprimée silencieusement. Un échec
 d'une portion ou de la synthèse empêche la livraison d'un résumé partiel.
+Les valeurs par défaut sont `AI_MAX_INPUT_CHARS=16000` et
+`OLLAMA_TIMEOUT_MS=1800000` (30 minutes par génération, chargement du modèle compris).
+Le délai d'inactivité HTTP propre à Bun est désactivé pour ces requêtes ; le
+signal d'annulation conserve la limite configurée, y compris durant la lecture
+de la réponse.
+Un article de 10 000 caractères est donc envoyé en une seule portion. Le champ
+`summary` accepte jusqu'à 12 000 caractères ; cette limite est transmise au modèle
+dans le schéma JSON et vérifiée sur sa réponse. Une réponse trop longue est
+signalée, jamais coupée silencieusement. Une limite supérieure autorise une
+réponse plus détaillée sans imposer au modèle de la remplir.
+Le journal indique la taille de chaque portion, l'attente toutes les 15 secondes
+et la durée de chaque génération. Ces messages d'attente ne signifient pas
+qu'Ollama a déjà produit du texte. Sur une machine lente, diminuez la taille
+des portions ou augmentez le délai ; cela ne garantit pas un traitement plus rapide.
+Après mise à jour d'une installation existante, passez `OLLAMA_TIMEOUT_MS` à
+`1800000` dans votre `.env` puis redémarrez le backend : les valeurs explicites existantes
+restent prioritaires sur les nouveaux défauts.
 Les tests mockent Ollama : aucun téléchargement de modèle n'est nécessaire pour eux.
 Les résumés demandent explicitement `think: false` afin que Qwen3 fournisse
 directement le JSON final. Un contenu de raisonnement seul ne sert jamais de résumé.

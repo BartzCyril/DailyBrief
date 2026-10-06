@@ -12,7 +12,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   OLLAMA_BASE_URL: z.url().default("http://127.0.0.1:11434"),
   OLLAMA_MODEL: z.string().default("qwen3:4b"),
-  OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
+  OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(1800000),
   AI_MAX_INPUT_CHARS: z.coerce.number().int().min(100).default(16000),
   AI_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
   AI_LANGUAGE: z.string().default("français"),
