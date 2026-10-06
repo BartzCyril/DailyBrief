@@ -5,6 +5,7 @@ import { fetchRemoteText, type FetchText } from "./network";
 import { articleDate, articleUrl } from "./rss";
 import { AppError } from "./errors";
 import { ConcurrencyLimiter } from "./concurrency";
+import { createHash } from "node:crypto";
 
 export function paginationUrl(url: string, config: ScrapingConfig, page: number): string {
   const pagination = config.pagination!;
@@ -17,31 +18,38 @@ export function paginationUrl(url: string, config: ScrapingConfig, page: number)
 export function deduplicatePreviews(items: ArticlePreview[]): ArticlePreview[] {
   const seen = new Set<string>();
   return items.filter((item) => {
-    const key = item.url ?? `${item.title}:${item.description}`;
+    const key = previewKey(item);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 }
+function previewKey(item: ArticlePreview): string {
+  return item.url ?? `${item.title}:${item.description}`;
+}
 async function extract(page: Page, config: ScrapingConfig): Promise<ArticlePreview[]> {
   const entries = await page.evaluate(
     (config) =>
-      Array.from(document.querySelectorAll(config.articleSelector))
-        .slice(0, 200)
-        .map((element) => ({
-          title: element.querySelector(config.titleSelector)?.textContent?.trim() ?? "",
-          url: element.querySelector(config.linkSelector)?.getAttribute("href") ?? null,
-          description: config.descriptionSelector
-            ? (element.querySelector(config.descriptionSelector)?.textContent?.trim() ?? null)
-            : null,
-          publishedAt: config.dateSelector
-            ? (element.querySelector(config.dateSelector)?.getAttribute("datetime") ??
-              element.querySelector(config.dateSelector)?.textContent ??
-              null)
-            : null,
-        })),
+      Array.from(document.querySelectorAll(config.articleSelector)).map((element) => ({
+        title: element.querySelector(config.titleSelector)?.textContent?.trim() ?? "",
+        url: element.querySelector(config.linkSelector)?.getAttribute("href") ?? null,
+        description: config.descriptionSelector
+          ? (element.querySelector(config.descriptionSelector)?.textContent?.trim() ?? null)
+          : null,
+        publishedAt: config.dateSelector
+          ? (element.querySelector(config.dateSelector)?.getAttribute("datetime") ??
+            element.querySelector(config.dateSelector)?.textContent ??
+            null)
+          : null,
+      })),
     config,
   );
+  if (entries.length && !entries.some((item) => item.title))
+    throw new AppError(
+      422,
+      "Aucun article avec un titre trouvé dans les blocs de cette page. Vérifiez le sélecteur du titre.",
+      "INVALID_SCRAPING_EXTRACTION",
+    );
   return entries
     .filter((item) => item.title)
     .map((item) => ({
@@ -63,10 +71,13 @@ export class ScrapingService {
       const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
       let timedOut = false;
       let networkError: unknown;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        void context.close();
-      }, 45000);
+      const timer =
+        config.mode === "SCROLL"
+          ? setTimeout(() => {
+              timedOut = true;
+              void context.close();
+            }, 45000)
+          : undefined;
       try {
         // Fulfil every network request through the same DNS-pinned SSRF guard as RSS.
         await context.route("**/*", async (route) => {
@@ -98,6 +109,7 @@ export class ScrapingService {
         const page = await context.newPage();
         page.setDefaultTimeout(15000);
         const articles: ArticlePreview[] = [];
+        const warnings: string[] = [];
         if (config.mode === "SCROLL") {
           await page.goto(url, { waitUntil: "networkidle" });
           articles.push(...(await extract(page, config)));
@@ -107,23 +119,42 @@ export class ScrapingService {
             articles.push(...(await extract(page, config)));
           }
         } else {
-          for (let i = 0; i < config.pagination!.maxPages; i++) {
-            await page.goto(paginationUrl(url, config, config.pagination!.startPage + i), {
+          const seenPages = new Set<string>();
+          const seenArticles = new Set<string>();
+          for (let number = config.pagination!.startPage; ; number++) {
+            await page.goto(paginationUrl(url, config, number), {
               waitUntil: "networkidle",
             });
             const entries = await extract(page, config);
             if (!entries.length) break;
-            articles.push(...entries);
+            // Ignore ordering changes when a site repeats a page or cycles through
+            // previous pages instead of honouring the requested page number.
+            const fingerprint = createHash("sha256")
+              .update(JSON.stringify(entries.map(previewKey).sort()))
+              .digest("hex");
+            if (seenPages.has(fingerprint)) {
+              warnings.push(
+                `Pagination arrêtée à la page ${number} : cette page répète des articles d'une page déjà parcourue.`,
+              );
+              break;
+            }
+            seenPages.add(fingerprint);
+            for (const article of entries) {
+              const key = previewKey(article);
+              if (seenArticles.has(key)) continue;
+              seenArticles.add(key);
+              articles.push(article);
+            }
           }
         }
-        const result = deduplicatePreviews(articles).slice(0, 500);
+        const result = deduplicatePreviews(articles);
         if (!result.length)
           throw new AppError(
             422,
             "Aucun article trouvé. Vérifiez les sélecteurs CSS.",
             "EMPTY_SCRAPING",
           );
-        return { mode: config.mode, articles: result };
+        return { mode: config.mode, articles: result, ...(warnings.length ? { warnings } : {}) };
       } catch (error) {
         if (networkError instanceof AppError) throw networkError;
         if (error instanceof AppError) throw error;

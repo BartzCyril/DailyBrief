@@ -21,6 +21,7 @@ describe("source workflow tests", () => {
   let failAi = false;
   let privatePage = false;
   let needsBrowser = false;
+  let manyScrapingArticles = false;
   const previews: WorkflowPreview[] = [];
   const fullText =
     "Cette information détaillée provient de la page complète et ne figure pas dans la description RSS. ".repeat(
@@ -31,9 +32,16 @@ describe("source workflow tests", () => {
       feedRequests++;
       return `<rss><channel><item><title>Déjà livré</title><link>${privatePage ? "http://127.0.0.1/private" : "https://example.com/one"}</link><description>Extrait court</description></item><item><title>Nouveau</title><link>https://example.com/two</link></item><item><title>Sans lien</title></item></channel></rss>`;
     }),
-    scraping: new ScrapingService(
-      async () =>
-        `<article><h2>Article scraping</h2><a href="/scraped">Lire</a><p>Extrait court</p></article>`,
+    scraping: new ScrapingService(async (url) =>
+      manyScrapingArticles
+        ? Number(new URL(url).searchParams.get("page")) === 0
+          ? Array.from(
+              { length: 550 },
+              (_, index) =>
+                `<article><h2>Article ${index}</h2><a href="/scraped/${index}">Lire</a></article>`,
+            ).join("")
+          : "<main></main>"
+        : `<article><h2>Article scraping</h2><a href="/scraped">Lire</a><p>Extrait court</p></article>`,
     ),
     articleContent: new ArticleContentService(
       async (url) => {
@@ -117,6 +125,7 @@ describe("source workflow tests", () => {
     pageRequests = [];
     failPage = failAi = privatePage = false;
     needsBrowser = false;
+    manyScrapingArticles = false;
     previews.length = 0;
   });
   afterEach(async () => {
@@ -248,6 +257,28 @@ describe("source workflow tests", () => {
       await db.user.delete({ where: { id: other.id } });
     }
   });
+  test("shows every paginated article and summarizes an item beyond index 499 without production writes", async () => {
+    manyScrapingArticles = true;
+    await db.source.update({
+      where: { id: sourceId },
+      data: {
+        type: "SCRAPING",
+        scrapingConfig: {
+          articleSelector: "article",
+          titleSelector: "h2",
+          linkSelector: "a",
+          mode: "PAGINATE",
+          pagination: { strategy: "QUERY_PARAM", queryParam: "page", startPage: 0, maxPages: 1 },
+        },
+      },
+    });
+    const preview = await collect();
+    expect(preview.articles).toHaveLength(550);
+    expect(events(await summarize(preview, 549)).at(-1)).toMatchObject({ type: "result" });
+    expect(pageRequests).toEqual(["https://example.com/scraped/549"]);
+    expect(await db.article.count({ where: { userId } })).toBe(1);
+    expect(emails).toBe(0);
+  }, 15000);
   test("rejects expired previews, invalid indices and client-supplied replacement URLs", async () => {
     const preview = await collect();
     const path = `/sources/${sourceId}/workflow/${preview.id}/articles/0/summarize`;

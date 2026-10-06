@@ -21,11 +21,11 @@ const scroll: ScrapingConfig = {
 const paginate: ScrapingConfig = {
   ...base,
   mode: "PAGINATE",
-  pagination: { strategy: "QUERY_PARAM", queryParam: "page", maxPages: 2, startPage: 1 },
+  pagination: { strategy: "QUERY_PARAM", queryParam: "page", startPage: 1 },
 };
 const html = (id: string) =>
   `<article><h2>Article ${id}</h2><a href="/articles/${id}">Lire</a><p>Description</p><time datetime="2026-10-06">Date</time></article>`;
-test("validates both modes and rejects incomplete/unbounded configurations", () => {
+test("validates both modes and rejects incomplete configurations", () => {
   expect(scrapingSchema.safeParse(scroll).success).toBe(true);
   expect(scrapingSchema.safeParse(paginate).success).toBe(true);
   for (const input of [
@@ -36,7 +36,6 @@ test("validates both modes and rejects incomplete/unbounded configurations", () 
       ...paginate,
       pagination: {
         strategy: "URL_TEMPLATE",
-        maxPages: 2,
         startPage: 1,
         urlTemplate: "https://example.com",
       },
@@ -57,21 +56,98 @@ test("generates query and template pagination URLs", () => {
           strategy: "URL_TEMPLATE",
           urlTemplate: "https://example.com/{page}",
           startPage: 1,
-          maxPages: 2,
         },
       },
       3,
     ),
   ).toBe("https://example.com/3");
 });
-test("browser extracts and deduplicates relative links across bounded pages", async () => {
+test("ignores legacy page caps and allows page zero", () => {
+  const legacy = scrapingSchema.parse({
+    ...paginate,
+    pagination: { ...paginate.pagination, startPage: 0, maxPages: 15 },
+  });
+  expect(legacy.pagination).not.toHaveProperty("maxPages");
+  expect(paginationUrl("https://example.com/items", legacy, 0)).toBe(
+    "https://example.com/items?page=0",
+  );
+});
+test("collects more than fifteen pages until the first empty page", async () => {
+  const pages: number[] = [];
+  const service = new ScrapingService(async (url) => {
+    const number = Number(new URL(url).searchParams.get("page"));
+    pages.push(number);
+    return number <= 16 ? html(String(number)) : "<main></main>";
+  });
+  const result = await service.collect("https://fixture.example/items", paginate);
+  expect(pages).toEqual(Array.from({ length: 17 }, (_, index) => index + 1));
+  expect(result.articles).toHaveLength(16);
+  expect(result.articles.at(-1)?.title).toBe("Article 16");
+}, 30000);
+test("keeps every item on pages exceeding 200 items and a collection exceeding 500", async () => {
+  const legacy = { ...paginate, pagination: { ...paginate.pagination!, maxPages: 1 } };
+  const service = new ScrapingService(async (url) => {
+    const number = Number(new URL(url).searchParams.get("page"));
+    return number <= 2
+      ? Array.from({ length: 300 }, (_, index) => html(`${number}-${index}`)).join("")
+      : "<main></main>";
+  });
+  const result = await service.collect("https://fixture.example/items", legacy);
+  expect(result.articles).toHaveLength(600);
+  expect(result.articles.at(-1)?.title).toBe("Article 2-299");
+}, 15000);
+test("detects repeated pages even if their article order changes and reports why pagination stopped", async () => {
+  let calls = 0;
+  const service = new ScrapingService(async () => {
+    calls++;
+    return calls === 1 ? html("one") + html("two") : html("two") + html("one");
+  });
+  const result = await service.collect("https://fixture.example/items", paginate);
+  expect(calls).toBe(2);
+  expect(result.articles).toHaveLength(2);
+  expect(result.warnings?.[0]).toContain("page 2");
+}, 15000);
+test("continues across overlapping pages until empty and stops cycles of previously seen pages", async () => {
+  const pages: number[] = [];
+  const service = new ScrapingService(async (url) => {
+    const number = Number(new URL(url).searchParams.get("page"));
+    pages.push(number);
+    return number === 1
+      ? html("one") + html("two")
+      : number === 2
+        ? html("two")
+        : number === 3
+          ? html("three")
+          : html("two") + html("one");
+  });
+  const result = await service.collect("https://fixture.example/items", paginate);
+  expect(pages).toEqual([1, 2, 3, 4]);
+  expect(result.articles.map((item) => item.title)).toEqual([
+    "Article one",
+    "Article two",
+    "Article three",
+  ]);
+  expect(result.warnings).toHaveLength(1);
+}, 15000);
+test("a later page with invalid title selectors fails instead of presenting a partial collection as complete", async () => {
+  const service = new ScrapingService(async (url) =>
+    new URL(url).searchParams.get("page") === "1"
+      ? html("one")
+      : "<article><h3>Titre différent</h3><a href='/two'>Lire</a></article>",
+  );
+  await expect(service.collect("https://fixture.example/items", paginate)).rejects.toMatchObject({
+    code: "INVALID_SCRAPING_EXTRACTION",
+  });
+}, 15000);
+test("browser extracts and deduplicates relative links until an empty page", async () => {
   const requests: string[] = [];
   const service = new ScrapingService(async (url) => {
     requests.push(url);
-    return html("common") + html(new URL(url).searchParams.get("page")!);
+    const number = Number(new URL(url).searchParams.get("page"));
+    return number <= 2 ? html("common") + html(String(number)) : "<p>Fin</p>";
   });
   const result = await service.collect("https://fixture.example/items", paginate);
-  expect(requests).toHaveLength(2);
+  expect(requests).toHaveLength(3);
   expect(result.articles).toHaveLength(3);
   expect(result.articles[0]).toMatchObject({
     title: "Article common",
@@ -92,7 +168,6 @@ test("browser stops pagination on an empty page and supports URL templates", asy
       strategy: "URL_TEMPLATE",
       urlTemplate: "https://fixture.example/{page}",
       startPage: 1,
-      maxPages: 5,
     },
   });
   expect(requests).toHaveLength(2);
@@ -169,5 +244,27 @@ describe("scraping source routes", () => {
     expect(saved.status).toBe(201);
     expect(saved.body.userId).toBe(userId);
     expect(saved.body.scrapingConfig.mode).toBe("SCROLL");
+  }, 15000);
+  test("accepts and saves paginated sources without retaining a legacy page cap", async () => {
+    const legacy = {
+      ...paginate,
+      pagination: { ...paginate.pagination!, startPage: 0, maxPages: 15 },
+    };
+    const url = "https://fixture.example/paginated";
+    const preview = await agent.post("/sources/scraping/test").send({ url, config: legacy });
+    expect(preview.status).toBe(200);
+    expect(preview.body.warnings[0]).toContain("page 1");
+    const saved = await agent
+      .post("/sources")
+      .send({ url, type: "SCRAPING", scrapingConfig: legacy });
+    expect(saved.status).toBe(201);
+    expect(saved.body.scrapingConfig.pagination).toEqual({
+      strategy: "QUERY_PARAM",
+      queryParam: "page",
+      startPage: 0,
+    });
+    expect(
+      (await db.source.findUniqueOrThrow({ where: { id: saved.body.id } })).scrapingConfig,
+    ).toEqual(saved.body.scrapingConfig);
   }, 15000);
 });

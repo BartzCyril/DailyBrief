@@ -12,7 +12,6 @@ export type ScrapingDraft = {
   waitAfterScrollMs: string;
   strategy: "QUERY_PARAM" | "URL_TEMPLATE";
   startPage: string;
-  maxPages: string;
   queryParam: string;
   urlTemplate: string;
 };
@@ -27,7 +26,6 @@ export const defaultDraft: ScrapingDraft = {
   waitAfterScrollMs: "1000",
   strategy: "QUERY_PARAM",
   startPage: "1",
-  maxPages: "3",
   queryParam: "page",
   urlTemplate: "",
 };
@@ -51,7 +49,6 @@ export function buildScrapingConfig(draft: ScrapingDraft): ScrapingConfig {
           pagination: {
             strategy: draft.strategy,
             startPage: numeric(draft.startPage),
-            maxPages: numeric(draft.maxPages),
             ...(draft.strategy === "QUERY_PARAM"
               ? { queryParam: draft.queryParam }
               : { urlTemplate: draft.urlTemplate }),
@@ -113,24 +110,18 @@ export function PaginationFields({ draft, update }: Props) {
           hint="Le paramètre sera ajouté à l'URL de départ."
         />
       )}
-      <div className="grid sm:grid-cols-2 gap-4">
-        <Field
-          label="Page de départ"
-          type="number"
-          min={1}
-          max={1000}
-          value={draft.startPage}
-          onChange={(event) => update({ startPage: event.target.value })}
-        />
-        <Field
-          label="Nombre maximum de pages"
-          type="number"
-          min={1}
-          max={5}
-          value={draft.maxPages}
-          onChange={(event) => update({ maxPages: event.target.value })}
-        />
-      </div>
+      <Field
+        label="Page de départ"
+        type="number"
+        min={0}
+        value={draft.startPage}
+        onChange={(event) => update({ startPage: event.target.value })}
+        hint="Certains sites commencent à la page 0."
+      />
+      <p className="text-sm text-muted-foreground">
+        Toutes les pages sont parcourues jusqu'à une page sans article. Une page répétée arrête la
+        pagination.
+      </p>
     </div>
   );
 }
