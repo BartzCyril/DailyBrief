@@ -3,6 +3,7 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import ipaddr from "ipaddr.js";
 import { AppError } from "./errors";
+import { readRemoteResponse } from "./remote-response";
 
 export function isPublicAddress(address: string): boolean {
   try {
@@ -71,18 +72,13 @@ export const fetchRemoteText: FetchText = async (value) => {
             reject(new AppError(502, "Le site a retourné une erreur HTTP.", "UPSTREAM_ERROR"));
             return;
           }
-          let size = 0;
-          const chunks: Buffer[] = [];
-          res.on("data", (chunk: Buffer) => {
-            size += chunk.length;
-            if (size > 2 * 1024 * 1024) {
-              req.destroy(
-                new AppError(413, "Réponse distante trop volumineuse.", "RESPONSE_TOO_LARGE"),
-              );
-            } else chunks.push(chunk);
-          });
-          res.on("end", () => resolve({ text: Buffer.concat(chunks).toString("utf8") }));
-          res.on("error", reject);
+          void readRemoteResponse(res).then(
+            (text) => resolve({ text }),
+            (error: unknown) => {
+              reject(error);
+              req.destroy();
+            },
+          );
         },
       );
       const timer = setTimeout(
