@@ -17,6 +17,8 @@
     "db:generate": "bun --env-file=../.env run --cwd backend db:generate",
     "db:migrate": "bun --env-file=../.env run --cwd backend db:migrate",
     "services:up": "docker compose up -d --wait postgres redis",
-    "services:down": "docker compose down"
+    "services:down": "docker compose down",
+    "browser:install": "bun run --cwd backend playwright install chromium",
+    "browser:prepare": "bun run --cwd backend scripts/prepare-browser.ts"
   }
 }

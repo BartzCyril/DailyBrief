@@ -13,6 +13,20 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   sources Source[]
+  settings DailyBriefSettings?
+}
+model DailyBriefSettings {
+  id String @id @default(cuid())
+  userId String @unique
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collectionEnabled Boolean @default(false)
+  collectionTime String @default("07:30")
+  timezone String @default("Europe/Paris")
+  lastCollectionAt DateTime?
+  nextCollectionAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([collectionEnabled, nextCollectionAt])
 }
 enum SourceType {
   RSS

@@ -22,7 +22,7 @@ export function authRouter(db: Db, config: Config) {
     const existing = await db.user.findUnique({ where: { email: input.email } });
     if (existing) throw new AppError(409, "Impossible de créer ce compte.", "DUPLICATE");
     const passwordHash = await Bun.password.hash(input.password, { algorithm: "argon2id" });
-    const user = await db.user.create({ data: { email: input.email, passwordHash }, select: { id: true, email: true } });
+    const user = await db.user.create({ data: { email: input.email, passwordHash, settings: { create: {} } }, select: { id: true, email: true } });
     res.status(201).json(user);
   });
   // A dummy hash keeps password verification work comparable for unknown emails.
