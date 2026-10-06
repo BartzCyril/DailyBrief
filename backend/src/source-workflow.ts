@@ -88,7 +88,9 @@ export function sourceWorkflowRouter(
     let stage: "content" | "ai" = "content";
     try {
       report(stage, "running", `Téléchargement de la page complète : ${article.title}`);
-      const content = await articleContent.fetch(article.url);
+      const content = await articleContent.fetch(article.url, (message) =>
+        report("content", "running", message),
+      );
       report(stage, "completed", `Texte de l'article extrait (${content.length} caractères).`);
       stage = "ai";
       report(stage, "running", `Envoi à l'IA : ${article.title}`);

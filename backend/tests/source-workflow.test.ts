@@ -7,6 +7,7 @@ import { ArticleContentService } from "../src/article-content";
 import { RssService } from "../src/rss";
 import { ScrapingService } from "../src/scraping";
 import { AppError } from "../src/errors";
+import { ArticleBrowser } from "../src/article-browser";
 import { config, db, redis, connect, disconnect } from "./helpers";
 
 describe("source workflow tests", () => {
@@ -19,6 +20,7 @@ describe("source workflow tests", () => {
   let failPage = false;
   let failAi = false;
   let privatePage = false;
+  let needsBrowser = false;
   const previews: WorkflowPreview[] = [];
   const fullText =
     "Cette information détaillée provient de la page complète et ne figure pas dans la description RSS. ".repeat(
@@ -33,13 +35,22 @@ describe("source workflow tests", () => {
       async () =>
         `<article><h2>Article scraping</h2><a href="/scraped">Lire</a><p>Extrait court</p></article>`,
     ),
-    articleContent: new ArticleContentService(async (url) => {
-      pageRequests.push(url);
-      if (failPage) throw new AppError(502, "Page inaccessible.", "NETWORK_ERROR");
-      // Preserve the real transport guard for the malicious-link test.
-      if (url.startsWith("http://127.")) return new ArticleContentService().fetch(url);
-      return `<article><h1>Article</h1><p>${fullText}</p></article>`;
-    }),
+    articleContent: new ArticleContentService(
+      async (url) => {
+        pageRequests.push(url);
+        if (failPage) throw new AppError(502, "Page inaccessible.", "NETWORK_ERROR");
+        // Preserve the real transport guard for the malicious-link test.
+        if (url.startsWith("http://127.")) return new ArticleContentService().fetch(url);
+        if (needsBrowser)
+          return "<script>window.location.href='/rendered';</script><noscript>JS required</noscript>";
+        return `<article><h1>Article</h1><p>${fullText}</p></article>`;
+      },
+      new ArticleBrowser(async () => ({
+        status: 200,
+        cookies: [],
+        text: `<article><h1>Article</h1><p>${fullText}</p></article>`,
+      })),
+    ),
     summary: {
       summarize: async (input, observer) => {
         summaries++;
@@ -105,6 +116,7 @@ describe("source workflow tests", () => {
     feedRequests = summaries = emails = 0;
     pageRequests = [];
     failPage = failAi = privatePage = false;
+    needsBrowser = false;
     previews.length = 0;
   });
   afterEach(async () => {
@@ -187,6 +199,26 @@ describe("source workflow tests", () => {
     expect(events(await summarize(preview)).at(-1)?.type).toBe("result");
     expect(emails).toBe(0);
   });
+  test("streams browser fallback before AI and displays the rendered article without sending mail", async () => {
+    needsBrowser = true;
+    const preview = await collect();
+    const received = events(await summarize(preview));
+    expect(
+      received.some(
+        (event) =>
+          event.progress?.stage === "content" && event.progress.message.includes("Chromium"),
+      ),
+    ).toBe(true);
+    expect(received.at(-1)).toMatchObject({
+      type: "result",
+      result: { content: expect.stringContaining(fullText.trim()) },
+    });
+    expect(summaries).toBe(1);
+    expect(emails).toBe(0);
+    expect((await db.article.findFirstOrThrow({ where: { userId } })).summary).toBe(
+      "Résumé déjà enregistré",
+    );
+  }, 15000);
   test("requires session and ownership for collection and summarization", async () => {
     expect((await request(app).post(`/sources/${sourceId}/workflow`).send({})).status).toBe(401);
     const preview = await collect();

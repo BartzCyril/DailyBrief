@@ -119,10 +119,27 @@ identifie les articles connus ; les relations vers les newsletters envoyées
 déterminent ceux déjà livrés. Avant le résumé, la page liée de chaque article
 est téléchargée via le transport HTTP protégé, puis Mozilla Readability extrait
 le texte principal ; les métadonnées JSON-LD `articleBody` sont également prises
-en charge. Navigation, publicités et scripts sont retirés. Le téléchargement
-n'exécute pas les scripts des pages. Un lien manquant, une page protégée,
+en charge. Navigation, publicités et scripts sont retirés du texte envoyé à l'IA.
+Les zones de texte d'article balisées et les panneaux repliés qu'un lecteur peut
+ouvrir sont conservés. Un lien manquant, une page protégée,
 un texte de moins de 200 caractères ou de plus de 200 000 caractères produit une
 erreur explicite ; la description du flux ne sert pas de remplacement silencieux.
+
+Si le HTML ne contient pas de texte exploitable ou renvoie une redirection
+JavaScript, Chromium charge la page dans un contexte neuf, exécute ses scripts
+et conserve les cookies de cette visite avant l'extraction du HTML rendu.
+Ce recours apparaît dans le journal en direct. Le contexte et ses cookies sont
+supprimés après l'article ; aucun cookie de connexion DailyBrief n'est transmis.
+Installez le navigateur avec `bun run browser:install` (ou préparez-le avec
+`bun run browser:prepare` et `CHROMIUM_EXECUTABLE_PATH` dans le cloud).
+
+Chaque requête du navigateur passe par la validation DNS et le transport épinglé.
+Les redirections des documents ouvrent une nouvelle navigation contrôlée pour
+éviter les suivis natifs échappant à l'interception. Les adresses privées,
+WebSockets, service workers et mutations HTTP restent bloqués. Le recours
+est borné à 45 secondes, 8 navigations, 2 navigateurs simultanés et 2 Mio de HTML
+rendu. Une protection CAPTCHA ou un refus persistant du site reste une erreur
+explicite ; le navigateur ne garantit pas l'accès à toutes les pages publiques.
 
 `Article.content` contient le texte extrait après succès ; `contentFetchedAt`
 marque sa récupération et `contentError` conserve les erreurs. Le hash de
@@ -176,8 +193,9 @@ Ce parcours utilise un aperçu temporaire Redis de 30 minutes, isolé par compte
 et source. Il ne modifie pas les articles, les résumés ou l'historique du pipeline
 et n'envoie aucun email. Les erreurs restent visibles sur l'article concerné.
 L'IA et le téléchargement ont les mêmes protections et limites que le pipeline.
-Les pages nécessitant JavaScript, connexion ou abonnement ne sont pas garanties
-lisibles par cette extraction HTTP et peuvent nécessiter une autre source.
+Le recours navigateur prend en charge JavaScript et les cookies de visite.
+Les pages imposant une connexion, un abonnement ou une protection interactive
+ne sont pas garanties lisibles et peuvent nécessiter une autre source.
 
 `POST /sources/:sourceId/workflow` crée l'aperçu. Le résumé utilise
 `POST /sources/:sourceId/workflow/:workflowId/articles/:index/summarize` et un

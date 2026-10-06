@@ -43,28 +43,58 @@ export async function validateRemoteUrl(
   return { url, ...addresses[0]! };
 }
 export type FetchText = (url: string) => Promise<string>;
-export const fetchRemoteText: FetchText = async (value) => {
+export type RemotePage = {
+  url?: string;
+  text: string;
+  status: number;
+  contentType?: string;
+  location?: string;
+  cookies: string[];
+};
+export type RemotePageOptions = {
+  userAgent?: string;
+  cookie?: string;
+  accept?: string;
+  followRedirects?: boolean;
+};
+export type FetchPage = (url: string, options?: RemotePageOptions) => Promise<RemotePage>;
+export const fetchRemotePage: FetchPage = async (value, options = {}) => {
   const deadline = Date.now() + 15000;
+  let originalOrigin: string | undefined;
   for (let redirect = 0; redirect <= 4; redirect++) {
     const target = await validateRemoteUrl(value);
+    originalOrigin ??= target.url.origin;
     if (Date.now() >= deadline)
       throw new AppError(504, "Le site a mis trop de temps à répondre.", "TIMEOUT");
-    const response = await new Promise<{ text?: string; location?: string }>((resolve, reject) => {
+    const response = await new Promise<RemotePage>((resolve, reject) => {
       const send = target.url.protocol === "https:" ? httpsRequest : httpRequest;
       // Pin the validated DNS result to prevent rebinding between validation and connection.
       const req = send(
         target.url,
         {
-          headers: { "User-Agent": "DailyBrief/1.0", "Accept-Encoding": "identity" },
+          headers: {
+            "User-Agent": options.userAgent ?? "DailyBrief/1.0",
+            "Accept-Encoding": "identity",
+            ...(options.accept ? { Accept: options.accept } : {}),
+            ...(options.cookie && target.url.origin === originalOrigin
+              ? { Cookie: options.cookie }
+              : {}),
+          },
           lookup: (_host, options, callback) => {
             if (options.all) callback(null, [{ address: target.address, family: target.family }]);
             else callback(null, target.address, target.family);
           },
         },
         (res) => {
+          const metadata = {
+            url: target.url.href,
+            status: res.statusCode ?? 500,
+            contentType: res.headers["content-type"],
+            cookies: res.headers["set-cookie"] ?? [],
+          };
           if ([301, 302, 303, 307, 308].includes(res.statusCode ?? 0) && res.headers.location) {
             res.resume();
-            resolve({ location: res.headers.location });
+            resolve({ ...metadata, text: "", location: res.headers.location });
             return;
           }
           if ((res.statusCode ?? 500) >= 400) {
@@ -73,7 +103,7 @@ export const fetchRemoteText: FetchText = async (value) => {
             return;
           }
           void readRemoteResponse(res).then(
-            (text) => resolve({ text }),
+            (text) => resolve({ ...metadata, text }),
             (error: unknown) => {
               reject(error);
               req.destroy();
@@ -95,8 +125,9 @@ export const fetchRemoteText: FetchText = async (value) => {
       );
       req.end();
     });
-    if (response.text !== undefined) return response.text;
-    value = new URL(response.location!, target.url).href;
+    if (!response.location || options.followRedirects === false) return response;
+    value = new URL(response.location, target.url).href;
   }
   throw new AppError(502, "Trop de redirections.", "REDIRECT_LIMIT");
 };
+export const fetchRemoteText: FetchText = async (url) => (await fetchRemotePage(url)).text;
