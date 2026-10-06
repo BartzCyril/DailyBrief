@@ -130,6 +130,14 @@ JavaScript, Chromium charge la page dans un contexte neuf, exécute ses scripts
 et conserve les cookies de cette visite avant l'extraction du HTML rendu.
 Ce recours apparaît dans le journal en direct. Le contexte et ses cookies sont
 supprimés après l'article ; aucun cookie de connexion DailyBrief n'est transmis.
+Le navigateur parcourt la page puis attend la stabilisation du texte, dans une
+fenêtre bornée à 8 secondes, pour inclure les sections chargées après l'introduction.
+Les articles Drupal composés de blocs de paragraphes (comme sur Vie publique)
+réunissent les titres, le chapeau, l'historique et tous les corps de texte dans
+l'ordre de la page ; les cartes de contenus associés sont exclues. Le journal
+indique le nombre de blocs réunis et la taille du texte envoyé à l'IA.
+Pour retester un article déjà enregistré, utilisez « Tester le workflow de A à Z » :
+ce test recharge sa page au lieu de réutiliser le texte ou le résumé en base.
 Installez le navigateur avec `bun run browser:install` (ou préparez-le avec
 `bun run browser:prepare` et `CHROMIUM_EXECUTABLE_PATH` dans le cloud).
 

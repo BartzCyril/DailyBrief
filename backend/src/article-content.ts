@@ -8,6 +8,17 @@ import { ArticleBrowser } from "./article-browser";
 
 export const MAX_ARTICLE_CHARS = 200000;
 
+// Drupal's paragraph-based articles split the introduction and body across fields.
+const PARAGRAPH_FIELDS =
+  ".field--name-field-chapo, .field--name-field-intro-historique, .field--name-field-where-we-are-, .field--name-field-bloc-paragraphe, .field--name-field-corps-de-texte";
+
+function regionText(html: string): string {
+  const region = load(html);
+  region("br").replaceWith(" ");
+  region("p, li, h1, h2, h3, h4, tr, blockquote, div").append(" ");
+  return region.text().replace(/\s+/g, " ").trim();
+}
+
 function structuredArticleBody(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(structuredArticleBody);
   if (!value || typeof value !== "object") return [];
@@ -21,7 +32,11 @@ function structuredArticleBody(value: unknown): string[] {
   return [...bodies, ...structuredArticleBody(object["@graph"])];
 }
 
-export function extractArticleContent(html: string, url: string): string {
+export function extractArticleContent(
+  html: string,
+  url: string,
+  observer?: (message: string) => void,
+): string {
   const $ = load(html);
   const scripts = $("script").text();
   const visible = load(html);
@@ -79,12 +94,27 @@ export function extractArticleContent(html: string, url: string): string {
     'script, style, noscript, nav, footer, aside, form, dialog, [hidden], [aria-hidden="true"], [role="navigation"], [role="complementary"]',
   ).remove();
   $(
+    ".field--name-field-contenu-associe-interne, .field--name-field-contenu-associe-externe",
+  ).remove();
+  let paragraphContent = "";
+  const main = $("main, [role='main']").first();
+  const fields = main.length ? main.find(PARAGRAPH_FIELDS) : $(PARAGRAPH_FIELDS);
+  if (fields.filter(".field--name-field-bloc-paragraphe").length) {
+    const parts: string[] = [];
+    const title = $("main h1, [role='main'] h1").first().text().replace(/\s+/g, " ").trim();
+    if (title) parts.push(title);
+    // Keep the parent paragraph group once, including section headings; do not
+    // append its individual body fields again or mix in related article cards.
+    fields.each((_index, node) => {
+      if ($(node).parents(PARAGRAPH_FIELDS).length) return;
+      parts.push(regionText($(node).html() ?? ""));
+    });
+    paragraphContent = parts.filter(Boolean).join(" ");
+  }
+  $(
     "[itemprop~='articleBody'], .field--name-body, .field--name-field-texte, .article-body, article, [role='article']",
   ).each((_index, node) => {
-    const region = load($(node).html() ?? "");
-    region("br").replaceWith(" ");
-    region("p, li, h1, h2, h3, h4, tr, blockquote, div").append(" ");
-    bodies.push(region.text().replace(/\s+/g, " ").trim());
+    bodies.push(regionText($(node).html() ?? ""));
   });
   // JSDOM does not execute scripts or load external resources with these defaults.
   const dom = new JSDOM($.html(), { url });
@@ -94,21 +124,24 @@ export function extractArticleContent(html: string, url: string): string {
       maxElemsToParse: 50000,
     }).parse();
     if (article?.content) {
-      const cleaned = load(article.content);
-      cleaned("br").replaceWith(" ");
-      cleaned("p, li, h1, h2, h3, h4, tr, blockquote").append(" ");
-      bodies.push(cleaned.text().replace(/\s+/g, " ").trim());
+      bodies.push(regionText(article.content));
     }
   } catch {
-    throw new AppError(
-      422,
-      "Le contenu de cette page ne peut pas être extrait.",
-      "ARTICLE_EXTRACTION_FAILED",
-    );
+    if (paragraphContent.length < 200 && !bodies.some((body) => body.length >= 200))
+      throw new AppError(
+        422,
+        "Le contenu de cette page ne peut pas être extrait.",
+        "ARTICLE_EXTRACTION_FAILED",
+      );
   } finally {
     dom.window.close();
   }
-  const content = bodies.sort((a, b) => b.length - a.length)[0] ?? "";
+  // A known article structure is more reliable than Readability's scoring, which
+  // may retain only the introduction or include unrelated recommendation cards.
+  const content =
+    paragraphContent.length >= 200
+      ? paragraphContent
+      : (bodies.sort((a, b) => b.length - a.length)[0] ?? "");
   if (content.length < 200)
     throw new AppError(
       422,
@@ -120,6 +153,10 @@ export function extractArticleContent(html: string, url: string): string {
       413,
       "L'article dépasse la limite de 200 000 caractères ; aucun résumé partiel n'a été généré.",
       "ARTICLE_TOO_LARGE",
+    );
+  if (paragraphContent.length >= 200)
+    observer?.(
+      `Article structuré : ${fields.filter(".field--name-field-corps-de-texte").length} blocs de texte réunis avec les titres et l'introduction (${content.length} caractères).`,
     );
   return content;
 }
@@ -138,7 +175,7 @@ export class ArticleContentService {
       );
     const html = await this.fetchText(url);
     try {
-      return extractArticleContent(html, url);
+      return extractArticleContent(html, url, observer);
     } catch (error) {
       if (
         !(error instanceof AppError) ||
@@ -152,9 +189,10 @@ export class ArticleContentService {
       observer?.(
         "Chargement de la page dans Chromium pour exécuter JavaScript et conserver les cookies du site.",
       );
+      observer?.("Attente du chargement et de la stabilisation des sections de l'article.");
       const rendered = await this.browser.render(url);
       try {
-        return extractArticleContent(rendered.html, rendered.url);
+        return extractArticleContent(rendered.html, rendered.url, observer);
       } catch (renderedError) {
         if (renderedError instanceof AppError && renderedError.code === "ARTICLE_REQUIRES_BROWSER")
           throw new AppError(
