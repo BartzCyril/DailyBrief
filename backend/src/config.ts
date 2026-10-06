@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const boolean = z.enum(["true", "false"]).transform(value => value === "true");
+const boolean = z.enum(["true", "false"]).transform((value) => value === "true");
 const envSchema = z.object({
   DATABASE_URL: z.url(),
   REDIS_URL: z.url().default("redis://127.0.0.1:6379"),
@@ -24,4 +24,6 @@ const envSchema = z.object({
   SMTP_FROM: z.email().default("dailybrief@example.com"),
 });
 export type Config = z.infer<typeof envSchema>;
-export function readConfig(env: NodeJS.ProcessEnv = process.env): Config { return envSchema.parse(env); }
+export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  return envSchema.parse(env);
+}

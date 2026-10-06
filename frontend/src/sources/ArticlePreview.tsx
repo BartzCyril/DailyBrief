@@ -3,5 +3,44 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { validHttpUrl } from "./api";
 export function ArticlePreview({ preview }: { preview: SourcePreview }) {
-  return <section className="space-y-4" aria-label="Aperçu des articles"><div className="flex flex-wrap items-center gap-3"><h2 className="font-semibold text-lg">{preview.feed?.title ?? "Articles récupérés"}</h2><Badge variant="secondary">{preview.articles.length} articles</Badge>{preview.mode && <Badge variant="outline">{preview.mode}</Badge>}</div><div className="max-h-[32rem] overflow-y-auto space-y-3">{preview.articles.map((article, index) => <Card key={`${article.url}-${index}`} className="shadow-none"><CardHeader><CardTitle className="text-base">{article.title}</CardTitle>{article.publishedAt && <p className="text-xs text-muted-foreground">{new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(new Date(article.publishedAt))}</p>}</CardHeader><CardContent className="space-y-3">{article.description && <p className="text-sm text-muted-foreground">{article.description}</p>}{article.url && validHttpUrl(article.url) && <a href={article.url} target="_blank" rel="noopener noreferrer" className="text-sm text-primary underline">Lire l'article ↗</a>}</CardContent></Card>)}</div></section>;
+  return (
+    <section className="space-y-4" aria-label="Aperçu des articles">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="font-semibold text-lg">{preview.feed?.title ?? "Articles récupérés"}</h2>
+        <Badge variant="secondary">{preview.articles.length} articles</Badge>
+        {preview.mode && <Badge variant="outline">{preview.mode}</Badge>}
+      </div>
+      <div className="max-h-[32rem] overflow-y-auto space-y-3">
+        {preview.articles.map((article, index) => (
+          <Card key={`${article.url}-${index}`} className="shadow-none">
+            <CardHeader>
+              <CardTitle className="text-base">{article.title}</CardTitle>
+              {article.publishedAt && (
+                <p className="text-xs text-muted-foreground">
+                  {new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" }).format(
+                    new Date(article.publishedAt),
+                  )}
+                </p>
+              )}
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {article.description && (
+                <p className="text-sm text-muted-foreground">{article.description}</p>
+              )}
+              {article.url && validHttpUrl(article.url) && (
+                <a
+                  href={article.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary underline"
+                >
+                  Lire l'article ↗
+                </a>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
 }

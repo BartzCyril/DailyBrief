@@ -15,9 +15,22 @@ const db = createDb(config.DATABASE_URL);
 const redis = createClient({ url: config.REDIS_URL });
 redis.on("error", () => console.error("Redis connection error"));
 await Promise.all([db.$connect(), redis.connect()]);
-const runner = new DailyBriefPipelineService(db, new SourceCollector(db, new RssService(), new ScrapingService()), new UserCollectionLock(redis), new OllamaSummaryProvider(config), new NewsletterEmailService(config));
+const runner = new DailyBriefPipelineService(
+  db,
+  new SourceCollector(db, new RssService(), new ScrapingService()),
+  new UserCollectionLock(redis),
+  new OllamaSummaryProvider(config),
+  new NewsletterEmailService(config),
+);
 const stopScheduler = startScheduler(db, runner);
-const server = createApp(db, redis, config, { runner }).listen(config.PORT, () => console.info(`DailyBrief listening on port ${config.PORT}`));
-async function shutdown() { stopScheduler(); server.close(); await Promise.all([db.$disconnect(), redis.quit()]); process.exit(0); }
+const server = createApp(db, redis, config, { runner }).listen(config.PORT, () =>
+  console.info(`DailyBrief listening on port ${config.PORT}`),
+);
+async function shutdown() {
+  stopScheduler();
+  server.close();
+  await Promise.all([db.$disconnect(), redis.quit()]);
+  process.exit(0);
+}
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
