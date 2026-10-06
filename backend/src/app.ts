@@ -1,8 +1,30 @@
 import express from "express";
-export function createApp() {
+import session from "express-session";
+import { RedisStore } from "connect-redis";
+import type { Redis } from "./redis";
+import cors from "cors";
+import helmet from "helmet";
+import type { Db } from "./db";
+import type { Config } from "./config";
+import { authRouter } from "./auth";
+import { AppError, errorHandler } from "./errors";
+export function createApp(db: Db, redis: Redis, config: Config) {
   const app = express();
   app.disable("x-powered-by");
+  if (config.NODE_ENV === "production") app.set("trust proxy", 1);
+  app.use(helmet());
+  app.use(cors({ origin: config.FRONTEND_ORIGIN, credentials: true }));
+  app.use((req, _res, next) => {
+    const origin = req.get("origin");
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && origin && origin !== config.FRONTEND_ORIGIN) {
+      next(new AppError(403, "Origine non autorisée.", "INVALID_ORIGIN")); return;
+    }
+    next();
+  });
   app.use(express.json({ limit: "256kb" }));
+  app.use(session({ store: new RedisStore({ client: redis, prefix: "dailybrief:session:" }), secret: config.SESSION_SECRET, name: config.SESSION_COOKIE_NAME, resave: false, saveUninitialized: false, cookie: { httpOnly: true, sameSite: "lax", secure: config.NODE_ENV === "production", maxAge: config.SESSION_MAX_AGE } }));
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
+  app.use("/auth", authRouter(db, config));
+  app.use(errorHandler);
   return app;
 }

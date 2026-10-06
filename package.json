@@ -13,10 +13,10 @@
     "dev:frontend": "bun run --cwd frontend dev",
     "typecheck": "bun run --cwd backend typecheck && bun run --cwd frontend typecheck",
     "build": "bun run --cwd frontend build",
-    "test": "bun run --cwd backend test && bun run --cwd frontend test",
+    "test": "bun --env-file=../.env run --cwd backend test && bun run --cwd frontend test",
     "db:generate": "bun --env-file=../.env run --cwd backend db:generate",
     "db:migrate": "bun --env-file=../.env run --cwd backend db:migrate",
-    "services:up": "docker compose up -d --wait postgres",
+    "services:up": "docker compose up -d --wait postgres redis",
     "services:down": "docker compose down"
   }
 }
