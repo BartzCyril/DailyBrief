@@ -10,7 +10,8 @@ import { authRouter } from "./auth";
 import { AppError, errorHandler } from "./errors";
 import { RssService } from "./rss";
 import { sourcesRouter } from "./sources";
-export function createApp(db: Db, redis: Redis, config: Config, services: { rss?: RssService } = {}) {
+import { ScrapingService } from "./scraping";
+export function createApp(db: Db, redis: Redis, config: Config, services: { rss?: RssService; scraping?: ScrapingService } = {}) {
   const app = express();
   app.disable("x-powered-by");
   if (config.NODE_ENV === "production") app.set("trust proxy", 1);
@@ -27,7 +28,7 @@ export function createApp(db: Db, redis: Redis, config: Config, services: { rss?
   app.use(session({ store: new RedisStore({ client: redis, prefix: "dailybrief:session:" }), secret: config.SESSION_SECRET, name: config.SESSION_COOKIE_NAME, resave: false, saveUninitialized: false, cookie: { httpOnly: true, sameSite: "lax", secure: config.NODE_ENV === "production", maxAge: config.SESSION_MAX_AGE } }));
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
   app.use("/auth", authRouter(db, config));
-  app.use("/sources", sourcesRouter(db, services.rss ?? new RssService()));
+  app.use("/sources", sourcesRouter(db, services.rss ?? new RssService(), services.scraping ?? new ScrapingService()));
   app.use(errorHandler);
   return app;
 }
