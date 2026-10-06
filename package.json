@@ -1,0 +1,22 @@
+{
+  "name": "dailybrief",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "bun@1.4.2",
+  "workspaces": [
+    "backend",
+    "frontend",
+    "shared"
+  ],
+  "scripts": {
+    "dev:backend": "bun --env-file=../.env run --cwd backend dev",
+    "dev:frontend": "bun run --cwd frontend dev",
+    "typecheck": "bun run --cwd backend typecheck && bun run --cwd frontend typecheck",
+    "build": "bun run --cwd frontend build",
+    "test": "bun run --cwd backend test && bun run --cwd frontend test",
+    "db:generate": "bun --env-file=../.env run --cwd backend db:generate",
+    "db:migrate": "bun --env-file=../.env run --cwd backend db:migrate",
+    "services:up": "docker compose up -d --wait postgres",
+    "services:down": "docker compose down"
+  }
+}
