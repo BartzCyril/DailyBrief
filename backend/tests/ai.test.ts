@@ -42,6 +42,70 @@ test("returns validated summaries from the configured model", async () => {
   );
   expect(await provider.summarize(input)).toEqual(output);
   expect(JSON.parse(requestBody).model).toBe(config.OLLAMA_MODEL);
+  expect(JSON.parse(requestBody)).toMatchObject({ think: false, stream: false });
+  expect(JSON.parse(requestBody).format.required).toEqual(["title", "summary", "keyPoints"]);
+});
+test("Qwen3 receives think:false and returns its final answer rather than a thinking-only response", async () => {
+  const provider = new OllamaSummaryProvider(
+    config,
+    new OllamaClient(config, async (_url, init) => {
+      const request = JSON.parse(String(init?.body));
+      return request.think === false
+        ? response({
+            response: JSON.stringify(output),
+            thinking: "",
+            done: true,
+            done_reason: "stop",
+          })
+        : response({
+            response: "",
+            thinking: "Internal reasoning",
+            done: true,
+            done_reason: "stop",
+          });
+    }),
+  );
+  expect(await provider.summarize(input)).toEqual(output);
+});
+test("distinguishes empty, thinking-only, incomplete and malformed Ollama responses", async () => {
+  const cases = [
+    { data: { response: " \n ", done: true }, code: "EMPTY_AI_RESPONSE", message: "réponse vide" },
+    {
+      data: { response: "", thinking: "Private reasoning", done: true },
+      code: "EMPTY_AI_RESPONSE",
+      message: "raisonnement sans résumé final",
+    },
+    {
+      data: { response: "", thinking: "Reasoning", done: true, done_reason: "length" },
+      code: "INCOMPLETE_AI_RESPONSE",
+      message: "interrompu",
+    },
+    {
+      data: { response: JSON.stringify(output), done: false },
+      code: "INCOMPLETE_AI_RESPONSE",
+      message: "interrompu",
+    },
+    {
+      data: { response: JSON.stringify(output), done: true, done_reason: "length" },
+      code: "INCOMPLETE_AI_RESPONSE",
+      message: "interrompu",
+    },
+    {
+      data: { message: { content: JSON.stringify(output) } },
+      code: "INVALID_AI_RESPONSE",
+      message: "Format de réponse Ollama invalide",
+    },
+  ];
+  for (const { data, code, message } of cases) {
+    const provider = new OllamaSummaryProvider(
+      config,
+      new OllamaClient(config, async () => response(data)),
+    );
+    await expect(provider.summarize(input)).rejects.toMatchObject({
+      code,
+      message: expect.stringContaining(message),
+    });
+  }
 });
 test("rejects empty, malformed and invalid structured AI responses", async () => {
   for (const value of [
