@@ -1,3 +1,4 @@
+import { emptyDashboard } from "./fixtures";
 import { test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,6 +8,7 @@ const preview = { feed: { title: "Mon flux", url: "https://example.com/feed" }, 
 const source = { id: "s1", type: "RSS", url: "https://example.com/feed", enabled: true, scrapingConfig: null };
 let duplicate = false; let badTest = false; let saved = false;
 function mockApi() { const mock = vi.fn(async (url: string, init?: RequestInit) => {
+  if (url.endsWith("/dashboard")) return new Response(JSON.stringify(emptyDashboard));
   if (url.endsWith("/auth/me")) return new Response(JSON.stringify({ id: "u1", email: "reader@example.com" }));
   if (url.endsWith("/rss/test")) return new Response(JSON.stringify(badTest ? { message: "Flux inaccessible" } : preview), { status: badTest ? 422 : 200 });
   if (url.endsWith("/sources") && init?.method === "POST") { saved = !duplicate; return new Response(JSON.stringify(duplicate ? { message: "Cette entrée existe déjà." } : source), { status: duplicate ? 409 : 201 }); }

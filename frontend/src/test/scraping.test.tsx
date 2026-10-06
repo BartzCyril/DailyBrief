@@ -1,3 +1,4 @@
+import { emptyDashboard } from "./fixtures";
 import { test, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -6,6 +7,7 @@ import { App } from "../App";
 const preview = { mode: "SCROLL", articles: [{ title: "Article extrait", url: "https://example.com/article", description: "Détails", publishedAt: null }] };
 let saved = false; let fail = false;
 function mockApi() { const mock = vi.fn(async (url: string, init?: RequestInit) => {
+  if (url.endsWith("/dashboard")) return new Response(JSON.stringify(emptyDashboard));
   if (url.endsWith("/auth/me")) return new Response(JSON.stringify({ id: "u1", email: "reader@example.com" }));
   if (url.endsWith("/scraping/test")) return new Response(JSON.stringify(fail ? { message: "Sélecteurs invalides" } : preview), { status: fail ? 422 : 200 });
   if (url.endsWith("/sources") && init?.method === "POST") { saved = true; return new Response(JSON.stringify({ id: "s1" }), { status: 201 }); }
