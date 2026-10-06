@@ -1,0 +1,5 @@
+node_modules
+bun.lock
+dist
+backend/prisma/migrations
+frontend/src/components/ui

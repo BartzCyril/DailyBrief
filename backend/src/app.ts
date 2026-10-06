@@ -18,10 +18,30 @@ import { OllamaClient, OllamaSummaryProvider, type SummaryProvider } from "./ai"
 import { aiRouter } from "./ai-routes";
 import { DailyBriefPipelineService } from "./pipeline";
 import { NewsletterEmailService, type NewsletterSender } from "./email";
-export function createApp(db: Db, redis: Redis, config: Config, services: { rss?: RssService; scraping?: ScrapingService; runner?: CollectionRunner; summary?: SummaryProvider; email?: NewsletterSender } = {}) {
-  const rss = services.rss ?? new RssService(); const scraping = services.scraping ?? new ScrapingService();
+export function createApp(
+  db: Db,
+  redis: Redis,
+  config: Config,
+  services: {
+    rss?: RssService;
+    scraping?: ScrapingService;
+    runner?: CollectionRunner;
+    summary?: SummaryProvider;
+    email?: NewsletterSender;
+  } = {},
+) {
+  const rss = services.rss ?? new RssService();
+  const scraping = services.scraping ?? new ScrapingService();
   const summary = services.summary ?? new OllamaSummaryProvider(config);
-  const runner = services.runner ?? new DailyBriefPipelineService(db, new SourceCollector(db, rss, scraping), new UserCollectionLock(redis), summary, services.email ?? new NewsletterEmailService(config));
+  const runner =
+    services.runner ??
+    new DailyBriefPipelineService(
+      db,
+      new SourceCollector(db, rss, scraping),
+      new UserCollectionLock(redis),
+      summary,
+      services.email ?? new NewsletterEmailService(config),
+    );
   const app = express();
   app.disable("x-powered-by");
   if (config.NODE_ENV === "production") app.set("trust proxy", 1);
@@ -29,13 +49,32 @@ export function createApp(db: Db, redis: Redis, config: Config, services: { rss?
   app.use(cors({ origin: config.FRONTEND_ORIGIN, credentials: true }));
   app.use((req, _res, next) => {
     const origin = req.get("origin");
-    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && origin && origin !== config.FRONTEND_ORIGIN) {
-      next(new AppError(403, "Origine non autorisée.", "INVALID_ORIGIN")); return;
+    if (
+      !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
+      origin &&
+      origin !== config.FRONTEND_ORIGIN
+    ) {
+      next(new AppError(403, "Origine non autorisée.", "INVALID_ORIGIN"));
+      return;
     }
     next();
   });
   app.use(express.json({ limit: "256kb" }));
-  app.use(session({ store: new RedisStore({ client: redis, prefix: "dailybrief:session:" }), secret: config.SESSION_SECRET, name: config.SESSION_COOKIE_NAME, resave: false, saveUninitialized: false, cookie: { httpOnly: true, sameSite: "lax", secure: config.NODE_ENV === "production", maxAge: config.SESSION_MAX_AGE } }));
+  app.use(
+    session({
+      store: new RedisStore({ client: redis, prefix: "dailybrief:session:" }),
+      secret: config.SESSION_SECRET,
+      name: config.SESSION_COOKIE_NAME,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: config.NODE_ENV === "production",
+        maxAge: config.SESSION_MAX_AGE,
+      },
+    }),
+  );
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
   app.use("/auth", authRouter(db, config));
   app.use("/sources", sourcesRouter(db, rss, scraping));

@@ -1,0 +1,48 @@
+name: Validate DailyBrief
+on:
+  push:
+    branches: [main, "version/**", "feature-*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: dailybrief
+          POSTGRES_PASSWORD: dailybrief
+          POSTGRES_DB: dailybrief_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U dailybrief -d dailybrief_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dailybrief:dailybrief@127.0.0.1:5432/dailybrief_test
+      TEST_DATABASE_URL: postgresql://dailybrief:dailybrief@127.0.0.1:5432/dailybrief_test
+      REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Prepare isolated test configuration
+        run: |
+          cp .env.example .env
+          node -e 'require("node:fs").appendFileSync(process.env.GITHUB_ENV, "SESSION_SECRET=" + require("node:crypto").randomBytes(32).toString("hex") + "\n")'
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd backend playwright install --with-deps chromium
+      - run: bun run db:generate
+      - run: bun run format:check
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
+      - run: bun run test:e2e

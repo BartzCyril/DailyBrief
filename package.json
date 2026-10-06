@@ -19,6 +19,13 @@
     "services:up": "docker compose up -d --wait postgres redis",
     "services:down": "docker compose down",
     "browser:install": "bun run --cwd backend playwright install chromium",
-    "browser:prepare": "bun run --cwd backend scripts/prepare-browser.ts"
+    "browser:prepare": "bun run --cwd backend scripts/prepare-browser.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:e2e": "bun --env-file=../.env run --cwd backend scripts/prepare-test-db.ts && bun --env-file=../.env run --cwd backend scripts/test-e2e.ts",
+    "env:prepare": "bun run --cwd backend scripts/prepare-local-env.ts"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.9"
   }
 }

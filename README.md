@@ -4,10 +4,12 @@ Veille quotidienne personnelle, en TypeScript strict. Bun 1.4.2, Express 5,
 React 19.3, Vite 8, Prisma 6 et PostgreSQL 17. Docker avec Compose est requis.
 
 ```sh
-git clone https://github.com/BartzCyril/DailyBrief.git
+git clone -b version/1.0.0 https://github.com/BartzCyril/DailyBrief.git
 cd DailyBrief
 cp .env.example .env
 bun install --frozen-lockfile
+bun run env:prepare
+bun run --cwd backend playwright install --with-deps chromium
 bun run services:up
 bun run db:generate
 bun run db:migrate
@@ -57,13 +59,9 @@ Le moteur JS et l'adaptateur pg évitent les téléchargements natifs dans le cl
 Pour produire une nouvelle migration, utilisez `prisma migrate diff` entre les
 schémas et conservez le SQL dans `backend/prisma/migrations/<timestamp>_<nom>/migration.sql`.
 
-Créez une base dédiée aux tests avant `bun run test` :
-
-```sh
-docker compose exec postgres psql -U dailybrief -d postgres -c 'CREATE DATABASE dailybrief_test'
-```
-
-`TEST_DATABASE_URL` doit se terminer par `_test`. Les tests créent et retirent
+`bun run test` crée la base dédiée si elle n'existe pas, puis applique les migrations.
+`TEST_DATABASE_URL` doit se terminer par `_test` ; son compte doit pouvoir créer
+cette base de développement. Les tests créent et retirent
 leurs propres comptes. Les tests de scraping utilisent de vraies pages Chromium
 avec un transport contrôlé, jamais des sites publics instables.
 
@@ -115,3 +113,32 @@ le statut en base (`SENT` si livré, `FAILED` si non livré). Une réponse SMTP
 ambiguë exige également cette vérification. Le `Message-ID` contient l'identifiant
 de newsletter pour faciliter le diagnostic ; il ne garantit pas la déduplication
 par tous les serveurs de réception.
+
+## Interface et validation
+
+Les composants génériques viennent de **shadcn/ui** (style new-york, Tailwind 4,
+Radix). Ajoutez des composants via la configuration `frontend/components.json` ;
+réutilisez `frontend/src/components/ui` et gardez les compositions métier dans
+leurs dossiers. Les pages sont chargées à la demande. Les cookies sont transmis
+avec chaque appel API ; aucun token n'est conservé dans le stockage du navigateur.
+
+```sh
+bun run format:check
+bun run typecheck
+bun run test
+bun run build
+bun run test:e2e
+```
+
+Le test navigateur parcourt inscription, connexion, ajout RSS, scraping Chromium,
+réglages, collecte, prévention d'un second envoi, affichage mobile et déconnexion.
+Il utilise PostgreSQL/Redis réels et des transports contrôlés pour les sites,
+l'IA et Nodemailer. Il n'envoie aucun email externe. Les tests unitaires vérifient
+aussi les erreurs, l'isolation des utilisateurs, les verrous, les changements
+d'heure et les nouvelles tentatives SMTP. La CI exécute ces mêmes vérifications.
+
+Dans le cloud, autorisez `registry.ollama.ai` et les hôtes de téléchargement
+retournés par le registre pour télécharger un modèle. Le navigateur de secours
+peut être préparé depuis npm lorsque le CDN Playwright est inaccessible.
+Le fonctionnement avec un vrai modèle et un serveur SMTP réel doit être vérifié
+avec vos paramètres ; les transports de test ne constituent pas cette validation.
