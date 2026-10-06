@@ -25,15 +25,19 @@ const source = {
 let duplicate = false;
 let badTest = false;
 let saved = false;
+let warnings: string[] = [];
 function mockApi() {
   const mock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/dashboard")) return new Response(JSON.stringify(emptyDashboard));
     if (url.endsWith("/auth/me"))
       return new Response(JSON.stringify({ id: "u1", email: "reader@example.com" }));
     if (url.endsWith("/rss/test"))
-      return new Response(JSON.stringify(badTest ? { message: "Flux inaccessible" } : preview), {
-        status: badTest ? 422 : 200,
-      });
+      return new Response(
+        JSON.stringify(badTest ? { message: "Flux inaccessible" } : { ...preview, warnings }),
+        {
+          status: badTest ? 422 : 200,
+        },
+      );
     if (url.endsWith("/sources") && init?.method === "POST") {
       saved = !duplicate;
       return new Response(
@@ -58,6 +62,7 @@ beforeEach(() => {
   duplicate = false;
   badTest = false;
   saved = false;
+  warnings = [];
   mockApi();
 });
 test("opens the RSS form from the authenticated dashboard", async () => {
@@ -98,6 +103,18 @@ test("saves the tested URL without userId and refreshes the list", async () => {
     (call) => call[0] === "/api/sources" && call[1]?.method === "POST",
   );
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({ url: source.url, type: "RSS" });
+});
+test("shows normalization warnings without blocking a usable RSS preview", async () => {
+  warnings = ["Les esperluettes et entités HTML non échappées ont été normalisées."];
+  mount();
+  await userEvent.type(await screen.findByLabelText("URL du flux RSS"), source.url);
+  await userEvent.click(screen.getByRole("button", { name: "Tester" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(warnings[0]!);
+  expect(screen.getByText("Un article")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Enregistrer le flux" })).toBeEnabled();
+  await userEvent.type(screen.getByLabelText("URL du flux RSS"), "?changed=1");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Enregistrer le flux" })).toBeDisabled();
 });
 test("shows test errors and duplicate errors", async () => {
   mount();

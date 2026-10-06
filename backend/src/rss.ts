@@ -1,8 +1,9 @@
-import { XMLParser, XMLValidator } from "fast-xml-parser";
+import { XMLParser } from "fast-xml-parser";
 import { load } from "cheerio";
 import type { ArticlePreview, SourcePreview } from "@dailybrief/shared";
 import { fetchRemoteText, type FetchText } from "./network";
 import { AppError } from "./errors";
+import { prepareFeedXml } from "./feed-xml";
 
 export function plainText(html: string): string {
   const $ = load(html);
@@ -16,6 +17,7 @@ function list(value: unknown): unknown[] {
   return Array.isArray(value) ? value : value == null ? [] : [value];
 }
 function text(value: unknown): string {
+  if (Array.isArray(value)) return value.map(text).find((item) => item.trim()) ?? "";
   if (typeof value === "string" || typeof value === "number") return String(value);
   return String(record(value)["#text"] ?? "");
 }
@@ -34,11 +36,10 @@ export function articleDate(value: string): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 export function parseRss(xml: string, url: string): SourcePreview {
-  if (/<!DOCTYPE|<!ENTITY/i.test(xml) || XMLValidator.validate(xml) !== true)
-    throw new AppError(422, "XML invalide.", "INVALID_FEED");
+  const prepared = prepareFeedXml(xml);
   const root = record(
     new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false }).parse(
-      xml,
+      prepared.xml,
     ),
   );
   const rss = record(root.rss);
@@ -53,7 +54,10 @@ export function parseRss(xml: string, url: string): SourcePreview {
       const link =
         atomLinks.find((link) => link["@_rel"] === "alternate") ??
         atomLinks.find((link) => !link["@_rel"]);
-      const rawLink = typeof entry.link === "string" ? entry.link : text(link?.["@_href"]);
+      const rssLink = list(entry.link)
+        .map(text)
+        .find((item) => item.trim());
+      const rawLink = rssLink ?? text(link?.["@_href"]);
       const description = plainText(text(entry.description ?? entry.summary));
       const content = plainText(
         text(entry.encoded ?? entry.content ?? entry.description ?? entry.summary),
@@ -61,14 +65,26 @@ export function parseRss(xml: string, url: string): SourcePreview {
       return {
         title: plainText(text(entry.title)) || "Sans titre",
         url: rawLink ? articleUrl(rawLink, url) : null,
-        publishedAt: articleDate(text(entry.pubDate ?? entry.published ?? entry.updated)),
+        publishedAt: articleDate(
+          text(
+            entry.pubDate ??
+              entry.published ??
+              entry.updated ??
+              record(record(entry.date).time)["@_datetime"] ??
+              entry.date,
+          ),
+        ),
         description: description || null,
         content: content || null,
         guid: text(entry.guid ?? entry.id) || null,
       };
     });
   if (!articles.length) throw new AppError(422, "Le flux ne contient aucun article.", "EMPTY_FEED");
-  return { feed: { title: plainText(text(feed.title)) || "Flux RSS", url }, articles };
+  return {
+    feed: { title: plainText(text(feed.title)) || "Flux RSS", url },
+    articles,
+    ...(prepared.warnings.length ? { warnings: prepared.warnings } : {}),
+  };
 }
 export class RssService {
   constructor(private fetchText: FetchText = fetchRemoteText) {}
