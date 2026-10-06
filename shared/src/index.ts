@@ -58,4 +58,24 @@ export type RunResult = {
   newArticles: number;
   articlesSummarized: number;
   emailSent: boolean;
+  newsletterId?: string;
+  failure?: CollectionFailure;
 };
+export type CollectionStage = "collection" | "source" | "storage" | "ai" | "newsletter" | "email";
+export type CollectionFailure = {
+  stage: CollectionStage;
+  code: string;
+  message: string;
+};
+export type CollectionProgress = {
+  stage: CollectionStage;
+  status: "running" | "completed" | "failed" | "skipped";
+  message: string;
+  at: string;
+  completed?: number;
+  total?: number;
+};
+export type CollectionEvent =
+  | { type: "progress"; progress: CollectionProgress }
+  | { type: "result"; result: RunResult }
+  | { type: "error"; message: string; code: string };

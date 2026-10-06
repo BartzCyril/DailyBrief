@@ -26,6 +26,10 @@ const db = createDb(url);
 const redis = createRedis(config.REDIS_URL);
 await redis.connect();
 const messages: NewsletterMessage[] = [];
+let releaseSummary = () => {};
+const summaryGate = new Promise<void>((resolve) => {
+  releaseSummary = resolve;
+});
 const sender = new NewsletterEmailService(
   config,
   nodemailer.createTransport({ jsonTransport: true }),
@@ -40,11 +44,14 @@ const app = createApp(db, redis, config, {
       '<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article>',
   ),
   summary: {
-    summarize: async (input) => ({
-      title: input.title,
-      summary: input.content,
-      keyPoints: ["Point clé de test"],
-    }),
+    summarize: async (input) => {
+      await summaryGate;
+      return {
+        title: input.title,
+        summary: input.content,
+        keyPoints: ["Point clé de test"],
+      };
+    },
   },
   email: {
     send: async (message) => {
@@ -116,13 +123,29 @@ try {
   await page.getByRole("button", { name: "Enregistrer les réglages" }).click();
   await page.getByText("Réglages enregistrés.").waitFor();
   await page.getByRole("button", { name: "Récupérer maintenant" }).click();
+  await page.getByText("Envoi à l'IA : Article RSS", { exact: true }).waitFor();
+  assert.equal(messages.length, 0, "Live AI progress must be visible before SMTP runs");
+  assert(await page.getByRole("button", { name: "Collecte en cours…" }).isDisabled());
+  await page.screenshot({ path: "/tmp/dailybrief-collection-live.png", fullPage: true });
+  releaseSummary();
   await page.getByText("Votre newsletter a été envoyée.").waitFor();
+  await page
+    .getByRole("log", { name: "Étapes de la collecte" })
+    .getByText("Newsletter acceptée par le serveur mail.")
+    .waitFor();
   assert.equal(messages.length, 1);
   assert.equal(messages[0]?.to, email);
   assert(messages[0]?.text.includes("Article RSS"));
   assert(messages[0]?.text.includes("Article scraping"));
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "Live journal must fit mobile viewport",
+  );
+  await page.screenshot({ path: "/tmp/dailybrief-collection-mobile.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "Récupérer maintenant" }).click();
-  await page.getByText("Aucun nouvel article à envoyer.").waitFor();
+  await page.getByRole("status").filter({ hasText: "Aucun nouvel article à envoyer." }).waitFor();
   assert.equal(messages.length, 1);
   const user = await db.user.findUniqueOrThrow({ where: { email } });
   assert.equal(await db.newsletter.count({ where: { userId: user.id, status: "SENT" } }), 1);
@@ -137,9 +160,10 @@ try {
   await page.waitForURL("**/login");
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, RSS, browser scraping, settings, newsletter, idempotent retry, mobile layout, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: register, login, RSS, browser scraping, settings, live collection through proxy before AI finishes, newsletter, idempotent retry, mobile layout, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
+  releaseSummary();
   await browser.close();
   frontend.kill("SIGTERM");
   await new Promise<void>((resolve) => server.close(() => resolve()));

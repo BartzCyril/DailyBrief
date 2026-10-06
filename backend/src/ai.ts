@@ -47,7 +47,11 @@ export class OllamaClient {
         },
       );
       if (response.status === 404)
-        throw new AppError(503, "Le modèle IA n'est pas installé.", "MODEL_MISSING");
+        throw new AppError(
+          503,
+          `Le modèle IA ${this.config.OLLAMA_MODEL} n'est pas installé. Installez-le dans Ollama sur la machine du backend.`,
+          "MODEL_MISSING",
+        );
       if (!response.ok)
         throw new AppError(503, "Le service IA est indisponible.", "AI_UNAVAILABLE");
       const content = await response.text();
@@ -65,7 +69,11 @@ export class OllamaClient {
         (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name))
       )
         throw new AppError(504, "Le résumé IA a dépassé le délai autorisé.", "AI_TIMEOUT");
-      throw new AppError(503, "Le service IA est indisponible.", "AI_UNAVAILABLE");
+      throw new AppError(
+        503,
+        "Le service IA est indisponible. Vérifiez qu'Ollama est démarré et accessible depuis le backend.",
+        "AI_UNAVAILABLE",
+      );
     }
   }
   async health(): Promise<"ok" | "model_missing" | "unavailable" | "timeout"> {
