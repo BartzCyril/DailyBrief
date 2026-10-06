@@ -42,6 +42,8 @@ describe("collection settings, source isolation and Redis lock", () => {
   let otherId = "";
   const rss = new RssService(async (url) => {
     if (url.endsWith("broken")) throw new Error("Source failure");
+    if (url.endsWith("normalize"))
+      return "<rss><channel><item><title>Lois & budgets</title><link>https://example.com/normalized-item</link></item></channel></rss>";
     return "<rss><channel><item><title>Test</title><link>https://example.com/item</link></item></channel></rss>";
   });
   const collector = new SourceCollector(db, rss, new ScrapingService());
@@ -101,6 +103,22 @@ describe("collection settings, source isolation and Redis lock", () => {
     expect(sources).toHaveLength(2);
     expect(sources.filter((source) => source.success)).toHaveLength(1);
     expect(sources.flatMap((source) => source.articles)).toHaveLength(1);
+  });
+  test("keeps recovered sources successful and streams normalization notices", async () => {
+    const source = await db.source.create({
+      data: { userId, url: "https://example.com/normalize", type: "RSS" },
+    });
+    const messages: string[] = [];
+    try {
+      const result = await collector.collect(userId, (event) => messages.push(event.message));
+      expect(result.find((item) => item.sourceId === source.id)).toMatchObject({
+        success: true,
+        warnings: [expect.stringContaining("normalisées")],
+      });
+      expect(messages.some((message) => message.includes("normalisées"))).toBe(true);
+    } finally {
+      await db.source.delete({ where: { id: source.id } });
+    }
   });
   test("Redis prevents concurrent work and releases only its own token", async () => {
     const key = `dailybrief:collection:user:${userId}`;

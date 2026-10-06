@@ -40,6 +40,15 @@ chiffre. Les routes `POST /auth/register`, `/auth/login`, `/auth/logout` et
 `{url, config}`. `POST /sources` accepte `RSS` ou `SCRAPING` avec `scrapingConfig`.
 `GET /sources` liste les sources du compte ; `PATCH /sources/:id` accepte `{enabled}`.
 
+Le lecteur RSS/Atom normalise les espaces et BOM avant la déclaration XML ainsi
+que les esperluettes et entités HTML non échappées. Les corrections apparaissent
+dans l'aperçu du flux et le journal de collecte. Les liens RSS doublés par un
+champ Dublin Core (`dc:link`) restent utilisables, et les descriptions/dates
+Dublin Core sont prises en charge. Les balises mal fermées et les documents
+tronqués restent refusés avec une ligne/colonne de diagnostic. Une page HTML
+renvoyée à la place du flux a un message distinct. Les déclarations DTD et
+d'entités XML sont refusées ; les CDATA et commentaires restent inchangés.
+
 Les requêtes RSS et Playwright refusent les adresses privées (y compris IPv6),
 épinglent les résultats DNS, contrôlent les redirections et limitent les réponses
 à 2 Mio. Playwright bloque WebSockets, service workers et mutations HTTP. Le

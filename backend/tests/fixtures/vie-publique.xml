@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0" xml:base="https://www.vie-publique.fr/">
+  <channel>
+    <title>vie-publique.fr - Panorama des lois</title>
+    <link>https://www.vie-publique.fr/lois-feeds.xml</link>
+    <description>vie-publique.fr - au coeur du débat public</description>
+    <language>fr</language>
+    <item>
+      <title>Projet de loi de finances pour 2027</title>
+      <link>https://www.vie-publique.fr/loi/304797-budget-2027-projet-de-loi-de-finances-plf?egn-publisher=dila_vp&amp;egn-name=informer_rss_lois</link>
+      <dc:date><time datetime="2026-10-02T14:00:12Z" class="datetime">2026-10-02</time></dc:date>
+      <pubDate>Fri, 02 Oct 2026 00:00:00 +0200</pubDate>
+      <dc:subject>Budget de l&amp;#039;État, Dette publique, Impôt</dc:subject>
+      <dc:description>Maîtrise des dépenses de l’État hors Défense, plafond de l'abattement fiscal de 10% sur les retraites abaissé, nouveau prêt à taux zéro natalité, mise à contribution des grandes entreprises... Que contient le projet de loi de finances (PLF) qui entend contenir le déficit public à 5% du PIB en 2027&amp;nbsp;? </dc:description>
+      <dc:language/>
+      <dc:creator/>
+      <dc:publisher>Direction de l'information légale et administrative</dc:publisher>
+      <dc:type>Projet de loi</dc:type>
+      <dc:identifier>304797</dc:identifier>
+      <dc:link>https://www.vie-publique.fr/loi/304797-budget-2027-projet-de-loi-de-finances-plf?egn-publisher=dila_vp&amp;egn-name=informer_rss_lois</dc:link>
+      <guid isPermaLink="true">https://www.vie-publique.fr/loi/304797-budget-2027-projet-de-loi-de-finances-plf?egn-publisher=dila_vp&amp;egn-name=informer_rss_lois</guid>
+    </item>
+    <item>
+      <title>Projet de loi portant transposition de la directive européenne du 10 mai 2023 relative à l'égalité des rémunérations entre les femmes et les hommes par la transparence des rémunérations <br/>
+      </title>
+      <link>https://www.vie-publique.fr/loi/304502-transposition-directive-transparence-des-salaires-projet-de-loi?egn-publisher=dila_vp&amp;egn-name=informer_rss_lois</link>
+      <dc:date><time datetime="2026-09-10T16:41:48Z" class="datetime">2026-09-10</time></dc:date>
+      <pubDate>Thu, 10 Sep 2026 00:00:00 +0200</pubDate>
+      <dc:description>Le projet de loi vient transposer, dans le droit français, la directive européenne du 10 mai 2023 sur la transparence des salaires. Le texte vise à renforcer la transparence pour identifier et corriger les inégalités salariales entre les femmes et les hommes pour un travail égal. Le secteur privé et la fonction publique sont concernés.</dc:description>
+      <dc:link>https://www.vie-publique.fr/loi/304502-transposition-directive-transparence-des-salaires-projet-de-loi?egn-publisher=dila_vp&amp;egn-name=informer_rss_lois</dc:link>
+      <guid isPermaLink="true">https://www.vie-publique.fr/loi/304502-transposition-directive-transparence-des-salaires-projet-de-loi?egn-publisher=dila_vp&amp;egn-name=informer_rss_lois</guid>
+    </item>
+  </channel>
+</rss>

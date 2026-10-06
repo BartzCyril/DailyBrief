@@ -13,6 +13,7 @@ export type SourceResult = {
   articles: CollectedArticle[];
   durationMs: number;
   error?: string;
+  warnings?: string[];
 };
 export class SourceCollector {
   constructor(
@@ -46,7 +47,14 @@ export class SourceCollector {
           success: true,
           durationMs: Date.now() - start,
           articles: preview.articles.map((article) => ({ ...article, sourceId: source.id })),
+          ...(preview.warnings?.length ? { warnings: preview.warnings } : {}),
         });
+        for (const warning of preview.warnings ?? [])
+          reportProgress(observer, {
+            stage: "source",
+            status: "completed",
+            message: `${label} : ${warning}`,
+          });
         reportProgress(observer, {
           stage: "source",
           status: "completed",

@@ -34,6 +34,7 @@ export type SourcePreview = {
   feed?: { title: string; url: string };
   mode?: string;
   articles: ArticlePreview[];
+  warnings?: string[];
 };
 export type Dashboard = {
   sources: { total: number; rss: number; scraping: number; enabled: number };
