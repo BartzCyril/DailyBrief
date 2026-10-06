@@ -59,6 +59,8 @@ model Article {
   canonicalUrl String?
   guid String?
   content String?
+  contentFetchedAt DateTime?
+  contentError String?
   description String?
   publishedAt DateTime?
   contentHash String

@@ -102,8 +102,11 @@ lent. `OLLAMA_BASE_URL` vaut `http://ollama:11434` depuis un conteneur du même
 réseau, ou `http://127.0.0.1:11434` depuis Bun sur l'hôte.
 `GET /ai/health` distingue disponibilité, modèle absent et timeout ;
 `POST /ai/summarize/test` accepte `{title,content,url?}` et renvoie
-`{title,summary,keyPoints}`. L'IA utilise du JSON validé, des entrées nettoyées
-et tronquées à `AI_MAX_INPUT_CHARS`, un timeout et une concurrence limitée.
+`{title,summary,keyPoints}`. L'IA utilise du JSON validé, des entrées nettoyées,
+un timeout et une concurrence limitée. `AI_MAX_INPUT_CHARS` borne chaque portion
+envoyée au modèle : les articles plus longs sont découpés, résumés par portion,
+puis synthétisés. La fin du texte n'est pas supprimée silencieusement. Un échec
+d'une portion ou de la synthèse empêche la livraison d'un résumé partiel.
 Les tests mockent Ollama : aucun téléchargement de modèle n'est nécessaire pour eux.
 Les résumés demandent explicitement `think: false` afin que Qwen3 fournisse
 directement le JSON final. Un contenu de raisonnement seul ne sert jamais de résumé.
@@ -113,14 +116,37 @@ signalées séparément dans le journal de collecte ; les articles restent rées
 `POST /collection/run` et le scheduler appellent le même pipeline. GUID, URL
 canonique sans tracking et hash détectent les doublons. Le fingerprint déterministe
 identifie les articles connus ; les relations vers les newsletters envoyées
-déterminent ceux déjà livrés. Les échecs IA sont conservés et exclus du mail ;
+déterminent ceux déjà livrés. Avant le résumé, la page liée de chaque article
+est téléchargée via le transport HTTP protégé, puis Mozilla Readability extrait
+le texte principal ; les métadonnées JSON-LD `articleBody` sont également prises
+en charge. Navigation, publicités et scripts sont retirés. Le téléchargement
+n'exécute pas les scripts des pages. Un lien manquant, une page protégée,
+un texte de moins de 200 caractères ou de plus de 200 000 caractères produit une
+erreur explicite ; la description du flux ne sert pas de remplacement silencieux.
+
+`Article.content` contient le texte extrait après succès ; `contentFetchedAt`
+marque sa récupération et `contentError` conserve les erreurs. Le hash de
+déduplication reste celui de l'entrée collectée pour conserver son identité.
+Le texte est réutilisé après une panne IA ou SMTP. Les articles déjà envoyés
+restent exclus. Les anciens résumés d'articles non livrés dont le texte complet
+n'a pas encore été récupéré sont régénérés à partir de leur page.
+Appliquez la migration et régénérez le client après mise à jour :
+
+```sh
+bun install --frozen-lockfile
+bun run db:generate
+bun run db:migrate
+```
+
+Les échecs de téléchargement et les échecs IA sont conservés et exclus du mail ;
 ils peuvent être retentés. Les résumés sont persistés avant l'envoi SMTP.
 Un échec SMTP laisse la newsletter `FAILED` et les articles réutilisables sans
 nouvelle génération IA. Aucun email vide n'est envoyé.
 
 Le bouton « Récupérer maintenant » affiche un journal en direct : récupération de
-chaque source, nombre d'articles, sauvegarde et doublons, titre de chaque article
-envoyé à Ollama et résultat du résumé, préparation de la newsletter et envoi SMTP.
+chaque source, nombre d'articles, sauvegarde et doublons, téléchargement de la
+page de chaque article et nombre de caractères extraits, portions envoyées à
+Ollama et résultat du résumé, préparation de la newsletter et envoi SMTP.
 Les erreurs identifient l'étape qui échoue, notamment l'absence d'Ollama ou du
 modèle configuré. Les URLs des sources sont affichées par hôte pour préserver les
 paramètres privés. Une panne globale d'Ollama suspend les résumés restants ; les
@@ -134,6 +160,30 @@ sans mise en tampon (`X-Accel-Buffering: no`). Fermer la page interrompt le suiv
 mais la collecte continue côté serveur ; aucune relance automatique n'est faite.
 Le journal est visible pendant la session de la page. Le bilan et les erreurs
 restent enregistrés dans l'historique serveur.
+
+### Tester une source de A à Z
+
+Dans la liste des sources, « Tester le workflow de A à Z » ouvre une liste
+fraîche des articles RSS ou scraping, y compris ceux déjà résumés ou livrés.
+Les sources désactivées peuvent aussi être testées. Tous les résultats du
+collecteur sont affichés, dans sa limite de 500 articles et ses bornes de
+pagination/scroll. « Faire le résumé avec l'IA » télécharge à nouveau la page
+de l'article, affiche les étapes en direct, puis son titre IA, son résumé,
+ses points clés et le texte extrait consultable. Chaque résumé peut être
+relancé ; « Récupérer à nouveau les articles » recharge la source.
+
+Ce parcours utilise un aperçu temporaire Redis de 30 minutes, isolé par compte
+et source. Il ne modifie pas les articles, les résumés ou l'historique du pipeline
+et n'envoie aucun email. Les erreurs restent visibles sur l'article concerné.
+L'IA et le téléchargement ont les mêmes protections et limites que le pipeline.
+Les pages nécessitant JavaScript, connexion ou abonnement ne sont pas garanties
+lisibles par cette extraction HTTP et peuvent nécessiter une autre source.
+
+`POST /sources/:sourceId/workflow` crée l'aperçu. Le résumé utilise
+`POST /sources/:sourceId/workflow/:workflowId/articles/:index/summarize` et un
+flux NDJSON de progression/résultat. Les deux endpoints exigent une session
+et la propriété de la source ; le client ne peut pas remplacer l'URL sélectionnée
+dans l'aperçu. Plusieurs onglets peuvent conserver leurs aperçus indépendants.
 
 SMTP se configure dans `.env`. Le destinataire provient exclusivement de
 `User.email`. Mailpit utilise les valeurs locales proposées et permet de consulter

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@dailybrief/shared": "workspace:*",
+    "@mozilla/readability": "^0.6.0",
     "@prisma/adapter-pg": "6.19.2",
     "@prisma/client": "6.19.2",
     "cheerio": "^1.2.0",
@@ -24,6 +25,7 @@
     "fast-xml-parser": "^5.11.2",
     "helmet": "^8.3.0",
     "ipaddr.js": "^2.5.0",
+    "jsdom": "^30.1.2",
     "luxon": "^3.7.2",
     "nodemailer": "^10.0.15",
     "pg": "^8.23.1",
@@ -37,6 +39,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.0",
     "@types/express-session": "^1.19.0",
+    "@types/jsdom": "^30.0.0",
     "@types/luxon": "^3.7.6",
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",

@@ -6,6 +6,7 @@ import { nextCollection, settingsSchema } from "./schedule";
 import { getSettings, type CollectionRunner } from "./collection";
 import type { CollectionEvent } from "@dailybrief/shared";
 import { AppError } from "./errors";
+import { startEventStream } from "./event-stream";
 export function settingsRouter(db: Db, runner: CollectionRunner) {
   const router = Router();
   router.use(requireAuth);
@@ -60,23 +61,7 @@ export function settingsRouter(db: Db, runner: CollectionRunner) {
       res.json(await runner.run(req.session.userId!));
       return;
     }
-    res.status(200).set({
-      "Content-Type": "application/x-ndjson; charset=utf-8",
-      "Cache-Control": "no-cache, no-store, no-transform",
-      "X-Accel-Buffering": "no",
-    });
-    res.flushHeaders();
-    let connected = true;
-    res.on("close", () => {
-      connected = false;
-    });
-    const send = (event: CollectionEvent) => {
-      if (connected && !res.destroyed) res.write(`${JSON.stringify(event)}\n`);
-    };
-    const heartbeat = setInterval(() => {
-      if (connected && !res.destroyed) res.write("\n");
-    }, 15000);
-    heartbeat.unref();
+    const { send, close } = startEventStream<CollectionEvent>(res);
     try {
       const result = await runner.run(req.session.userId!, "manual", (progress) =>
         send({ type: "progress", progress }),
@@ -89,8 +74,7 @@ export function settingsRouter(db: Db, runner: CollectionRunner) {
         code: error instanceof AppError ? error.code : "INTERNAL_ERROR",
       });
     } finally {
-      clearInterval(heartbeat);
-      if (connected) res.end();
+      close();
     }
   });
   return router;

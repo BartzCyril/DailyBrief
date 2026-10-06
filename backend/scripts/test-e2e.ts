@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import nodemailer from "nodemailer";
 import { chromium } from "playwright";
 import { createApp } from "../src/app";
+import { ArticleContentService } from "../src/article-content";
 import { createDb } from "../src/db";
 import { createRedis } from "../src/redis";
 import { readConfig } from "../src/config";
@@ -35,6 +36,10 @@ const sender = new NewsletterEmailService(
   nodemailer.createTransport({ jsonTransport: true }),
 );
 const app = createApp(db, redis, config, {
+  articleContent: new ArticleContentService(
+    async () =>
+      `<article><h1>Article complet</h1><p>${"Ces informations complètes viennent de la page liée et complètent le flux RSS. ".repeat(12)} Information finale conservée.</p></article>`,
+  ),
   rss: new RssService(
     async () =>
       "<rss><channel><title>Flux de test</title><item><title>Article RSS</title><link>https://fixture.example/rss-article</link><description>Informations RSS contrôlées.</description></item></channel></rss>",
@@ -135,6 +140,7 @@ try {
     .waitFor();
   assert.equal(messages.length, 1);
   assert.equal(messages[0]?.to, email);
+  assert(messages[0]?.text.includes("Information finale conservée."));
   assert(messages[0]?.text.includes("Article RSS"));
   assert(messages[0]?.text.includes("Article scraping"));
   await page.setViewportSize({ width: 390, height: 844 });
@@ -149,6 +155,30 @@ try {
   assert.equal(messages.length, 1);
   const user = await db.user.findUniqueOrThrow({ where: { email } });
   assert.equal(await db.newsletter.count({ where: { userId: user.id, status: "SENT" } }), 1);
+  const articlesBeforeTest = await db.article.findMany({
+    where: { userId: user.id },
+    orderBy: { id: "asc" },
+  });
+  await page.getByRole("link", { name: "Tester le workflow de A à Z" }).last().click();
+  await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).waitFor();
+  await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).click();
+  await page.getByRole("region", { name: "Résumé IA de Article RSS" }).waitFor();
+  assert.equal(messages.length, 1, "Testing a delivered article must not send another email");
+  assert.deepEqual(
+    await db.article.findMany({ where: { userId: user.id }, orderBy: { id: "asc" } }),
+    articlesBeforeTest,
+  );
+  await page.getByRole("button", { name: "Refaire le résumé avec l'IA" }).click();
+  await page.getByRole("button", { name: "Refaire le résumé avec l'IA" }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "Workflow preview must fit mobile viewport",
+  );
+  await page.screenshot({ path: "/tmp/dailybrief-workflow-mobile.png", fullPage: true });
+  await page.getByRole("link", { name: "Retour aux sources" }).click();
+  await page.waitForURL("**/dashboard");
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: "/tmp/dailybrief-dashboard-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "/tmp/dailybrief-dashboard-mobile.png", fullPage: true });
@@ -160,7 +190,7 @@ try {
   await page.waitForURL("**/login");
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, RSS, browser scraping, settings, live collection through proxy before AI finishes, newsletter, idempotent retry, mobile layout, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: register, login, RSS, browser scraping, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();

@@ -6,6 +6,8 @@ import { Switch } from "@/components/ui/switch";
 import { Feedback } from "@/components/Feedback";
 import { sourcesApi } from "./api";
 import { errorMessage } from "@/lib/api";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 export function SourceList({
   sources,
   onChanged,
@@ -47,6 +49,9 @@ export function SourceList({
                   </span>
                 </div>
               </div>
+              <Button variant="outline" size="sm" asChild>
+                <Link to={`/sources/${source.id}/workflow`}>Tester le workflow de A à Z</Link>
+              </Button>
               {onChanged && (
                 <Switch
                   aria-label={`Activer ${source.url}`}
