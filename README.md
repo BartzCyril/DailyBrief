@@ -91,6 +91,10 @@ réseau, ou `http://127.0.0.1:11434` depuis Bun sur l'hôte.
 `{title,summary,keyPoints}`. L'IA utilise du JSON validé, des entrées nettoyées
 et tronquées à `AI_MAX_INPUT_CHARS`, un timeout et une concurrence limitée.
 Les tests mockent Ollama : aucun téléchargement de modèle n'est nécessaire pour eux.
+Les résumés demandent explicitement `think: false` afin que Qwen3 fournisse
+directement le JSON final. Un contenu de raisonnement seul ne sert jamais de résumé.
+Les réponses vides, interrompues par la limite de génération ou mal formatées sont
+signalées séparément dans le journal de collecte ; les articles restent réessayables.
 
 `POST /collection/run` et le scheduler appellent le même pipeline. GUID, URL
 canonique sans tracking et hash détectent les doublons. Le fingerprint déterministe
