@@ -51,7 +51,12 @@ d'entités XML sont refusées ; les CDATA et commentaires restent inchangés.
 
 Les requêtes RSS et Playwright refusent les adresses privées (y compris IPv6),
 épinglent les résultats DNS, contrôlent les redirections et limitent les réponses
-à 2 Mio. Playwright bloque WebSockets, service workers et mutations HTTP. Le
+à 2 Mio avant et après décompression. Le transport décode gzip, deflate, Brotli
+et zstd avant de lire le texte, même si un site compresse malgré la demande
+`Accept-Encoding: identity`. Il tient compte du charset HTTP, de la déclaration
+XML et des BOM UTF-8/UTF-16. Les réponses compressées corrompues et les encodages
+invalides ont des erreurs distinctes du XML mal formé.
+Playwright bloque WebSockets, service workers et mutations HTTP. Le
 scraping est borné à 5 pages ou 8 scrolls, 45 secondes et 2 navigateurs simultanés.
 Seuls des sites accessibles sans connexion sont pris en charge.
 

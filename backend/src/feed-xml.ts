@@ -5,6 +5,18 @@ export function prepareFeedXml(input: string): { xml: string; warnings: string[]
   let xml = input.trimStart();
   const warnings: string[] = [];
   if (xml !== input) warnings.push("Les espaces ou le BOM avant le document XML ont été retirés.");
+  if (!xml)
+    throw new AppError(
+      422,
+      "Le site a renvoyé une réponse vide à la place du flux.",
+      "EMPTY_RESPONSE",
+    );
+  if (!xml.startsWith("<"))
+    throw new AppError(
+      422,
+      "La réponse reçue du site ne commence pas par un document XML. Vérifiez l'URL du flux, la réponse HTTP et les éventuels contrôles d'accès du site.",
+      "NOT_XML_RESPONSE",
+    );
   // Inspect markup only: HTML and declaration examples inside articles are ordinary content.
   const markup = xml.replace(/<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->/g, "");
   const beginning = markup.replace(/^(?:\s*<\?[\s\S]*?\?>)*\s*/, "");

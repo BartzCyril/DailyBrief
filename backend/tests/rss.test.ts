@@ -58,6 +58,15 @@ test("recognizes HTML error pages separately from XML syntax errors", () => {
     "XML invalide",
   );
 });
+test("distinguishes empty and non-XML responses from malformed XML", () => {
+  expect(() => parseRss(" \n ", "https://example.com/feed")).toThrow("réponse vide");
+  expect(() => parseRss("Access denied", "https://example.com/feed")).toThrow(
+    "ne commence pas par un document XML",
+  );
+  expect(() => parseRss('{"error":"blocked"}', "https://example.com/feed")).toThrow(
+    "ne commence pas par un document XML",
+  );
+});
 test("preserves CDATA content and ignores harmless declaration examples in article text", () => {
   const result = parseRss(
     "<rss><channel><!-- Example: <!DOCTYPE rss> --><item><title>Test</title><description><![CDATA[<!DOCTYPE html><p>A & B&nbsp;C</p>]]></description></item></channel></rss>",
