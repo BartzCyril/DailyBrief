@@ -14,7 +14,9 @@ import { ScrapingService } from "./scraping";
 import { SourceCollector, CollectionService, type CollectionRunner } from "./collection";
 import { UserCollectionLock } from "./lock";
 import { settingsRouter } from "./settings";
-export function createApp(db: Db, redis: Redis, config: Config, services: { rss?: RssService; scraping?: ScrapingService; runner?: CollectionRunner } = {}) {
+import { OllamaClient, OllamaSummaryProvider, type SummaryProvider } from "./ai";
+import { aiRouter } from "./ai-routes";
+export function createApp(db: Db, redis: Redis, config: Config, services: { rss?: RssService; scraping?: ScrapingService; runner?: CollectionRunner; summary?: SummaryProvider } = {}) {
   const rss = services.rss ?? new RssService(); const scraping = services.scraping ?? new ScrapingService();
   const runner = services.runner ?? new CollectionService(db, new SourceCollector(db, rss, scraping), new UserCollectionLock(redis));
   const app = express();
@@ -35,6 +37,8 @@ export function createApp(db: Db, redis: Redis, config: Config, services: { rss?
   app.use("/auth", authRouter(db, config));
   app.use("/sources", sourcesRouter(db, rss, scraping));
   app.use(settingsRouter(db, runner));
+  const aiClient = new OllamaClient(config);
+  app.use("/ai", aiRouter(services.summary ?? new OllamaSummaryProvider(config, aiClient), aiClient));
   app.use(errorHandler);
   return app;
 }
