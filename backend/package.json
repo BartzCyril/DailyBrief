@@ -6,7 +6,7 @@
     "dev": "bun --watch src/server.ts",
     "start": "bun src/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun scripts/prepare-test-db.ts && bun test tests",
     "db:generate": "prisma generate",
     "db:migrate": "bun scripts/migrate.ts",
     "db:dev": "prisma migrate dev"
@@ -14,13 +14,17 @@
   "dependencies": {
     "@prisma/adapter-pg": "6.19.2",
     "@prisma/client": "6.19.2",
+    "cheerio": "^1.2.0",
     "connect-redis": "^10.0.0",
     "cors": "^2.8.6",
     "express": "^5.1.0",
     "express-rate-limit": "^8.7.1",
     "express-session": "^1.19.0",
+    "fast-xml-parser": "^5.11.2",
     "helmet": "^8.3.0",
+    "ipaddr.js": "^2.5.0",
     "pg": "^8.23.1",
+    "playwright": "^1.63.0",
     "redis": "^6.3.0",
     "zod": "^4.1.0"
   },
