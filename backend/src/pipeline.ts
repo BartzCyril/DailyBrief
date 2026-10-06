@@ -16,6 +16,7 @@ import { nextCollection } from "./schedule";
 import { AppError } from "./errors";
 import type { CollectionFailure, CollectionStage, RunResult } from "@dailybrief/shared";
 import { reportProgress, type ProgressObserver } from "./progress";
+import { ArticleContentService } from "./article-content";
 export type DailyBriefRunResult = RunResult;
 
 function failureFor(error: unknown, stage: CollectionStage): CollectionFailure {
@@ -24,7 +25,9 @@ function failureFor(error: unknown, stage: CollectionStage): CollectionFailure {
       ? "Échec du résumé IA."
       : stage === "email"
         ? "L'envoi SMTP a échoué. Vérifiez la configuration du serveur mail."
-        : "Échec du pipeline DailyBrief.";
+        : stage === "content"
+          ? "La récupération du contenu complet de l'article a échoué."
+          : "Échec du pipeline DailyBrief.";
   return {
     stage,
     code: error instanceof AppError ? error.code : "PIPELINE_FAILED",
@@ -38,6 +41,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
     private lock: UserCollectionLock,
     private summary: SummaryProvider,
     private email: NewsletterSender,
+    private articleContent = new ArticleContentService(),
   ) {}
   private async persist(userId: string, article: CollectedArticle): Promise<boolean> {
     const identity = articleIdentity(article);
@@ -164,8 +168,69 @@ export class DailyBriefPipelineService implements CollectionRunner {
         const included: typeof pending = [];
         let summaryFailure: CollectionFailure | undefined;
         let processed = 0;
-        stage = "ai";
         for (let article of pending) {
+          stage = "content";
+          if (!article.contentFetchedAt) {
+            report({
+              stage,
+              status: "running",
+              message: `Téléchargement de la page complète : ${article.title}`,
+              completed: processed,
+              total: pending.length,
+            });
+            try {
+              const content = await this.articleContent.fetch(article.url);
+              article = {
+                ...article,
+                ...(await this.db.article.update({
+                  where: { id: article.id },
+                  data: {
+                    content,
+                    contentFetchedAt: new Date(),
+                    contentError: null,
+                    // Old summaries based on feed excerpts must be regenerated before delivery.
+                    summaryTitle: null,
+                    summary: null,
+                    keyPoints: [],
+                    summarizedAt: null,
+                    summaryError: null,
+                  },
+                })),
+              };
+              report({
+                stage,
+                status: "completed",
+                message: `Texte de l'article extrait et sauvegardé : ${article.title} (${content.length} caractères).`,
+                completed: processed,
+                total: pending.length,
+              });
+            } catch (error) {
+              const failure = failureFor(error, stage);
+              summaryFailure ??= failure;
+              await this.db.article.update({
+                where: { id: article.id },
+                data: { contentError: failure.message },
+              });
+              processed++;
+              report({
+                stage,
+                status: "failed",
+                message: `${article.title} : ${failure.message}`,
+                completed: processed,
+                total: pending.length,
+              });
+              continue;
+            }
+          } else {
+            report({
+              stage,
+              status: "skipped",
+              message: `Texte complet déjà sauvegardé : ${article.title}`,
+              completed: processed,
+              total: pending.length,
+            });
+          }
+          stage = "ai";
           if (!article.summary || !article.summarizedAt) {
             report({
               stage,
@@ -175,11 +240,17 @@ export class DailyBriefPipelineService implements CollectionRunner {
               total: pending.length,
             });
             try {
-              const summary = await this.summary.summarize({
-                title: article.title,
-                content: article.content || article.description || article.title,
-                url: article.url,
-              });
+              const summary = await this.summary.summarize(
+                { title: article.title, content: article.content!, url: article.url },
+                (message) =>
+                  report({
+                    stage: "ai",
+                    status: "running",
+                    message: `${article.title} : ${message}`,
+                    completed: processed,
+                    total: pending.length,
+                  }),
+              );
               article = {
                 ...article,
                 ...(await this.db.article.update({

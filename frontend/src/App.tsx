@@ -9,6 +9,9 @@ const DashboardPage = lazy(() =>
 const NewSourcePage = lazy(() =>
   import("./pages/NewSourcePage").then((module) => ({ default: module.NewSourcePage })),
 );
+const SourceWorkflowPage = lazy(() =>
+  import("./pages/SourceWorkflowPage").then((module) => ({ default: module.SourceWorkflowPage })),
+);
 export function App() {
   return (
     <AuthProvider>
@@ -26,6 +29,7 @@ export function App() {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/sources/new/rss" element={<NewSourcePage />} />
             <Route path="/sources/new/scraping" element={<NewSourcePage scraping />} />
+            <Route path="/sources/:sourceId/workflow" element={<SourceWorkflowPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

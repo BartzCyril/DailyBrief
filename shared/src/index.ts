@@ -62,7 +62,8 @@ export type RunResult = {
   newsletterId?: string;
   failure?: CollectionFailure;
 };
-export type CollectionStage = "collection" | "source" | "storage" | "ai" | "newsletter" | "email";
+export type CollectionStage =
+  "collection" | "source" | "storage" | "content" | "ai" | "newsletter" | "email";
 export type CollectionFailure = {
   stage: CollectionStage;
   code: string;
@@ -79,4 +80,19 @@ export type CollectionProgress = {
 export type CollectionEvent =
   | { type: "progress"; progress: CollectionProgress }
   | { type: "result"; result: RunResult }
+  | { type: "error"; message: string; code: string };
+export type WorkflowPreview = {
+  id: string;
+  source: Pick<Source, "id" | "url" | "type">;
+  articles: ArticlePreview[];
+  warnings?: string[];
+  expiresAt: string;
+};
+export type WorkflowSummary = {
+  content: string;
+  summary: { title: string; summary: string; keyPoints: string[] };
+};
+export type WorkflowSummaryEvent =
+  | { type: "progress"; progress: CollectionProgress }
+  | { type: "result"; result: WorkflowSummary }
   | { type: "error"; message: string; code: string };

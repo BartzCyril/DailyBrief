@@ -24,6 +24,7 @@ import { renderNewsletter } from "../src/newsletter-template";
 import { NewsletterEmailService, type NewsletterMessage } from "../src/email";
 import { createApp } from "../src/app";
 import { runDueCollections } from "../src/scheduler";
+import { ArticleContentService } from "../src/article-content";
 import { config, db, redis, connect, disconnect } from "./helpers";
 const article = (id: string): ArticlePreview => ({
   title: `Titre ${id}`,
@@ -116,6 +117,9 @@ describe("DailyBrief pipeline", () => {
   let summaryError: AppError | undefined;
   let sourceError = false;
   let waitForSummary: Promise<void> | undefined;
+  let pageFetches: string[] = [];
+  let failContent = false;
+  let summaryInputs: string[] = [];
   class FixtureRss extends RssService {
     override async collect(): Promise<SourcePreview> {
       if (sourceError) throw new AppError(502, "Le flux est inaccessible.", "NETWORK_ERROR");
@@ -135,6 +139,7 @@ describe("DailyBrief pipeline", () => {
     {
       summarize: async (input) => {
         summaries++;
+        summaryInputs.push(input.content);
         await waitForSummary;
         if (summaryError) throw summaryError;
         if (failSummary && input.title.includes("two")) throw new Error("AI offline");
@@ -148,6 +153,12 @@ describe("DailyBrief pipeline", () => {
         sends.push(message);
       },
     },
+    new ArticleContentService(async (url) => {
+      pageFetches.push(url);
+      if (failContent && url.endsWith("one"))
+        throw new AppError(502, "Page indisponible.", "NETWORK_ERROR");
+      return `<html><body><article><h1>Texte complet</h1><p>${"Les détails du texte complet sont absents du flux. ".repeat(12)} Fin de l'article ${url}.</p></article></body></html>`;
+    }),
   );
   beforeAll(connect);
   afterAll(disconnect);
@@ -188,6 +199,9 @@ describe("DailyBrief pipeline", () => {
     summaryError = undefined;
     sourceError = false;
     waitForSummary = undefined;
+    pageFetches = [];
+    summaryInputs = [];
+    failContent = false;
   });
   afterEach(async () => {
     await db.user.delete({ where: { id: userId } });
@@ -202,6 +216,13 @@ describe("DailyBrief pipeline", () => {
       emailSent: true,
     });
     expect(sends[0]?.to).toBe(email);
+    expect(pageFetches).toHaveLength(2);
+    expect(summaryInputs.every((content) => content.includes("Les détails du texte complet"))).toBe(
+      true,
+    );
+    expect(
+      (await db.article.findFirstOrThrow({ where: { userId } })).contentFetchedAt,
+    ).not.toBeNull();
     expect(await db.article.count({ where: { userId, summarizedAt: { not: null } } })).toBe(2);
     expect(await db.newsletterArticle.count({ where: { newsletterId: result.newsletterId } })).toBe(
       2,
@@ -219,6 +240,7 @@ describe("DailyBrief pipeline", () => {
     expect(next.newArticles).toBe(0);
     expect(summaries).toBe(2);
     expect(sends).toHaveLength(1);
+    expect(pageFetches).toHaveLength(2);
   });
   test("GUID dedup survives URL changes", async () => {
     scrapedArticles = [];
@@ -267,6 +289,65 @@ describe("DailyBrief pipeline", () => {
     expect(retry.articlesSummarized).toBe(0);
     expect(summaries).toBe(2);
     expect(sends).toHaveLength(1);
+    expect(pageFetches).toHaveLength(2);
+  });
+  test("article download failures skip AI and delivery for that article, then retry its full page", async () => {
+    failContent = true;
+    const events: CollectionProgress[] = [];
+    expect((await runner.run(userId, "manual", (event) => events.push(event))).status).toBe("SENT");
+    const failed = await db.article.findFirstOrThrow({ where: { userId, title: "Titre one" } });
+    expect(failed.contentError).toBe("Page indisponible.");
+    expect(failed.contentFetchedAt).toBeNull();
+    expect(failed.summary).toBeNull();
+    expect(summaries).toBe(1);
+    expect(sends[0]?.text).not.toContain("Titre one");
+    expect(events.some((event) => event.stage === "content" && event.status === "failed")).toBe(
+      true,
+    );
+    failContent = false;
+    expect(await runner.run(userId)).toMatchObject({
+      status: "SENT",
+      newArticles: 0,
+      articlesSummarized: 1,
+    });
+    expect(pageFetches.filter((url) => url.endsWith("one"))).toHaveLength(2);
+    expect(
+      (await db.article.findUniqueOrThrow({ where: { id: failed.id } })).contentError,
+    ).toBeNull();
+  });
+  test("all page failures identify the content stage and never fall back to the feed teaser", async () => {
+    scrapedArticles = [];
+    failContent = true;
+    expect(await runner.run(userId)).toMatchObject({
+      status: "FAILED",
+      failure: { stage: "content", code: "NETWORK_ERROR", message: "Page indisponible." },
+    });
+    expect(summaries).toBe(0);
+    expect(sends).toHaveLength(0);
+  });
+  test("old undelivered summaries from feed excerpts are regenerated from the complete page", async () => {
+    scrapedArticles = [];
+    await db.article.create({
+      data: {
+        userId,
+        sourceId,
+        title: "Titre one",
+        url: article("one").url,
+        ...articleIdentity({ ...article("one"), sourceId }),
+        content: "Ancien extrait",
+        summary: "Ancien résumé",
+        summarizedAt: new Date(),
+        keyPoints: ["Ancien point"],
+      },
+    });
+    expect(await runner.run(userId)).toMatchObject({
+      status: "SENT",
+      newArticles: 0,
+      articlesSummarized: 1,
+    });
+    expect(pageFetches).toHaveLength(1);
+    expect(sends[0]?.text).not.toContain("Ancien résumé");
+    expect(sends[0]?.text).toContain("Les détails du texte complet");
   });
   test("isolates AI failures and retries only the unsummarized article", async () => {
     failSummary = true;
@@ -370,6 +451,7 @@ describe("DailyBrief pipeline", () => {
         received += decoder.decode(chunk.value, { stream: true });
       }
       expect(received).toContain("articles récupérés");
+      expect(received).toContain("Texte de l'article extrait et sauvegardé");
       expect(sends).toHaveLength(0);
       expect(received).not.toContain('"type":"result"');
       release();

@@ -18,6 +18,8 @@ import { OllamaClient, OllamaSummaryProvider, type SummaryProvider } from "./ai"
 import { aiRouter } from "./ai-routes";
 import { DailyBriefPipelineService } from "./pipeline";
 import { NewsletterEmailService, type NewsletterSender } from "./email";
+import { ArticleContentService } from "./article-content";
+import { sourceWorkflowRouter } from "./source-workflow";
 export function createApp(
   db: Db,
   redis: Redis,
@@ -28,11 +30,13 @@ export function createApp(
     runner?: CollectionRunner;
     summary?: SummaryProvider;
     email?: NewsletterSender;
+    articleContent?: ArticleContentService;
   } = {},
 ) {
   const rss = services.rss ?? new RssService();
   const scraping = services.scraping ?? new ScrapingService();
   const summary = services.summary ?? new OllamaSummaryProvider(config);
+  const articleContent = services.articleContent ?? new ArticleContentService();
   const runner =
     services.runner ??
     new DailyBriefPipelineService(
@@ -41,6 +45,7 @@ export function createApp(
       new UserCollectionLock(redis),
       summary,
       services.email ?? new NewsletterEmailService(config),
+      articleContent,
     );
   const app = express();
   app.disable("x-powered-by");
@@ -78,6 +83,7 @@ export function createApp(
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
   app.use("/auth", authRouter(db, config));
   app.use("/sources", sourcesRouter(db, rss, scraping));
+  app.use("/sources", sourceWorkflowRouter(db, redis, rss, scraping, articleContent, summary));
   app.use(settingsRouter(db, runner));
   const aiClient = new OllamaClient(config);
   app.use("/ai", aiRouter(summary, aiClient));

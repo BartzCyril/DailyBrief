@@ -10,6 +10,7 @@ import { SourceCollector, getSettings } from "../src/collection";
 import { runDueCollections } from "../src/scheduler";
 import { createApp } from "../src/app";
 import { config, db, redis, connect, disconnect } from "./helpers";
+import { ArticleContentService } from "../src/article-content";
 test("daily schedule follows Paris summer/winter offsets", () => {
   expect(nextCollection("07:30", "Europe/Paris", new Date("2026-07-01T00:00Z")).toISOString()).toBe(
     "2026-07-01T05:30:00.000Z",
@@ -59,6 +60,9 @@ describe("collection settings, source isolation and Redis lock", () => {
       }),
     },
     { send: async () => {} },
+    new ArticleContentService(
+      async () => `<article><p>${"Texte complet de l'article de test. ".repeat(15)}</p></article>`,
+    ),
   );
   const app = createApp(db, redis, config, { rss, runner });
   const agent = request.agent(app);

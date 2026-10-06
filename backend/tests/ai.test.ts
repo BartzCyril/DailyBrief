@@ -14,17 +14,65 @@ const config = readConfig({
 const input = { title: "Article", content: "<p> Information    utile </p>" };
 const output = { title: "Titre", summary: "Résumé fidèle.", keyPoints: ["Information utile"] };
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
-test("prompts normalize HTML, limit input and specify French faithful JSON", () => {
+test("prompts normalize HTML, refuse silent truncation and specify French faithful JSON", () => {
   const prompt = summaryPrompt(input, "français", 200);
   expect(prompt).toContain("français");
   expect(prompt).toContain("Information utile");
   expect(prompt).not.toContain("<p>");
-  expect(
+  expect(() =>
     summaryPrompt({ title: "Titre", content: "a".repeat(1000) }, "français", 100),
-  ).not.toContain("a".repeat(101));
+  ).toThrow("découpé");
   expect(() => summaryPrompt({ title: "Titre", content: "<p> </p>" }, "français", 100)).toThrow(
     "vide",
   );
+});
+test("long articles send every portion including the end, then synthesize their summaries", async () => {
+  const smallConfig = { ...config, AI_MAX_INPUT_CHARS: 1000 };
+  const prompts: string[] = [];
+  const progress: string[] = [];
+  const provider = new OllamaSummaryProvider(
+    smallConfig,
+    new OllamaClient(smallConfig, async (_url, init) => {
+      const prompt = JSON.parse(String(init?.body)).prompt;
+      prompts.push(prompt);
+      return response({
+        response: JSON.stringify({
+          title: "Article",
+          summary: prompt.includes("INFORMATION_FINALE")
+            ? "Mesure finale incluse."
+            : "Autres mesures.",
+          keyPoints: ["Point"],
+        }),
+      });
+    }),
+  );
+  const content = "Détail du texte. ".repeat(180) + "INFORMATION_FINALE";
+  const result = await provider.summarize({ title: "Article", content }, (message) =>
+    progress.push(message),
+  );
+  const chunkPrompts = prompts.filter((prompt) => !prompt.includes("Partie 1 :"));
+  expect(chunkPrompts.length).toBeGreaterThan(1);
+  expect(chunkPrompts.at(-1)).toContain("INFORMATION_FINALE");
+  const inputs = chunkPrompts.map((prompt) => JSON.parse(prompt.split("ARTICLE:\n")[1]!).content);
+  expect(inputs.join(" ")).toBe(content);
+  expect(prompts.at(-1)).toContain("Mesure finale incluse.");
+  expect(progress.some((message) => message.includes("Synthèse"))).toBe(true);
+  expect(result.title).toBe("Article");
+});
+test("failed portions prevent a partial summary from being returned", async () => {
+  const smallConfig = { ...config, AI_MAX_INPUT_CHARS: 1000 };
+  let calls = 0;
+  const provider = new OllamaSummaryProvider(
+    smallConfig,
+    new OllamaClient(smallConfig, async () => {
+      calls++;
+      return calls === 1 ? response({ response: JSON.stringify(output) }) : response({}, 503);
+    }),
+  );
+  await expect(
+    provider.summarize({ title: "Article", content: "texte ".repeat(400) }),
+  ).rejects.toMatchObject({ code: "AI_UNAVAILABLE" });
+  expect(calls).toBe(2);
 });
 test("validates input and output shapes", () => {
   expect(summarySchema.safeParse(output).success).toBe(true);

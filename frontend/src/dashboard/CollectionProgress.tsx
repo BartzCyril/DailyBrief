@@ -6,11 +6,20 @@ const stages = {
   collection: "Collecte",
   source: "Source",
   storage: "Articles",
+  content: "Contenu de l'article",
   ai: "Résumé IA",
   newsletter: "Newsletter",
   email: "Email",
 };
-export function CollectionProgress({ events, busy }: { events: Progress[]; busy: boolean }) {
+export function CollectionProgress({
+  events,
+  busy,
+  completedLabel = "Collecte terminée",
+}: {
+  events: Progress[];
+  busy: boolean;
+  completedLabel?: string;
+}) {
   const log = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (log.current) log.current.scrollTop = log.current.scrollHeight;
@@ -20,7 +29,7 @@ export function CollectionProgress({ events, busy }: { events: Progress[]; busy:
   return (
     <section aria-label="Progression de la collecte" className="min-w-0 space-y-3">
       <p className="text-sm font-medium" role="status" aria-live="polite">
-        {busy ? `${stages[current.stage]} en cours` : "Collecte terminée"}
+        {busy ? `${stages[current.stage]} en cours` : completedLabel}
         {current.total !== undefined && ` · ${current.completed ?? 0}/${current.total}`}
       </p>
       <div
