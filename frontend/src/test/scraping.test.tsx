@@ -17,15 +17,19 @@ const preview = {
 };
 let saved = false;
 let fail = false;
+let warnings: string[] = [];
 function mockApi() {
   const mock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/dashboard")) return new Response(JSON.stringify(emptyDashboard));
     if (url.endsWith("/auth/me"))
       return new Response(JSON.stringify({ id: "u1", email: "reader@example.com" }));
     if (url.endsWith("/scraping/test"))
-      return new Response(JSON.stringify(fail ? { message: "Sélecteurs invalides" } : preview), {
-        status: fail ? 422 : 200,
-      });
+      return new Response(
+        JSON.stringify(fail ? { message: "Sélecteurs invalides" } : { ...preview, warnings }),
+        {
+          status: fail ? 422 : 200,
+        },
+      );
     if (url.endsWith("/sources") && init?.method === "POST") {
       saved = true;
       return new Response(JSON.stringify({ id: "s1" }), { status: 201 });
@@ -73,6 +77,7 @@ async function choose(label: string, choice: string) {
 beforeEach(() => {
   saved = false;
   fail = false;
+  warnings = [];
   mockApi();
 });
 test("opens scraping from dashboard and validates URL and selectors", async () => {
@@ -94,7 +99,8 @@ test("shows only the controls for the selected mode and supports both pagination
   await choose("Mode de récupération", "Pagination");
   expect(screen.queryByLabelText("Nombre maximum de scrolls")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Nom du paramètre")).toBeInTheDocument();
-  expect(screen.getByLabelText("Nombre maximum de pages")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Nombre maximum de pages")).not.toBeInTheDocument();
+  expect(screen.getByText(/Toutes les pages sont parcourues/)).toBeInTheDocument();
   await choose("Stratégie de pagination", "Modèle d'URL");
   expect(screen.getByLabelText("Modèle d'URL")).toBeInTheDocument();
   expect(screen.queryByLabelText("Nom du paramètre")).not.toBeInTheDocument();
@@ -134,11 +140,28 @@ test("sends QUERY_PARAM config and invalidates when parameters change", async ()
   expect(JSON.parse(String(call?.[1]?.body)).config.pagination).toMatchObject({
     strategy: "QUERY_PARAM",
     queryParam: "page",
-    maxPages: 3,
     startPage: 1,
   });
-  await ui.clear(screen.getByLabelText("Nombre maximum de pages"));
+  expect(JSON.parse(String(call?.[1]?.body)).config.pagination.maxPages).toBeUndefined();
+  await ui.clear(screen.getByLabelText("Page de départ"));
   expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
+  await ui.type(screen.getByLabelText("Page de départ"), "0");
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Article extrait");
+  const calls = mock.mock.calls.filter((call) => call[0].endsWith("/scraping/test"));
+  expect(JSON.parse(String(calls.at(-1)?.[1]?.body)).config.pagination.startPage).toBe(0);
+});
+test("shows a repeated-page warning alongside the collected articles", async () => {
+  warnings = [
+    "Pagination arrêtée à la page 3 : cette page répète des articles d'une page déjà parcourue.",
+  ];
+  mount();
+  const ui = await fill();
+  await choose("Mode de récupération", "Pagination");
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(warnings[0]!);
+  expect(await screen.findByText("Article extrait")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeEnabled();
 });
 test("saves a tested scraping source without userId and lists its mode", async () => {
   const mock = mockApi();

@@ -18,8 +18,9 @@ export const scrapingSchema = z
     pagination: z
       .object({
         strategy: z.enum(["URL_TEMPLATE", "QUERY_PARAM"]),
-        maxPages: z.number().int().min(1).max(5),
-        startPage: z.number().int().min(1).max(1000).default(1),
+        // Accept saved configurations from older versions, but discard their cap.
+        maxPages: z.unknown().optional(),
+        startPage: z.number().int().min(0).default(1),
         urlTemplate: z.string().max(2000).optional(),
         queryParam: z
           .string()
@@ -27,6 +28,7 @@ export const scrapingSchema = z
           .optional(),
       })
       .strict()
+      .transform(({ maxPages: _legacyMaxPages, ...pagination }) => pagination)
       .optional(),
   })
   .strict()

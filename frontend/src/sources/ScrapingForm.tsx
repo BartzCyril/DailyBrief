@@ -106,6 +106,7 @@ export function ScrapingForm() {
         </div>
       </form>
       <Feedback message={error} error />
+      <Feedback message={tested?.preview.warnings?.join(" ") ?? ""} />
       {tested && <ArticlePreview preview={tested.preview} />}
     </div>
   );

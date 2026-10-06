@@ -24,7 +24,6 @@ export type ScrapingConfig = {
   scroll?: { maxScrolls: number; waitAfterScrollMs: number };
   pagination?: {
     strategy: "URL_TEMPLATE" | "QUERY_PARAM";
-    maxPages: number;
     startPage: number;
     urlTemplate?: string;
     queryParam?: string;

@@ -57,7 +57,16 @@ et zstd avant de lire le texte, même si un site compresse malgré la demande
 XML et des BOM UTF-8/UTF-16. Les réponses compressées corrompues et les encodages
 invalides ont des erreurs distinctes du XML mal formé.
 Playwright bloque WebSockets, service workers et mutations HTTP. Le
-scraping est borné à 5 pages ou 8 scrolls, 45 secondes et 2 navigateurs simultanés.
+scraping utilise au maximum 2 navigateurs simultanés. La pagination continue
+jusqu'à une page sans article, sans plafond de pages, d'articles par page ou
+d'articles au total. Une page déjà rencontrée (même si l'ordre change) arrête
+la pagination avec un avertissement pour éviter une boucle. Les chevauchements
+entre pages sont dédupliqués ; une erreur réseau ou un sélecteur de titre sans
+résultat dans des blocs présents provoque une erreur, pas un aperçu partiel.
+Les anciens `maxPages` enregistrés sont acceptés puis ignorés ; aucune migration
+de base n'est nécessaire. La page de départ peut être 0 selon le site.
+Chaque navigation garde son délai de 15 secondes ; la durée totale de pagination
+n'est pas plafonnée. Le mode scroll conserve ses 8 scrolls et ses 45 secondes.
 Seuls des sites accessibles sans connexion sont pris en charge.
 
 Installez Chromium avec `bun run browser:install`. Si le CDN Playwright est
@@ -208,8 +217,9 @@ restent enregistrés dans l'historique serveur.
 Dans la liste des sources, « Tester le workflow de A à Z » ouvre une liste
 fraîche des articles RSS ou scraping, y compris ceux déjà résumés ou livrés.
 Les sources désactivées peuvent aussi être testées. Tous les résultats du
-collecteur sont affichés, dans sa limite de 500 articles et ses bornes de
-pagination/scroll. « Faire le résumé avec l'IA » télécharge à nouveau la page
+collecteur sont affichés : le RSS conserve sa limite de 500 entrées, tandis que
+le scraping paginé parcourt la source jusqu'à une page vide ou répétée.
+« Faire le résumé avec l'IA » télécharge à nouveau la page
 de l'article, affiche les étapes en direct, puis son titre IA, son résumé,
 ses points clés et le texte extrait consultable. Chaque résumé peut être
 relancé ; « Récupérer à nouveau les articles » recharge la source.

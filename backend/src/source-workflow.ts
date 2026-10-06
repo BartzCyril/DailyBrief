@@ -63,7 +63,7 @@ export function sourceWorkflowRouter(
     const userId = req.session.userId!;
     const source = await ownedSource(userId, String(req.params.sourceId));
     const workflowId = z.uuid().parse(req.params.workflowId);
-    const index = z.coerce.number().int().min(0).max(499).parse(req.params.index);
+    const index = z.coerce.number().int().min(0).parse(req.params.index);
     const cached = await redis.get(previewKey(userId, source.id, workflowId));
     const preview: WorkflowPreview | null = cached ? JSON.parse(cached) : null;
     if (!preview || preview.id !== workflowId)
