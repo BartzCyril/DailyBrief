@@ -10,9 +10,10 @@ import {
   spyOn,
 } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import request from "supertest";
 import nodemailer from "nodemailer";
-import type { ArticlePreview, SourcePreview } from "@dailybrief/shared";
+import type { ArticlePreview, SourcePreview, CollectionProgress } from "@dailybrief/shared";
 import { DailyBriefPipelineService } from "../src/pipeline";
 import { SourceCollector } from "../src/collection";
 import { RssService } from "../src/rss";
@@ -112,8 +113,12 @@ describe("DailyBrief pipeline", () => {
   let failEmail = false;
   let uncertainEmail = false;
   let failSummary = false;
+  let summaryError: AppError | undefined;
+  let sourceError = false;
+  let waitForSummary: Promise<void> | undefined;
   class FixtureRss extends RssService {
     override async collect(): Promise<SourcePreview> {
+      if (sourceError) throw new AppError(502, "Le flux est inaccessible.", "NETWORK_ERROR");
       return { articles: rssArticles };
     }
   }
@@ -130,6 +135,8 @@ describe("DailyBrief pipeline", () => {
     {
       summarize: async (input) => {
         summaries++;
+        await waitForSummary;
+        if (summaryError) throw summaryError;
         if (failSummary && input.title.includes("two")) throw new Error("AI offline");
         return { title: input.title, summary: `Résumé ${input.content}`, keyPoints: ["Point clé"] };
       },
@@ -178,6 +185,9 @@ describe("DailyBrief pipeline", () => {
     failEmail = false;
     uncertainEmail = false;
     failSummary = false;
+    summaryError = undefined;
+    sourceError = false;
+    waitForSummary = undefined;
   });
   afterEach(async () => {
     await db.user.delete({ where: { id: userId } });
@@ -243,6 +253,10 @@ describe("DailyBrief pipeline", () => {
     const first = await runner.run(userId);
     expect(first.status).toBe("FAILED");
     expect(first.emailSent).toBe(false);
+    expect(first.failure).toMatchObject({
+      stage: "email",
+      message: expect.stringContaining("SMTP"),
+    });
     expect(
       (await db.newsletter.findUniqueOrThrow({ where: { id: first.newsletterId! } })).status,
     ).toBe("FAILED");
@@ -263,6 +277,208 @@ describe("DailyBrief pipeline", () => {
     expect(next.articlesSummarized).toBe(1);
     expect(summaries).toBe(3);
     expect(sends).toHaveLength(2);
+  });
+  test("missing model is reported, saved in history and stops redundant AI requests", async () => {
+    summaryError = new AppError(503, "Le modèle IA n'est pas installé.", "MODEL_MISSING");
+    const events: CollectionProgress[] = [];
+    const result = await runner.run(userId, "manual", (event) => events.push(event));
+    expect(result).toMatchObject({
+      status: "FAILED",
+      articlesCollected: 2,
+      newArticles: 2,
+      failure: { stage: "ai", code: "MODEL_MISSING", message: "Le modèle IA n'est pas installé." },
+    });
+    expect(summaries).toBe(1);
+    expect(sends).toHaveLength(0);
+    expect((await db.dailyBriefRun.findFirstOrThrow({ where: { userId } })).error).toBe(
+      result.failure!.message,
+    );
+    expect(events.some((event) => event.stage === "ai" && event.status === "failed")).toBe(true);
+    summaryError = undefined;
+    expect(await runner.run(userId)).toMatchObject({
+      status: "SENT",
+      newArticles: 0,
+      articlesSummarized: 2,
+    });
+  });
+  test("source failures identify the source stage without exposing URL parameters", async () => {
+    sourceError = true;
+    await db.source.updateMany({ where: { userId, type: "SCRAPING" }, data: { enabled: false } });
+    await db.source.update({
+      where: { id: sourceId },
+      data: { url: "https://example.com/feed?key=secret" },
+    });
+    const events: CollectionProgress[] = [];
+    const result = await runner.run(userId, "manual", (event) => events.push(event));
+    expect(result.failure).toMatchObject({
+      stage: "source",
+      code: "SOURCE_COLLECTION_FAILED",
+      message: "Le flux est inaccessible.",
+    });
+    expect(JSON.stringify(events)).not.toContain("secret");
+    expect(summaries).toBe(0);
+    expect(sends).toHaveLength(0);
+  });
+  test("a failing progress subscriber cannot prevent delivery", async () => {
+    expect(
+      (
+        await runner.run(userId, "manual", () => {
+          throw new Error("Viewer disconnected");
+        })
+      ).status,
+    ).toBe("SENT");
+    expect(sends).toHaveLength(1);
+  });
+  test("streams collection and AI events before summaries finish, then reports SMTP and result", async () => {
+    let release = () => {};
+    waitForSummary = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const app = createApp(db, redis, config, { runner });
+    const server = app.listen(0);
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing server address");
+    const base = `http://127.0.0.1:${address.port}`;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      const login = await fetch(`${base}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: "Password123456" }),
+      });
+      const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+      await login.text();
+      const response = await fetch(`${base}/collection/run`, {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson",
+        },
+        body: "{}",
+        signal: AbortSignal.timeout(10000),
+      });
+      expect(response.headers.get("content-type")).toContain("application/x-ndjson");
+      expect(response.headers.get("x-accel-buffering")).toBe("no");
+      reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let received = "";
+      while (!received.includes("Envoi à l'IA")) {
+        const chunk = await reader.read();
+        if (chunk.done) throw new Error("Stream ended before AI started");
+        received += decoder.decode(chunk.value, { stream: true });
+      }
+      expect(received).toContain("articles récupérés");
+      expect(sends).toHaveLength(0);
+      expect(received).not.toContain('"type":"result"');
+      release();
+      while (true) {
+        const chunk = await reader.read();
+        received += decoder.decode(chunk.value, { stream: !chunk.done });
+        if (chunk.done) break;
+      }
+      const events = received
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(events.at(-1)).toMatchObject({
+        type: "result",
+        result: { status: "SENT", emailSent: true },
+      });
+      expect(
+        events.some(
+          (event) => event.progress?.stage === "email" && event.progress.status === "completed",
+        ),
+      ).toBe(true);
+    } finally {
+      release();
+      await reader?.cancel().catch(() => {});
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+  test("streaming requires authentication and reports a held lock without starting another run", async () => {
+    const app = createApp(db, redis, config, { runner });
+    expect(
+      (await request(app).post("/collection/run").set("Accept", "application/x-ndjson").send({}))
+        .status,
+    ).toBe(401);
+    const agent = request.agent(app);
+    await agent.post("/auth/login").send({ email, password: "Password123456" });
+    const key = `dailybrief:collection:user:${userId}`;
+    await redis.set(key, "other", { PX: 10000 });
+    try {
+      const response = await agent
+        .post("/collection/run")
+        .set("Accept", "application/x-ndjson")
+        .send({});
+      expect(JSON.parse(response.text.trim())).toMatchObject({
+        type: "error",
+        message: expect.stringContaining("déjà en cours"),
+      });
+      expect(summaries).toBe(0);
+    } finally {
+      await redis.del(key);
+    }
+  });
+  test("closing the live connection lets the existing pipeline finish exactly once", async () => {
+    let release = () => {};
+    waitForSummary = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let completion: ReturnType<typeof runner.run> | undefined;
+    const app = createApp(db, redis, config, {
+      runner: {
+        run: (...args) => {
+          completion = runner.run(...args);
+          return completion;
+        },
+      },
+    });
+    const login = await request(app)
+      .post("/auth/login")
+      .send({ email, password: "Password123456" });
+    const cookie = String(login.headers["set-cookie"]![0]).split(";")[0]!;
+    const server = app.listen(0);
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing address");
+    const controller = new AbortController();
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/collection/run`, {
+        method: "POST",
+        headers: {
+          Cookie: cookie,
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson",
+        },
+        body: "{}",
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+      });
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let received = "";
+      while (!received.includes("Envoi à l'IA")) {
+        const chunk = await reader.read();
+        if (chunk.done) throw new Error("Premature end of stream");
+        received += decoder.decode(chunk.value, { stream: true });
+      }
+      controller.abort();
+      await reader.cancel().catch(() => {});
+      release();
+      expect(await completion).toMatchObject({ status: "SENT", emailSent: true });
+      expect(sends).toHaveLength(1);
+      expect((await runner.run(userId)).status).toBe("NO_NEW_ARTICLES");
+      expect(sends).toHaveLength(1);
+    } finally {
+      controller.abort();
+      release();
+      await completion?.catch(() => {});
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
   test("manual route and scheduler invoke the same pipeline, recipient cannot be overridden", async () => {
     const app = createApp(db, redis, config, { runner });

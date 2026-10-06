@@ -14,16 +14,23 @@ import { renderNewsletter } from "./newsletter-template";
 import { articleIdentity } from "./fingerprint";
 import { nextCollection } from "./schedule";
 import { AppError } from "./errors";
-export type DailyBriefRunResult = {
-  status: "SENT" | "NO_NEW_ARTICLES" | "FAILED";
-  sourcesProcessed: number;
-  sourcesFailed: number;
-  articlesCollected: number;
-  newArticles: number;
-  articlesSummarized: number;
-  newsletterId?: string;
-  emailSent: boolean;
-};
+import type { CollectionFailure, CollectionStage, RunResult } from "@dailybrief/shared";
+import { reportProgress, type ProgressObserver } from "./progress";
+export type DailyBriefRunResult = RunResult;
+
+function failureFor(error: unknown, stage: CollectionStage): CollectionFailure {
+  const fallback =
+    stage === "ai"
+      ? "Échec du résumé IA."
+      : stage === "email"
+        ? "L'envoi SMTP a échoué. Vérifiez la configuration du serveur mail."
+        : "Échec du pipeline DailyBrief.";
+  return {
+    stage,
+    code: error instanceof AppError ? error.code : "PIPELINE_FAILED",
+    message: error instanceof AppError ? error.message : fallback,
+  };
+}
 export class DailyBriefPipelineService implements CollectionRunner {
   constructor(
     private db: Db,
@@ -68,7 +75,11 @@ export class DailyBriefPipelineService implements CollectionRunner {
       throw error;
     }
   }
-  async run(userId: string, trigger: RunTrigger = "manual"): Promise<DailyBriefRunResult> {
+  async run(
+    userId: string,
+    trigger: RunTrigger = "manual",
+    observer?: ProgressObserver,
+  ): Promise<DailyBriefRunResult> {
     return this.lock.run(userId, async (assertOwned) => {
       const user = await this.db.user.findUniqueOrThrow({ where: { id: userId } });
       const settings = await getSettings(this.db, userId);
@@ -99,12 +110,25 @@ export class DailyBriefPipelineService implements CollectionRunner {
       };
       let newsletterId: string | undefined;
       let accepted = false;
+      let stage: CollectionStage = "collection";
+      const report = (progress: Parameters<typeof reportProgress>[1]) =>
+        reportProgress(observer, progress);
       try {
-        const sources = await this.collector.collect(userId);
+        report({
+          stage,
+          status: "running",
+          message: "Démarrage de la collecte des sources actives.",
+        });
+        const sources = await this.collector.collect(userId, observer);
         result.sourcesProcessed = sources.length;
         result.sourcesFailed = sources.filter((source) => !source.success).length;
         const articles = sources.flatMap((source) => source.articles);
         result.articlesCollected = articles.length;
+        report({
+          stage,
+          status: "completed",
+          message: `${articles.length} articles récupérés ; ${result.sourcesFailed} sources en échec.`,
+        });
         await this.db.dailyBriefRun.update({
           where: { id: run.id },
           data: {
@@ -114,8 +138,19 @@ export class DailyBriefPipelineService implements CollectionRunner {
             })),
           },
         });
+        stage = "storage";
+        report({
+          stage,
+          status: "running",
+          message: "Détection des doublons et sauvegarde des articles.",
+        });
         for (const article of articles)
           if (await this.persist(userId, article)) result.newArticles++;
+        report({
+          stage,
+          status: "completed",
+          message: `${result.newArticles} nouveaux articles sauvegardés ; ${articles.length - result.newArticles} doublons ignorés.`,
+        });
         const pending = await this.db.article.findMany({
           where: {
             userId,
@@ -127,8 +162,18 @@ export class DailyBriefPipelineService implements CollectionRunner {
           take: 100,
         });
         const included: typeof pending = [];
+        let summaryFailure: CollectionFailure | undefined;
+        let processed = 0;
+        stage = "ai";
         for (let article of pending) {
           if (!article.summary || !article.summarizedAt) {
+            report({
+              stage,
+              status: "running",
+              message: `Envoi à l'IA : ${article.title}`,
+              completed: processed,
+              total: pending.length,
+            });
             try {
               const summary = await this.summary.summarize({
                 title: article.title,
@@ -149,22 +194,79 @@ export class DailyBriefPipelineService implements CollectionRunner {
                 })),
               };
               result.articlesSummarized++;
+              report({
+                stage,
+                status: "completed",
+                message: `Résumé enregistré : ${article.title}`,
+                completed: processed + 1,
+                total: pending.length,
+              });
             } catch (error) {
+              const failure = failureFor(error, "ai");
+              summaryFailure ??= failure;
               await this.db.article.update({
                 where: { id: article.id },
                 data: {
-                  summaryError: error instanceof AppError ? error.message : "Échec du résumé IA.",
+                  summaryError: failure.message,
                 },
               });
+              processed++;
+              report({
+                stage,
+                status: "failed",
+                message: `${article.title} : ${failure.message}`,
+                completed: processed,
+                total: pending.length,
+              });
+              // Infrastructure failures affect every article; retain all pending articles for retry.
+              if (["MODEL_MISSING", "AI_UNAVAILABLE"].includes(failure.code)) {
+                report({
+                  stage,
+                  status: "skipped",
+                  message: "Résumés restants suspendus jusqu'au rétablissement du service IA.",
+                  completed: processed,
+                  total: pending.length,
+                });
+                break;
+              }
               continue;
             }
+          } else {
+            report({
+              stage,
+              status: "skipped",
+              message: `Résumé déjà disponible : ${article.title}`,
+              completed: processed + 1,
+              total: pending.length,
+            });
           }
+          processed++;
           included.push(article);
         }
         if (!included.length) {
           result.status = pending.length || result.sourcesFailed ? "FAILED" : "NO_NEW_ARTICLES";
+          if (result.status === "FAILED") {
+            result.failure = summaryFailure ?? {
+              stage: "source",
+              code: "SOURCE_COLLECTION_FAILED",
+              message:
+                sources.find((source) => !source.success)?.error ??
+                "La récupération des sources a échoué.",
+            };
+          }
+          report({
+            stage: "newsletter",
+            status: result.status === "FAILED" ? "failed" : "skipped",
+            message: result.failure?.message ?? "Aucun nouvel article à envoyer.",
+          });
           return result;
         }
+        stage = "newsletter";
+        report({
+          stage,
+          status: "running",
+          message: `Préparation de la newsletter avec ${included.length} articles.`,
+        });
         const rendered = renderNewsletter(
           included.map((article) => ({
             title: article.summaryTitle ?? article.title,
@@ -187,11 +289,14 @@ export class DailyBriefPipelineService implements CollectionRunner {
         });
         newsletterId = newsletter.id;
         result.newsletterId = newsletterId;
+        report({ stage, status: "completed", message: "Newsletter préparée et sauvegardée." });
         await assertOwned();
+        stage = "email";
         await this.db.newsletter.update({
           where: { id: newsletterId },
           data: { status: "SENDING" },
         });
+        report({ stage, status: "running", message: "Envoi de la newsletter au serveur mail." });
         await this.email.send({ ...rendered, to: user.email, newsletterId });
         accepted = true;
         await this.db.newsletter.update({
@@ -200,8 +305,11 @@ export class DailyBriefPipelineService implements CollectionRunner {
         });
         result.status = "SENT";
         result.emailSent = true;
+        report({ stage, status: "completed", message: "Newsletter acceptée par le serveur mail." });
         return result;
       } catch (error) {
+        result.failure = failureFor(error, stage);
+        report({ stage, status: "failed", message: result.failure.message });
         if (
           newsletterId &&
           !accepted &&
@@ -209,23 +317,17 @@ export class DailyBriefPipelineService implements CollectionRunner {
         )
           await this.db.newsletter.update({
             where: { id: newsletterId },
-            data: { status: "FAILED", error: "Échec de l'envoi de la newsletter." },
+            data: { status: "FAILED", error: result.failure.message },
           });
-        await this.db.dailyBriefRun.update({
-          where: { id: run.id },
-          data: {
-            error: error instanceof AppError ? error.message : "Échec du pipeline DailyBrief.",
-          },
-        });
         return result;
       } finally {
         const now = new Date();
         const currentSettings = await getSettings(this.db, userId);
-        const { newsletterId: _newsletterId, ...runData } = result;
+        const { newsletterId: _newsletterId, failure, ...runData } = result;
         await this.db.$transaction([
           this.db.dailyBriefRun.update({
             where: { id: run.id },
-            data: { ...runData, finishedAt: now },
+            data: { ...runData, error: failure?.message ?? null, finishedAt: now },
           }),
           this.db.dailyBriefSettings.update({
             where: { userId },

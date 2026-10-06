@@ -100,6 +100,23 @@ ils peuvent être retentés. Les résumés sont persistés avant l'envoi SMTP.
 Un échec SMTP laisse la newsletter `FAILED` et les articles réutilisables sans
 nouvelle génération IA. Aucun email vide n'est envoyé.
 
+Le bouton « Récupérer maintenant » affiche un journal en direct : récupération de
+chaque source, nombre d'articles, sauvegarde et doublons, titre de chaque article
+envoyé à Ollama et résultat du résumé, préparation de la newsletter et envoi SMTP.
+Les erreurs identifient l'étape qui échoue, notamment l'absence d'Ollama ou du
+modèle configuré. Les URLs des sources sont affichées par hôte pour préserver les
+paramètres privés. Une panne globale d'Ollama suspend les résumés restants ; les
+articles sont conservés pour une nouvelle tentative.
+
+Le frontend demande `Accept: application/x-ndjson` sur `POST /collection/run`.
+Le backend transmet les événements `progress`, puis un `result` final (ou une
+erreur de démarrage `error`), avec un heartbeat toutes les 15 secondes. Sans cet
+en-tête, l'endpoint conserve sa réponse JSON. Le proxy doit permettre le streaming
+sans mise en tampon (`X-Accel-Buffering: no`). Fermer la page interrompt le suivi,
+mais la collecte continue côté serveur ; aucune relance automatique n'est faite.
+Le journal est visible pendant la session de la page. Le bilan et les erreurs
+restent enregistrés dans l'historique serveur.
+
 SMTP se configure dans `.env`. Le destinataire provient exclusivement de
 `User.email`. Mailpit utilise les valeurs locales proposées et permet de consulter
 les messages sur le port 8025. Le template fournit HTML échappé et texte brut.

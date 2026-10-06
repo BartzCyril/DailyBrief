@@ -4,6 +4,8 @@ import type { Db } from "./db";
 import { requireAuth } from "./auth";
 import { nextCollection, settingsSchema } from "./schedule";
 import { getSettings, type CollectionRunner } from "./collection";
+import type { CollectionEvent } from "@dailybrief/shared";
+import { AppError } from "./errors";
 export function settingsRouter(db: Db, runner: CollectionRunner) {
   const router = Router();
   router.use(requireAuth);
@@ -54,7 +56,42 @@ export function settingsRouter(db: Db, runner: CollectionRunner) {
     z.object({})
       .strict()
       .parse(req.body ?? {});
-    res.json(await runner.run(req.session.userId!));
+    if (!req.get("accept")?.includes("application/x-ndjson")) {
+      res.json(await runner.run(req.session.userId!));
+      return;
+    }
+    res.status(200).set({
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-store, no-transform",
+      "X-Accel-Buffering": "no",
+    });
+    res.flushHeaders();
+    let connected = true;
+    res.on("close", () => {
+      connected = false;
+    });
+    const send = (event: CollectionEvent) => {
+      if (connected && !res.destroyed) res.write(`${JSON.stringify(event)}\n`);
+    };
+    const heartbeat = setInterval(() => {
+      if (connected && !res.destroyed) res.write("\n");
+    }, 15000);
+    heartbeat.unref();
+    try {
+      const result = await runner.run(req.session.userId!, "manual", (progress) =>
+        send({ type: "progress", progress }),
+      );
+      send({ type: "result", result });
+    } catch (error) {
+      send({
+        type: "error",
+        message: error instanceof AppError ? error.message : "Une erreur interne est survenue.",
+        code: error instanceof AppError ? error.code : "INTERNAL_ERROR",
+      });
+    } finally {
+      clearInterval(heartbeat);
+      if (connected) res.end();
+    }
   });
   return router;
 }

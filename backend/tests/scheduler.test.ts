@@ -141,7 +141,7 @@ describe("collection settings, source isolation and Redis lock", () => {
       run: async (id, trigger) => {
         called.push(id);
         expect(trigger).toBe("scheduled");
-        await runner.run(id, trigger);
+        return await runner.run(id, trigger);
       },
     });
     expect(called).toEqual([userId]);

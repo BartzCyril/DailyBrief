@@ -7,19 +7,21 @@ export class ApiError extends Error {
     super(message);
   }
 }
-export async function api<T>(
+export async function apiResponse(
   path: string,
-  options: { method?: string; body?: unknown; signal?: AbortSignal } = {},
-): Promise<T> {
+  options: { method?: string; body?: unknown; signal?: AbortSignal; accept?: string } = {},
+): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(`/api${path}`, {
       method: options.method ?? "GET",
       credentials: "include",
       signal: options.signal,
-      ...(options.body !== undefined
-        ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(options.body) }
-        : {}),
+      headers: {
+        ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(options.accept ? { Accept: options.accept } : {}),
+      },
+      ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
@@ -31,6 +33,13 @@ export async function api<T>(
       window.dispatchEvent(new Event("dailybrief:unauthenticated"));
     throw new ApiError(response.status, data.message ?? "La requête a échoué.", data.code);
   }
+  return response;
+}
+export async function api<T>(
+  path: string,
+  options: Parameters<typeof apiResponse>[1] = {},
+): Promise<T> {
+  const response = await apiResponse(path, options);
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }
 export function errorMessage(error: unknown): string {

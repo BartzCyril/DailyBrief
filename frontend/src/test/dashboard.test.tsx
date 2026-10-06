@@ -147,6 +147,69 @@ test("reports failed pipeline results and loading errors", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "Récupérer maintenant" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("n'a pas pu aboutir");
 });
+test("shows live article progress before completion and displays the precise AI error", async () => {
+  const normal = mockApi();
+  let controller!: ReadableStreamDefaultController;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string, init?: RequestInit) =>
+      url.endsWith("/collection/run")
+        ? Promise.resolve(
+            new Response(
+              new ReadableStream({
+                start(c) {
+                  controller = c;
+                },
+              }),
+              { headers: { "Content-Type": "application/x-ndjson" } },
+            ),
+          )
+        : normal(url, init),
+    ),
+  );
+  mount();
+  await userEvent.click(await screen.findByRole("button", { name: "Récupérer maintenant" }));
+  const message = "Envoi à l'IA : Article de la bibliothèque";
+  controller.enqueue(
+    new TextEncoder().encode(
+      JSON.stringify({
+        type: "progress",
+        progress: {
+          stage: "ai",
+          status: "running",
+          message,
+          at: "2026-10-06T08:00:00Z",
+          completed: 0,
+          total: 10,
+        },
+      }) + "\n",
+    ),
+  );
+  expect(await screen.findByText(message)).toBeInTheDocument();
+  expect(screen.getByText("Résumé IA en cours · 0/10")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Collecte en cours…" })).toBeDisabled();
+  controller.enqueue(
+    new TextEncoder().encode(
+      JSON.stringify({
+        type: "result",
+        result: {
+          status: "FAILED",
+          failure: {
+            stage: "ai",
+            code: "MODEL_MISSING",
+            message: "Le modèle IA qwen3:4b n'est pas installé.",
+          },
+        },
+      }) + "\n",
+    ),
+  );
+  controller.close();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Le modèle IA qwen3:4b n'est pas installé.",
+  );
+  expect(screen.getByRole("log", { name: "Étapes de la collecte" })).toHaveTextContent(message);
+  expect(screen.getByRole("button", { name: "Récupérer maintenant" })).toBeEnabled();
+});
 test("can retry initial dashboard errors", async () => {
   failLoad = true;
   mount();
