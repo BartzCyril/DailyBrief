@@ -59,6 +59,73 @@ test("long articles send every portion including the end, then synthesize their 
   expect(progress.some((message) => message.includes("Synthèse"))).toBe(true);
   expect(result.title).toBe("Article");
 });
+test("default settings keep a 10k article in one request and preserve explicit env overrides", async () => {
+  const prompts: string[] = [];
+  const provider = new OllamaSummaryProvider(
+    config,
+    new OllamaClient(config, async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      prompts.push(JSON.parse(body.prompt.split("ARTICLE:\n")[1]!).content);
+      return response({ response: JSON.stringify(output), done: true });
+    }),
+  );
+  const content = "Une mesure budgétaire détaillée. ".repeat(320) + "DERNIERE_MESURE";
+  await provider.summarize({ title: "Budget", content });
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0]).toBe(content);
+  expect(prompts[0]).toContain("DERNIERE_MESURE");
+  expect(prompts.every((prompt) => prompt.length <= config.AI_MAX_INPUT_CHARS)).toBe(true);
+  expect(config.OLLAMA_TIMEOUT_MS).toBe(1800000);
+  expect(
+    readConfig({
+      DATABASE_URL: "postgresql://localhost/test",
+      SESSION_SECRET: "x".repeat(32),
+      OLLAMA_TIMEOUT_MS: "900000",
+      AI_MAX_INPUT_CHARS: "4000",
+    }),
+  ).toMatchObject({ OLLAMA_TIMEOUT_MS: 900000, AI_MAX_INPUT_CHARS: 4000 });
+});
+test("the real generation deadline cancels a pending request and gives actionable timeout details", async () => {
+  const shortConfig = { ...config, OLLAMA_TIMEOUT_MS: 25 };
+  let cancelled = false;
+  const provider = new OllamaSummaryProvider(
+    shortConfig,
+    new OllamaClient(shortConfig, async (_url, init) => {
+      expect(init?.timeout).toBe(false);
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            cancelled = true;
+            reject(init.signal?.reason);
+          },
+          { once: true },
+        );
+      });
+    }),
+  );
+  await expect(provider.summarize(input)).rejects.toMatchObject({
+    code: "AI_TIMEOUT",
+    message: expect.stringContaining("OLLAMA_TIMEOUT_MS"),
+  });
+  expect(cancelled).toBe(true);
+});
+test("progress remains visible while Ollama is pending and stops after a validated result", async () => {
+  const progress: string[] = [];
+  let complete = (_value: Response) => {};
+  const waiting = new Promise<Response>((resolve) => {
+    complete = resolve;
+  });
+  const provider = new OllamaSummaryProvider(config, new OllamaClient(config, async () => waiting));
+  const result = provider.summarize(input, (message) => progress.push(message));
+  await new Promise((resolve) => setTimeout(resolve, 15200));
+  expect(
+    progress.some((message) => message.includes("En attente") && message.includes("portion 1/1")),
+  ).toBe(true);
+  complete(response({ response: JSON.stringify(output), done: true }));
+  expect(await result).toEqual(output);
+  expect(progress.at(-1)).toContain("terminé");
+}, 20000);
 test("failed portions prevent a partial summary from being returned", async () => {
   const smallConfig = { ...config, AI_MAX_INPUT_CHARS: 1000 };
   let calls = 0;
@@ -78,6 +145,20 @@ test("validates input and output shapes", () => {
   expect(summarySchema.safeParse(output).success).toBe(true);
   expect(summarySchema.safeParse({ ...output, keyPoints: [1] }).success).toBe(false);
   expect(summaryInputSchema.safeParse({ title: "", content: "" }).success).toBe(false);
+});
+test("accepts longer summaries without clipping them and rejects an oversized response", async () => {
+  const longOutput = { ...output, summary: "Résumé détaillé. ".repeat(500).trim() };
+  let requestedSummaryLimit: number | undefined;
+  const provider = new OllamaSummaryProvider(
+    config,
+    new OllamaClient(config, async (_url, init) => {
+      requestedSummaryLimit = JSON.parse(String(init?.body)).format.properties.summary.maxLength;
+      return response({ response: JSON.stringify(longOutput), done: true });
+    }),
+  );
+  expect((await provider.summarize(input)).summary).toBe(longOutput.summary);
+  expect(requestedSummaryLimit).toBe(12000);
+  expect(summarySchema.safeParse({ ...output, summary: "a".repeat(12001) }).success).toBe(false);
 });
 test("returns validated summaries from the configured model", async () => {
   let requestBody = "";

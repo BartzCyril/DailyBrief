@@ -6,7 +6,7 @@ import { ConcurrencyLimiter } from "./concurrency";
 export const summarySchema = z
   .object({
     title: z.string().trim().min(1).max(300),
-    summary: z.string().trim().min(1).max(6000),
+    summary: z.string().trim().min(1).max(12000),
     keyPoints: z.array(z.string().trim().min(1).max(1000)).min(1).max(8),
   })
   .strict();
@@ -45,7 +45,10 @@ export function splitArticleText(content: string, maxChars: number): string[] {
   if (content.trim()) chunks.push(content.trim());
   return chunks;
 }
-export type HttpFetch = (url: string, init?: RequestInit) => Promise<Response>;
+export type HttpFetch = (
+  url: string,
+  init?: RequestInit & { timeout?: number | boolean },
+) => Promise<Response>;
 const generationSchema = z.object({
   response: z.string(),
   done: z.boolean().optional(),
@@ -65,6 +68,9 @@ export class OllamaClient {
         {
           method: body ? "POST" : "GET",
           signal,
+          // Bun has a separate five-minute socket idle timeout. The abort signal
+          // owns the configured deadline, including long non-streaming generations.
+          timeout: false,
           ...(body
             ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
             : {}),
@@ -92,7 +98,11 @@ export class OllamaClient {
         signal.aborted ||
         (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name))
       )
-        throw new AppError(504, "Le résumé IA a dépassé le délai autorisé.", "AI_TIMEOUT");
+        throw new AppError(
+          504,
+          `Ollama (${this.config.OLLAMA_MODEL}) a dépassé le délai de ${Math.ceil(this.config.OLLAMA_TIMEOUT_MS / 1000)} secondes. Augmentez OLLAMA_TIMEOUT_MS ou réduisez AI_MAX_INPUT_CHARS dans .env, puis redémarrez le backend.`,
+          "AI_TIMEOUT",
+        );
       throw new AppError(
         503,
         "Le service IA est indisponible. Vérifiez qu'Ollama est démarré et accessible depuis le backend.",
@@ -134,8 +144,9 @@ export class OllamaSummaryProvider implements SummaryProvider {
     return this.limiter.run(async () => {
       let summaries: ArticleSummary[] = [];
       for (const [index, chunk] of chunks.entries()) {
-        observer?.(`Résumé de la portion ${index + 1}/${chunks.length}.`);
-        summaries.push(await this.generate({ ...value, content: chunk }));
+        const label = `portion ${index + 1}/${chunks.length}`;
+        observer?.(`Résumé de la ${label} (${chunk.length} caractères).`);
+        summaries.push(await this.generate({ ...value, content: chunk }, observer, label));
       }
       let round = 0;
       while (summaries.length > 1) {
@@ -167,17 +178,41 @@ export class OllamaSummaryProvider implements SummaryProvider {
           observer?.(
             `Synthèse des portions de l'article, étape ${round}, groupe ${index + 1}/${groups.length}.`,
           );
-          next.push(await this.generate({ ...value, content: text }));
+          next.push(
+            await this.generate(
+              { ...value, content: text },
+              observer,
+              `synthèse ${round}, groupe ${index + 1}/${groups.length}`,
+            ),
+          );
         }
         summaries = next;
       }
       return summaries[0]!;
     });
   }
-  private async generate(input: SummaryInput): Promise<ArticleSummary> {
+  private async generate(
+    input: SummaryInput,
+    observer?: SummaryObserver,
+    label = "résumé",
+  ): Promise<ArticleSummary> {
     const prompt = summaryPrompt(input, this.config.AI_LANGUAGE, this.config.AI_MAX_INPUT_CHARS);
-    const result = generationSchema.safeParse(
-      await this.client.request("/api/generate", {
+    const started = performance.now();
+    const heartbeat = observer
+      ? setInterval(() => {
+          // A disconnected observer must not create an uncaught timer exception.
+          try {
+            observer(
+              `En attente d'Ollama (${this.config.OLLAMA_MODEL}) pour la ${label} depuis ${Math.floor((performance.now() - started) / 1000)} secondes ; délai maximal ${Math.ceil(this.config.OLLAMA_TIMEOUT_MS / 1000)} secondes.`,
+            );
+          } catch {
+            /* Generation continues independently of progress delivery. */
+          }
+        }, 15000)
+      : undefined;
+    let raw: unknown;
+    try {
+      raw = await this.client.request("/api/generate", {
         model: this.config.OLLAMA_MODEL,
         prompt,
         stream: false,
@@ -185,8 +220,11 @@ export class OllamaSummaryProvider implements SummaryProvider {
         think: false,
         format: z.toJSONSchema(summarySchema),
         options: { temperature: 0.2 },
-      }),
-    );
+      });
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+    }
+    const result = generationSchema.safeParse(raw);
     if (!result.success)
       throw new AppError(502, "Format de réponse Ollama invalide.", "INVALID_AI_RESPONSE");
     if (result.data.done === false || result.data.done_reason === "length")
@@ -212,6 +250,9 @@ export class OllamaSummaryProvider implements SummaryProvider {
     const summary = summarySchema.safeParse(value);
     if (!summary.success)
       throw new AppError(502, "Format du résumé IA invalide.", "INVALID_AI_RESPONSE");
+    observer?.(
+      `Ollama a terminé la ${label} en ${Math.ceil((performance.now() - started) / 1000)} secondes.`,
+    );
     return summary.data;
   }
 }
