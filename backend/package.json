@@ -12,6 +12,7 @@
     "db:dev": "prisma migrate dev"
   },
   "dependencies": {
+    "@dailybrief/shared": "workspace:*",
     "@prisma/adapter-pg": "6.19.2",
     "@prisma/client": "6.19.2",
     "cheerio": "^1.2.0",
