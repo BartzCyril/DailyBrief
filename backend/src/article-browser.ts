@@ -119,6 +119,44 @@ export class ArticleBrowser {
           (async () => {
             await page.goto(url, { waitUntil: "networkidle" });
             await page.waitForFunction(() => (document.body?.innerText.trim().length ?? 0) >= 200);
+            // Network inactivity does not imply that timers, hydration or lazy sections
+            // have finished. Scroll through the page and wait for the article text to settle.
+            const settled = await page.evaluate(async () => {
+              const started = performance.now();
+              let changedAt = started;
+              let previous = "";
+              let scrolls = 0;
+              while (performance.now() - started < 8000) {
+                const region =
+                  document.querySelector("main, [role='main'], article") ?? document.body;
+                const text = region?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+                if (text !== previous) {
+                  previous = text;
+                  changedAt = performance.now();
+                }
+                const atBottom =
+                  window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+                if (!atBottom && scrolls < 12) {
+                  window.scrollBy(0, Math.max(400, window.innerHeight * 0.8));
+                  scrolls++;
+                  changedAt = performance.now();
+                } else if (
+                  performance.now() - started >= 1500 &&
+                  performance.now() - changedAt >= 1200
+                ) {
+                  return true;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 200));
+              }
+              // Avoid silently sending an intermediate article snapshot to the AI.
+              return performance.now() - changedAt >= 1200;
+            });
+            if (!settled)
+              throw new AppError(
+                422,
+                "Le texte de l'article continue à changer après le délai de chargement. Réessayez pour éviter un résumé incomplet.",
+                "ARTICLE_CONTENT_UNSTABLE",
+              );
           })(),
           navigationFailure,
         ]);
