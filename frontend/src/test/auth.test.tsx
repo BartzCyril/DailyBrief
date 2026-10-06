@@ -6,6 +6,7 @@ import { App } from "../App";
 const user = { id: "u1", email: "reader@example.com" };
 function mockApi(current = false) {
   const mock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/sources")) return new Response("[]");
     if (url.endsWith("/auth/me")) return new Response(JSON.stringify(current ? user : { message: "Unauthorized" }), { status: current ? 200 : 401 });
     if (url.endsWith("/auth/login")) { current = true; return new Response(JSON.stringify(user)); }
     if (url.endsWith("/auth/logout")) { current = false; return new Response(null, { status: 204 }); }
