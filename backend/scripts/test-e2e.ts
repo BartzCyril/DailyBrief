@@ -113,6 +113,12 @@ try {
   await page.getByText("Article RSS", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Enregistrer le flux" }).click();
   await page.waitForURL("**/dashboard");
+  await page
+    .getByRole("button", { name: "Modifier https://fixture.example/feed", exact: true })
+    .click();
+  await page.getByLabel("URL du flux RSS").fill("https://fixture.example/updated-feed");
+  await page.getByRole("button", { name: "Enregistrer les modifications" }).click();
+  await page.getByText("https://fixture.example/updated-feed", { exact: true }).waitFor();
   await page.getByRole("link", { name: "Ajouter une source de scraping" }).click();
   await page.getByLabel("URL du site").fill("https://fixture.example/news");
   await page.getByLabel("Sélecteur des articles", { exact: true }).fill("article");
@@ -123,6 +129,35 @@ try {
   await page.getByText("Article scraping", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Enregistrer la source" }).click();
   await page.waitForURL("**/dashboard");
+  const sourcesBeforeEdit = await db.source.findMany({
+    where: { user: { email } },
+    orderBy: { id: "asc" },
+  });
+  await page
+    .getByRole("button", { name: "Modifier https://fixture.example/news", exact: true })
+    .click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "Source editing must fit mobile viewport",
+  );
+  await page.screenshot({ path: "/tmp/dailybrief-edit-source-mobile.png", fullPage: true });
+  await page.getByLabel("URL du site").fill("https://fixture.example/updated-news");
+  await page.getByRole("button", { name: "Enregistrer les modifications" }).click();
+  await page.getByText("https://fixture.example/updated-news", { exact: true }).waitFor();
+  const sourcesAfterEdit = await db.source.findMany({
+    where: { user: { email } },
+    orderBy: { id: "asc" },
+  });
+  assert.deepEqual(
+    sourcesAfterEdit.map((source) => source.id),
+    sourcesBeforeEdit.map((source) => source.id),
+  );
+  assert.deepEqual(
+    sourcesAfterEdit.map((source) => source.scrapingConfig),
+    sourcesBeforeEdit.map((source) => source.scrapingConfig),
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("switch", { name: "Récupération automatique", exact: true }).click();
   await page.getByLabel("Heure quotidienne").fill("08:45");
   await page.getByRole("button", { name: "Enregistrer les réglages" }).click();
@@ -190,7 +225,7 @@ try {
   await page.waitForURL("**/login");
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, RSS, browser scraping, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: register, login, RSS and scraping URL editing with preserved source identities and selectors, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();
