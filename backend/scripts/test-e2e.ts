@@ -50,11 +50,23 @@ const app = createApp(db, redis, config, {
     scrapingRequests.push(url);
     const offset = new URL(url).searchParams.get("offset");
     if (offset !== null && offset !== "0") throw new UpstreamHttpError(404, url);
-    if (url.endsWith("/button-batch"))
+    if (url.includes("/button-batch/"))
       return JSON.stringify({
-        html: '<article><h2>Article supplémentaire</h2><a href="/scraped-next">Lire</a></article>',
+        html: url.endsWith("/1")
+          ? '<article><h2>Article supplémentaire</h2><a href="/scraped-next">Lire</a></article>'
+          : '<article><h2>Dernier article chargé</h2><a href="/scraped-last">Lire</a></article>',
       });
-    return `<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article><button id="more" class="more">Plus</button><script>document.querySelector('#more').onclick=async()=>{fetch('https://metrics.example/event',{method:'POST',body:'click=more'}).catch(()=>{});const data=await(await fetch('/button-batch')).json();document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);document.querySelector('#more').remove();};</script>`;
+    return `<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article><button id="more" class="more">Plus</button><script>
+      let batch=0; const button=document.querySelector('#more');
+      button.onclick=async()=>{
+        if(button.classList.contains('fetching')) return;
+        button.classList.add('fetching');
+        fetch('https://metrics.example/event',{method:'POST',body:'click=more'}).catch(()=>{});
+        const data=await(await fetch('/button-batch/'+(++batch))).json();
+        button.insertAdjacentHTML('beforebegin',data.html);
+        if(batch===2) button.remove();
+        else setTimeout(()=>button.classList.remove('fetching'),500);
+      };</script>`;
   }),
   summary: {
     summarize: async (input) => {
@@ -138,6 +150,7 @@ try {
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article scraping", { exact: true }).waitFor();
   await page.getByText("Article supplémentaire", { exact: true }).waitFor();
+  await page.getByText("Dernier article chargé", { exact: true }).waitFor();
   scrapingRequests.length = 0;
   await page.getByRole("button", { name: "Enregistrer la source" }).click();
   await page.waitForURL("**/dashboard");
@@ -186,6 +199,7 @@ try {
   await page.getByLabel("Délai maximum après un clic (ms)").fill("20000");
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article supplémentaire", { exact: true }).waitFor();
+  await page.getByText("Dernier article chargé", { exact: true }).waitFor();
   assert.deepEqual(
     await db.source.findMany({ where: { user: { email } }, orderBy: { id: "asc" } }),
     sourcesAfterEdit,

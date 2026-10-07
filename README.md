@@ -79,17 +79,21 @@ et un délai maximum de chargement par clic (1 à 60 secondes, 15 secondes par d
 Exemple : `loadMore: { buttonSelector: ".load-more", waitTimeoutMs: 15000 }`.
 Il clique sans limite de nombre jusqu'à disparition ou désactivation du bouton,
 en conservant et dédupliquant les articles même si le site remplace la liste.
-Après chaque clic, il attend la fin des requêtes AJAX et la stabilisation des articles.
+Après chaque clic, il attend la fin des requêtes AJAX, la stabilisation des articles
+et la libération du bouton (`fetching`, `loading`, `is-loading`, `aria-busy` ou
+`data-loading`). Un thème peut maintenir ce verrou après l’affichage des articles :
+le clic suivant attend alors que le bouton soit disponible.
 Si aucun nouvel article n'apparaît dans le délai, il s'arrête avec un avertissement
 et conserve les résultats. Un bouton absent dès le départ est également signalé.
 Les chargements JavaScript/AJAX sont pris en charge, y compris les requêtes POST
 sur le même site ; les requêtes et redirections conservent la validation des adresses
 publiques. Les POST vers un autre site sont bloqués ; une requête annexe, comme une
-mesure d'audience, ne fait pas échouer un lot d'articles chargé correctement. Si
-aucun chargement sur le site n'aboutit et qu'une requête POST a été bloquée, son
-URL est indiquée dans l'erreur. Une réponse de chargement réussie sans nouvel
-article termine normalement la collecte avec un avertissement, même si une
-requête annexe a été bloquée. Les autres erreurs AJAX restent des échecs de collecte.
+mesure d'audience, ne fait pas échouer la collecte. Si aucun article n'apparaît
+après le clic, les résultats précédents sont conservés et un avertissement décrit
+l'absence de progrès. Le diagnostic précise si aucune requête AJAX vers le site
+n'a été observée, les éventuelles erreurs JavaScript et les POST externes bloqués,
+sans attribuer automatiquement l'arrêt à ces services annexes. Les erreurs de
+chargement AJAX restent des échecs de collecte.
 Seuls des sites accessibles sans connexion sont pris en charge.
 
 Installez Chromium avec `bun run browser:install`. Si le CDN Playwright est
