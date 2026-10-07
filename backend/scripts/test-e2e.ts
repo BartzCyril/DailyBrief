@@ -27,6 +27,7 @@ const db = createDb(url);
 const redis = createRedis(config.REDIS_URL);
 await redis.connect();
 const messages: NewsletterMessage[] = [];
+const scrapingRequests: string[] = [];
 let releaseSummary = () => {};
 const summaryGate = new Promise<void>((resolve) => {
   releaseSummary = resolve;
@@ -45,6 +46,7 @@ const app = createApp(db, redis, config, {
       "<rss><channel><title>Flux de test</title><item><title>Article RSS</title><link>https://fixture.example/rss-article</link><description>Informations RSS contrôlées.</description></item></channel></rss>",
   ),
   scraping: new ScrapingService(async (url) => {
+    scrapingRequests.push(url);
     const offset = new URL(url).searchParams.get("offset");
     return offset !== null && offset !== "0"
       ? "<main></main>"
@@ -129,8 +131,14 @@ try {
   await page.getByLabel("Nombre maximum de scrolls").fill("0");
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article scraping", { exact: true }).waitFor();
+  scrapingRequests.length = 0;
   await page.getByRole("button", { name: "Enregistrer la source" }).click();
   await page.waitForURL("**/dashboard");
+  assert.deepEqual(
+    scrapingRequests,
+    ["https://fixture.example/news"],
+    "Creation should validate only the initial page",
+  );
   const sourcesBeforeEdit = await db.source.findMany({
     where: { user: { email } },
     orderBy: { id: "asc" },
@@ -190,8 +198,14 @@ try {
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     "Full source settings must fit mobile viewport",
   );
+  scrapingRequests.length = 0;
   await page.getByRole("button", { name: "Enregistrer les modifications" }).click();
   await page.getByLabel("URL du site").waitFor({ state: "hidden" });
+  assert.deepEqual(
+    scrapingRequests,
+    ["https://fixture.example/updated-news?offset=0"],
+    "Editing should validate only the configured starting page",
+  );
   const editedSource = await db.source.findFirstOrThrow({
     where: { user: { email }, type: "SCRAPING" },
   });
@@ -208,8 +222,17 @@ try {
   await page.getByLabel("Heure quotidienne").fill("08:45");
   await page.getByRole("button", { name: "Enregistrer les réglages" }).click();
   await page.getByText("Réglages enregistrés.").waitFor();
+  scrapingRequests.length = 0;
   await page.getByRole("button", { name: "Récupérer maintenant" }).click();
   await page.getByText("Envoi à l'IA : Article RSS", { exact: true }).waitFor();
+  assert.deepEqual(
+    scrapingRequests,
+    [
+      "https://fixture.example/updated-news?offset=0",
+      "https://fixture.example/updated-news?offset=1",
+    ],
+    "Collection must still visit subsequent pages",
+  );
   assert.equal(messages.length, 0, "Live AI progress must be visible before SMTP runs");
   assert(await page.getByRole("button", { name: "Collecte en cours…" }).isDisabled());
   await page.screenshot({ path: "/tmp/dailybrief-collection-live.png", fullPage: true });

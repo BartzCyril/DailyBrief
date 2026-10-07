@@ -62,6 +62,16 @@ export class ScrapingService {
   private limiter = new ConcurrencyLimiter(2);
   constructor(private fetchText: FetchText = fetchRemoteText) {}
   async collect(url: string, input: ScrapingConfig): Promise<SourcePreview> {
+    return this.scrape(url, input, false);
+  }
+  async validateFirstPage(url: string, input: ScrapingConfig): Promise<void> {
+    await this.scrape(url, input, true);
+  }
+  private async scrape(
+    url: string,
+    input: ScrapingConfig,
+    firstPageOnly: boolean,
+  ): Promise<SourcePreview> {
     const config = scrapingSchema.parse(input);
     return this.limiter.run(async () => {
       const browser = await chromium.launch({
@@ -113,7 +123,7 @@ export class ScrapingService {
         if (config.mode === "SCROLL") {
           await page.goto(url, { waitUntil: "networkidle" });
           articles.push(...(await extract(page, config)));
-          for (let i = 0; i < config.scroll!.maxScrolls; i++) {
+          for (let i = 0; i < (firstPageOnly ? 0 : config.scroll!.maxScrolls); i++) {
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
             await page.waitForTimeout(config.scroll!.waitAfterScrollMs);
             articles.push(...(await extract(page, config)));
@@ -145,6 +155,7 @@ export class ScrapingService {
               seenArticles.add(key);
               articles.push(article);
             }
+            if (firstPageOnly) break;
           }
         }
         const result = deduplicatePreviews(articles);

@@ -221,7 +221,11 @@ préremplis avec les valeurs enregistrées : URL pour un flux RSS ; URL, sélect
 d'articles, de titre, de lien, de description et de date, mode de récupération,
 paramètres de scroll ou de pagination pour une source de scraping.
 « Tester » affiche un aperçu sans modifier la source ni enregistrer d'articles.
-Une modification invalide l'aperçu. Les réglages sont vérifiés avant l'enregistrement.
+Une modification invalide l'aperçu. À la création comme à l'édition, l'enregistrement
+vérifie uniquement la première page configurée (le numéro de départ en pagination),
+sans parcourir les pages suivantes ni effectuer de scroll supplémentaire.
+Les sélecteurs et l'accès réseau restent vérifiés. « Tester », le workflow de A à Z
+et la collecte continuent à parcourir toutes les pages ou à effectuer les scrolls configurés.
 Une erreur de récupération ou une adresse déjà utilisée laisse la source existante
 inchangée. « Annuler » ferme le formulaire sans enregistrer.
 

@@ -5,6 +5,7 @@ import type { ScrapingConfig } from "@dailybrief/shared";
 import { scrapingSchema } from "../../shared/src/scraping";
 import { ScrapingService, paginationUrl } from "../src/scraping";
 import { createApp } from "../src/app";
+import { AppError } from "../src/errors";
 import { config, db, redis, connect, disconnect } from "./helpers";
 const base = {
   articleSelector: "article",
@@ -182,6 +183,18 @@ test("browser performs bounded dynamic scrolling and merges snapshots", async ()
   expect(result.articles.map((item) => item.title)).toContain("New");
   expect(result.articles).toHaveLength(2);
 }, 15000);
+test("first-page validation does not scroll but keeps executing page JavaScript", async () => {
+  const requests: string[] = [];
+  const service = new ScrapingService(async (url) => {
+    requests.push(url);
+    return `<body style="min-height:5000px"><article></article><script>
+      document.querySelector('article').innerHTML='<h2>Article JS</h2><a href="/js">Lire</a>';
+      window.addEventListener('scroll',()=>fetch('/scrolled'));
+    </script></body>`;
+  });
+  await service.validateFirstPage("https://fixture.example/scroll-validation", scroll);
+  expect(requests).toEqual(["https://fixture.example/scroll-validation"]);
+}, 15000);
 test("rejects invalid selectors and empty extraction without leaking internals", async () => {
   const service = new ScrapingService(async () => html("1"));
   await expect(
@@ -197,8 +210,18 @@ test("rejects empty extraction", async () => {
 describe("scraping source routes", () => {
   const email = `scrape-${randomUUID()}@example.com`;
   let userId = "";
+  const requests: string[] = [];
   const app = createApp(db, redis, config, {
-    scraping: new ScrapingService(async () => html("1")),
+    scraping: new ScrapingService(async (url) => {
+      requests.push(url);
+      if (
+        url.includes("first-page-only") &&
+        new URL(url).searchParams.get("page") !== "5" &&
+        !url.endsWith("/5/")
+      )
+        throw new AppError(502, "Page suivante inaccessible.", "NETWORK_ERROR");
+      return html("1");
+    }),
   });
   const agent = request.agent(app);
   beforeAll(async () => {
@@ -267,4 +290,49 @@ describe("scraping source routes", () => {
       (await db.source.findUniqueOrThrow({ where: { id: saved.body.id } })).scrapingConfig,
     ).toEqual(saved.body.scrapingConfig);
   }, 15000);
+  test("creation and editing validate only the configured starting page while explicit tests still visit later pages", async () => {
+    for (const pagination of [
+      { strategy: "QUERY_PARAM" as const, queryParam: "page", startPage: 5 },
+      {
+        strategy: "URL_TEMPLATE" as const,
+        urlTemplate: "https://fixture.example/first-page-only-template/page/{page}/",
+        startPage: 5,
+      },
+    ]) {
+      const sourceUrl = `https://fixture.example/first-page-only-${pagination.strategy}`;
+      const scrapingConfig = { ...paginate, pagination };
+      const firstUrl = paginationUrl(sourceUrl, scrapingConfig, 5);
+      requests.length = 0;
+      const saved = await agent
+        .post("/sources")
+        .send({ url: sourceUrl, type: "SCRAPING", scrapingConfig });
+      expect(saved.status).toBe(201);
+      expect(requests).toEqual([firstUrl]);
+      expect(saved.body.scrapingConfig).toEqual(scrapingConfig);
+      requests.length = 0;
+      const editedConfig = { ...scrapingConfig, descriptionSelector: "p:first-of-type" };
+      expect(
+        (await agent.patch(`/sources/${saved.body.id}`).send({ scrapingConfig: editedConfig }))
+          .status,
+      ).toBe(204);
+      expect(requests).toEqual([firstUrl]);
+      expect(
+        (await db.source.findUniqueOrThrow({ where: { id: saved.body.id } })).scrapingConfig,
+      ).toEqual(editedConfig);
+      requests.length = 0;
+      const preview = await agent
+        .post("/sources/scraping/test")
+        .send({ url: sourceUrl, config: editedConfig });
+      expect(preview.status).toBe(502);
+      expect(requests).toEqual([firstUrl, paginationUrl(sourceUrl, scrapingConfig, 6)]);
+      requests.length = 0;
+      const before = await db.source.findUniqueOrThrow({ where: { id: saved.body.id } });
+      const failed = await agent
+        .patch(`/sources/${saved.body.id}`)
+        .send({ scrapingConfig: { ...editedConfig, pagination: { ...pagination, startPage: 6 } } });
+      expect(failed.status).toBe(502);
+      expect(requests).toEqual([paginationUrl(sourceUrl, scrapingConfig, 6)]);
+      expect(await db.source.findUniqueOrThrow({ where: { id: saved.body.id } })).toEqual(before);
+    }
+  }, 30000);
 });
