@@ -34,6 +34,7 @@ let holdSummary = false;
 let collectCalls = 0;
 let summaryCalls = 0;
 const result = {
+  url: "https://publisher.example/full-article",
   content: "Texte intégral extrait de la page originale.",
   summary: {
     title: "Titre IA",
@@ -114,6 +115,10 @@ test("shows the generated summary, key points and extracted text, and permits fr
   );
   const summary = await screen.findByRole("region", { name: "Résumé IA de Article déjà livré" });
   expect(within(summary).getByText("Titre IA")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Lire l'article original" })).toHaveAttribute(
+    "href",
+    result.url,
+  );
   expect(within(summary).getByText(result.summary.summary)).toBeInTheDocument();
   expect(within(summary).getByText("Mesure détaillée.")).toBeInTheDocument();
   await userEvent.click(within(summary).getByText(/Voir le texte extrait/));

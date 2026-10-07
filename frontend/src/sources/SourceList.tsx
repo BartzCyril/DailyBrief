@@ -43,13 +43,18 @@ export function SourceList({
       setBusy("");
     }
   }
-  async function updateSource(source: Source, url: string, config?: ScrapingConfig) {
+  async function updateSource(
+    source: Source,
+    url: string,
+    config?: ScrapingConfig,
+    articleLinkSelector?: string | null,
+  ) {
     if (busy) return;
     setBusy(source.id);
     setError("");
     setMessage("");
     try {
-      await sourcesApi.update(source.id, url, config);
+      await sourcesApi.update(source.id, url, config, articleLinkSelector);
       await onChanged?.();
       setEditingId("");
       setMessage("Source modifiée.");
@@ -145,7 +150,9 @@ export function SourceList({
                   key={source.id}
                   source={source}
                   busy={!!busy}
-                  onSave={(url, config) => updateSource(source, url, config)}
+                  onSave={(url, config, articleLinkSelector) =>
+                    updateSource(source, url, config, articleLinkSelector)
+                  }
                   onCancel={() => {
                     setEditingId("");
                     setError("");

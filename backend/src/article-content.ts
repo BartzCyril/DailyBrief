@@ -2,7 +2,7 @@ import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import { load } from "cheerio";
 import { AppError } from "./errors";
-import { fetchRemoteText, type FetchText } from "./network";
+import { fetchRemotePage, type FetchText, type FetchPage } from "./network";
 import { plainText } from "./rss";
 import { ArticleBrowser } from "./article-browser";
 
@@ -161,21 +161,136 @@ export function extractArticleContent(
   return content;
 }
 
+export function validateArticleLinkSelector(selector: string | null | undefined): void {
+  if (!selector) return;
+  const dom = new JSDOM("");
+  try {
+    dom.window.document.querySelector(selector);
+  } catch {
+    throw new AppError(
+      400,
+      "Sélecteur du lien vers l'article invalide. Vérifiez le sélecteur CSS.",
+      "INVALID_ARTICLE_LINK_SELECTOR",
+    );
+  } finally {
+    dom.window.close();
+  }
+}
+
+export function extractArticleLink(html: string, url: string, selector: string): string {
+  const dom = new JSDOM(html, { url });
+  try {
+    const links = [...dom.window.document.querySelectorAll(selector)];
+    if (!links.length)
+      throw new AppError(
+        422,
+        "Le lien vers l'article n'a pas été trouvé sur la page intermédiaire. Vérifiez le sélecteur.",
+        "ARTICLE_LINK_NOT_FOUND",
+      );
+    const targets = new Set(
+      links.map((link) => {
+        const href = link.getAttribute("href")?.trim();
+        if (!href)
+          throw new AppError(
+            422,
+            "Le sélecteur doit cibler un lien portant un attribut href.",
+            "ARTICLE_LINK_INVALID",
+          );
+        let target: URL;
+        try {
+          target = new URL(href, dom.window.document.baseURI);
+        } catch {
+          throw new AppError(
+            422,
+            "Le lien vers l'article contient une URL invalide.",
+            "ARTICLE_LINK_INVALID",
+          );
+        }
+        if (!["http:", "https:"].includes(target.protocol) || target.username || target.password)
+          throw new AppError(
+            400,
+            "Le lien vers l'article doit utiliser HTTP ou HTTPS sans identifiants.",
+            "UNSAFE_URL",
+          );
+        target.hash = "";
+        return target.href;
+      }),
+    );
+    if (targets.size !== 1)
+      throw new AppError(
+        422,
+        "Plusieurs liens vers des articles différents correspondent au sélecteur. Précisez le sélecteur.",
+        "ARTICLE_LINK_AMBIGUOUS",
+      );
+    const target = [...targets][0]!;
+    const original = new URL(url);
+    original.hash = "";
+    if (target === original.href)
+      throw new AppError(
+        422,
+        "Le lien sélectionné renvoie vers la page intermédiaire.",
+        "ARTICLE_LINK_LOOP",
+      );
+    return target;
+  } finally {
+    dom.window.close();
+  }
+}
+
 export class ArticleContentService {
   constructor(
-    private fetchText: FetchText = fetchRemoteText,
+    private fetchPage: FetchText | FetchPage = fetchRemotePage,
     private browser = new ArticleBrowser(),
   ) {}
   async fetch(url: string | null, observer?: (message: string) => void): Promise<string> {
+    return (await this.fetchWithUrl(url, observer)).content;
+  }
+  private async download(url: string) {
+    const page = await this.fetchPage(url);
+    return typeof page === "string"
+      ? { html: page, url }
+      : { html: page.text, url: page.url ?? url };
+  }
+  async fetchWithUrl(
+    url: string | null,
+    observer?: (message: string) => void,
+    articleLinkSelector?: string | null,
+  ): Promise<{ content: string; url: string }> {
     if (!url)
       throw new AppError(
         422,
         "Cet article n'a pas de lien vers sa page complète.",
         "ARTICLE_URL_MISSING",
       );
-    const html = await this.fetchText(url);
+    validateArticleLinkSelector(articleLinkSelector);
+    let page = await this.download(url);
+    if (articleLinkSelector) {
+      observer?.(`Recherche du lien vers l'article sur la page intermédiaire : ${page.url}`);
+      let target: string;
+      try {
+        target = extractArticleLink(page.html, page.url, articleLinkSelector);
+      } catch (error) {
+        if (!(error instanceof AppError) || error.code !== "ARTICLE_LINK_NOT_FOUND") throw error;
+        observer?.(
+          "Chargement de la page intermédiaire dans Chromium pour trouver le lien vers le document.",
+        );
+        try {
+          page = await this.browser.render(page.url, articleLinkSelector);
+        } catch (browserError) {
+          if (browserError instanceof AppError && browserError.code === "ARTICLE_BROWSER_BLOCKED")
+            throw error;
+          throw browserError;
+        }
+        target = extractArticleLink(page.html, page.url, articleLinkSelector);
+      }
+      observer?.(`Lien vers le document trouvé : ${target}`);
+      observer?.("Téléchargement de l'article depuis le lien sélectionné.");
+      // Follow exactly one configured link. The usual DNS-pinned HTTP guard still
+      // checks the destination and each redirect before any article is extracted.
+      page = await this.download(target);
+    }
     try {
-      return extractArticleContent(html, url, observer);
+      return { content: extractArticleContent(page.html, page.url, observer), url: page.url };
     } catch (error) {
       if (
         !(error instanceof AppError) ||
@@ -190,9 +305,12 @@ export class ArticleContentService {
         "Chargement de la page dans Chromium pour exécuter JavaScript et conserver les cookies du site.",
       );
       observer?.("Attente du chargement et de la stabilisation des sections de l'article.");
-      const rendered = await this.browser.render(url);
+      const rendered = await this.browser.render(page.url);
       try {
-        return extractArticleContent(rendered.html, rendered.url, observer);
+        return {
+          content: extractArticleContent(rendered.html, rendered.url, observer),
+          url: rendered.url,
+        };
       } catch (renderedError) {
         if (renderedError instanceof AppError && renderedError.code === "ARTICLE_REQUIRES_BROWSER")
           throw new AppError(

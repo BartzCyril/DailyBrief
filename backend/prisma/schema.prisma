@@ -42,6 +42,7 @@ model Source {
   url String
   type SourceType
   scrapingConfig Json?
+  articleLinkSelector String?
   enabled Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -60,6 +61,8 @@ model Article {
   guid String?
   content String?
   contentFetchedAt DateTime?
+  contentUrl String?
+  contentLinkSelector String?
   contentError String?
   description String?
   publishedAt DateTime?

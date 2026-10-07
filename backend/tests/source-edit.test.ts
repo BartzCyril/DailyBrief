@@ -289,4 +289,60 @@ describe("source URL editing", () => {
     expect((await patch({ url: "https://fixture.example/new" })).status).toBe(204);
     expect(requests).toHaveLength(0);
   }, 15000);
+  test("saves, edits and clears the RSS document selector without fetching articles or changing source history", async () => {
+    expect(
+      (await patch({ articleLinkSelector: "  a.accessToPrimaryDoc.primarydoc  " })).status,
+    ).toBe(204);
+    expect(
+      (await db.source.findUniqueOrThrow({ where: { id: sourceId } })).articleLinkSelector,
+    ).toBe("a.accessToPrimaryDoc.primarydoc");
+    expect(requests).toEqual([]);
+    expect((await patch({ articleLinkSelector: "a.document" })).status).toBe(204);
+    expect((await patch({ articleLinkSelector: null })).status).toBe(204);
+    expect(
+      (await db.source.findUniqueOrThrow({ where: { id: sourceId } })).articleLinkSelector,
+    ).toBeNull();
+    for (const articleLinkSelector of ["", "a[", "a".repeat(201), 42])
+      expect((await patch({ articleLinkSelector })).status).toBe(400);
+    expect(
+      (await db.source.findUniqueOrThrow({ where: { id: sourceId } })).articleLinkSelector,
+    ).toBeNull();
+  });
+  test("creates RSS sources with the document selector and validates it in the RSS preview", async () => {
+    const input = {
+      url: "https://fixture.example/with-notice",
+      type: "RSS",
+      articleLinkSelector: "a.primarydoc",
+    };
+    const created = await agent.post("/sources").send(input);
+    expect(created.status).toBe(201);
+    expect(created.body.articleLinkSelector).toBe("a.primarydoc");
+    const listed = await agent.get("/sources");
+    expect(
+      listed.body.find((source: { id: string }) => source.id === created.body.id)
+        .articleLinkSelector,
+    ).toBe("a.primarydoc");
+    requests.length = 0;
+    expect(
+      (
+        await agent
+          .post("/sources/rss/test")
+          .send({ url: input.url, articleLinkSelector: input.articleLinkSelector })
+      ).status,
+    ).toBe(200);
+    expect(requests).toEqual([input.url]);
+    expect(
+      (await agent.post("/sources/rss/test").send({ url: input.url, articleLinkSelector: "a[" }))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await agent
+          .post("/sources")
+          .send({ ...input, url: "https://fixture.example/invalid", articleLinkSelector: "a[" })
+      ).status,
+    ).toBe(400);
+    await db.source.update({ where: { id: sourceId }, data: { type: "SCRAPING", scrapingConfig } });
+    expect((await patch({ articleLinkSelector: "a.primarydoc" })).status).toBe(400);
+  });
 });

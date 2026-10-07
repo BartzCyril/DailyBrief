@@ -19,6 +19,8 @@ describe("source workflow tests", () => {
   let emails = 0;
   let failPage = false;
   let failAi = false;
+  let followDocument = false;
+  let summaryUrls: Array<string | null | undefined> = [];
   let privatePage = false;
   let needsBrowser = false;
   let manyScrapingArticles = false;
@@ -58,6 +60,8 @@ describe("source workflow tests", () => {
         if (failPage) throw new AppError(502, "Page inaccessible.", "NETWORK_ERROR");
         // Preserve the real transport guard for the malicious-link test.
         if (url.startsWith("http://127.")) return new ArticleContentService().fetch(url);
+        if (followDocument && url === "https://example.com/one")
+          return '<article><p>Notice intermédiaire</p><a class="primarydoc" href="https://publisher.example/document">Consulter le document</a></article>';
         if (needsBrowser)
           return "<script>window.location.href='/rendered';</script><noscript>JS required</noscript>";
         return `<article><h1>Article</h1><p>${fullText}</p></article>`;
@@ -71,6 +75,7 @@ describe("source workflow tests", () => {
     summary: {
       summarize: async (input, observer) => {
         summaries++;
+        summaryUrls.push(input.url);
         expect(input.content).toContain(fullText.trim());
         expect(input.content).not.toBe("Extrait court");
         if (failAi) throw new AppError(503, "Ollama inaccessible.", "AI_UNAVAILABLE");
@@ -134,6 +139,8 @@ describe("source workflow tests", () => {
     pageRequests = [];
     failPage = failAi = privatePage = false;
     needsBrowser = false;
+    followDocument = false;
+    summaryUrls = [];
     manyScrapingArticles = false;
     buttonScraping = false;
     previews.length = 0;
@@ -354,5 +361,29 @@ describe("source workflow tests", () => {
     expect(preview.articles[0]?.title).toBe("Article scraping");
     expect(events(await summarize(preview)).at(-1)?.type).toBe("result");
     expect(pageRequests).toEqual(["https://example.com/scraped"]);
+  });
+  test("follows the configured RSS document link and returns its URL without changing saved articles or sending mail", async () => {
+    followDocument = true;
+    await db.source.update({
+      where: { id: sourceId },
+      data: { articleLinkSelector: "a.primarydoc" },
+    });
+    const before = await db.article.findMany({ where: { userId } });
+    const preview = await collect();
+    const received = events(await summarize(preview));
+    expect(received.at(-1)).toMatchObject({
+      type: "result",
+      result: {
+        url: "https://publisher.example/document",
+        content: expect.stringContaining(fullText.trim()),
+      },
+    });
+    expect(
+      received.some((event) => event.progress?.message.includes("Lien vers le document trouvé")),
+    ).toBe(true);
+    expect(pageRequests).toEqual(["https://example.com/one", "https://publisher.example/document"]);
+    expect(summaryUrls).toEqual(["https://publisher.example/document"]);
+    expect(await db.article.findMany({ where: { userId } })).toEqual(before);
+    expect(emails).toBe(0);
   });
 });

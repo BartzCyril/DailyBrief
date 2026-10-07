@@ -335,3 +335,38 @@ retournés par le registre pour télécharger un modèle. Le navigateur de secou
 peut être préparé depuis npm lorsque le CDN Playwright est inaccessible.
 Le fonctionnement avec un vrai modèle et un serveur SMTP réel doit être vérifié
 avec vos paramètres ; les transports de test ne constituent pas cette validation.
+
+### Flux RSS avec une page intermédiaire
+
+Un item RSS peut pointer vers une notice de bibliothèque plutôt que vers l'article
+original. À la création ou à l'édition du flux, renseignez le champ facultatif
+« Sélecteur du lien vers l'article ». Pour les notices de bibliotheques.inp.fr,
+utilisez `a.accessToPrimaryDoc.primarydoc`, qui cible « Consulter le document ».
+
+Lors du résumé, DailyBrief télécharge la notice, récupère le `href` du lien choisi,
+puis extrait le texte complet de cette page cible avant de l'envoyer à l'IA. Le
+journal affiche les deux étapes. Les liens relatifs et les liens ajoutés en
+JavaScript sont pris en charge. Un lien absent, ambigu ou invalide provoque une
+erreur explicite ; la notice n'est pas utilisée à sa place. Le suivi est limité à
+un lien configuré et les destinations gardent la validation des adresses publiques.
+
+Le champ `articleLinkSelector` est facultatif sur `POST /sources/rss/test`,
+`POST /sources` pour le type `RSS` et `PATCH /sources/:id`. Une valeur `null` le
+désactive. Tester ou enregistrer le flux vérifie le RSS et la syntaxe du sélecteur ;
+les pages des articles sont chargées lors du résumé dans le workflow ou la collecte.
+
+L'URL de la notice et le GUID restent utilisés pour identifier les doublons.
+L'URL réellement résumée est sauvegardée dans `Article.contentUrl` et utilisée
+dans la newsletter et le résultat du workflow. Le sélecteur utilisé est enregistré
+dans `Article.contentLinkSelector` : un changement force une nouvelle extraction
+et un nouveau résumé pour les articles encore en attente, sans modifier les
+newsletters déjà envoyées.
+
+Après récupération de cette version, générez le client et appliquez la migration
+additive avant de redémarrer le backend :
+
+```bash
+bun run db:generate
+bun run db:migrate
+bun run dev:backend
+```
