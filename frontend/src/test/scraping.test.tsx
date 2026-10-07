@@ -1,6 +1,6 @@
 import { emptyDashboard } from "./fixtures";
 import { test, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../App";
@@ -25,7 +25,11 @@ function mockApi() {
       return new Response(JSON.stringify({ id: "u1", email: "reader@example.com" }));
     if (url.endsWith("/scraping/test"))
       return new Response(
-        JSON.stringify(fail ? { message: "Sélecteurs invalides" } : { ...preview, warnings }),
+        JSON.stringify(
+          fail
+            ? { message: "Sélecteurs invalides" }
+            : { ...preview, mode: JSON.parse(String(init?.body)).config.mode, warnings },
+        ),
         {
           status: fail ? 422 : 200,
         },
@@ -113,6 +117,60 @@ test("requires a page placeholder for template pagination", async () => {
   await ui.type(screen.getByLabelText("Modèle d'URL"), "https://example.com/no-placeholder");
   await ui.click(screen.getByRole("button", { name: "Tester" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("{page}");
+});
+test("requires a load-more button, tests its settings and saves only the selected mode", async () => {
+  const mock = mockApi();
+  mount();
+  const ui = await fill();
+  await choose("Mode de récupération", "Bouton charger plus");
+  expect(screen.queryByLabelText("Nombre maximum de scrolls")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Nom du paramètre")).not.toBeInTheDocument();
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("sélecteurs requis");
+  expect(mock.mock.calls.some((call) => call[0].endsWith("/scraping/test"))).toBe(false);
+  await ui.type(screen.getByLabelText("Sélecteur du bouton"), ".more");
+  await ui.clear(screen.getByLabelText("Délai maximum après un clic (ms)"));
+  await ui.type(screen.getByLabelText("Délai maximum après un clic (ms)"), "20000");
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Article extrait");
+  const tested = JSON.parse(
+    String(mock.mock.calls.find((call) => call[0].endsWith("/scraping/test"))?.[1]?.body),
+  ).config;
+  expect(screen.queryByText("LOAD_MORE")).not.toBeInTheDocument();
+  expect(
+    within(screen.getByRole("region", { name: "Aperçu des articles" })).getByText(
+      "Bouton charger plus",
+    ),
+  ).toBeInTheDocument();
+  expect(tested).toEqual({
+    articleSelector: "article",
+    titleSelector: "h2",
+    linkSelector: "a",
+    mode: "LOAD_MORE",
+    loadMore: { buttonSelector: ".more", waitTimeoutMs: 20000 },
+  });
+  await ui.click(screen.getByRole("button", { name: "Enregistrer la source" }));
+  await screen.findByText("SCRAPING");
+  const saved = mock.mock.calls.find(
+    (call) => call[0].endsWith("/sources") && call[1]?.method === "POST",
+  );
+  expect(JSON.parse(String(saved?.[1]?.body)).scrapingConfig).toEqual(tested);
+});
+test("invalidates a load-more preview when its button or delay changes", async () => {
+  mount();
+  const ui = await fill();
+  await choose("Mode de récupération", "Bouton charger plus");
+  await ui.type(screen.getByLabelText("Sélecteur du bouton"), ".more");
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Article extrait");
+  await ui.type(screen.getByLabelText("Sélecteur du bouton"), " button");
+  expect(screen.queryByText("Article extrait")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Article extrait");
+  await ui.clear(screen.getByLabelText("Délai maximum après un clic (ms)"));
+  expect(screen.queryByText("Article extrait")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
 });
 test("tests SCROLL configuration, previews articles and invalidates on a selector change", async () => {
   const mock = mockApi();

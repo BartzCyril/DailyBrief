@@ -74,6 +74,17 @@ Les anciens `maxPages` enregistrés sont acceptés puis ignorés ; aucune migrat
 de base n'est nécessaire. La page de départ peut être 0 selon le site.
 Chaque navigation garde son délai de 15 secondes ; la durée totale de pagination
 n'est pas plafonnée. Le mode scroll conserve ses 8 scrolls et ses 45 secondes.
+Le mode « Bouton charger plus » (`LOAD_MORE`) attend un sélecteur CSS de bouton
+et un délai maximum de chargement par clic (1 à 60 secondes, 15 secondes par défaut).
+Exemple : `loadMore: { buttonSelector: ".load-more", waitTimeoutMs: 15000 }`.
+Il clique sans limite de nombre jusqu'à disparition ou désactivation du bouton,
+en conservant et dédupliquant les articles même si le site remplace la liste.
+Après chaque clic, il attend la fin des requêtes AJAX et la stabilisation des articles.
+Si aucun nouvel article n'apparaît dans le délai, il s'arrête avec un avertissement
+et conserve les résultats. Un bouton absent dès le départ est également signalé.
+Les chargements JavaScript/AJAX sont pris en charge, y compris les requêtes POST
+sur le même site ; les requêtes et redirections conservent la validation des adresses
+publiques. Une erreur AJAX reste un échec de collecte.
 Seuls des sites accessibles sans connexion sont pris en charge.
 
 Installez Chromium avec `bun run browser:install`. Si le CDN Playwright est
@@ -224,13 +235,14 @@ restent enregistrés dans l'historique serveur.
 Dans « Vos sources », le bouton « Modifier » reprend les mêmes champs que la création,
 préremplis avec les valeurs enregistrées : URL pour un flux RSS ; URL, sélecteurs
 d'articles, de titre, de lien, de description et de date, mode de récupération,
-paramètres de scroll ou de pagination pour une source de scraping.
+paramètres de scroll, de pagination ou du bouton de chargement pour une source de scraping.
 « Tester » affiche un aperçu sans modifier la source ni enregistrer d'articles.
 Une modification invalide l'aperçu. À la création comme à l'édition, l'enregistrement
 vérifie uniquement la première page configurée (le numéro de départ en pagination),
-sans parcourir les pages suivantes ni effectuer de scroll supplémentaire.
+sans parcourir les pages suivantes, effectuer de scroll supplémentaire ou cliquer sur le bouton.
 Les sélecteurs et l'accès réseau restent vérifiés. « Tester », le workflow de A à Z
-et la collecte continuent à parcourir toutes les pages ou à effectuer les scrolls configurés.
+et la collecte continuent à parcourir toutes les pages, effectuer les scrolls configurés
+ou cliquer sur le bouton jusqu'à la fin des articles.
 Une erreur de récupération ou une adresse déjà utilisée laisse la source existante
 inchangée. « Annuler » ferme le formulaire sans enregistrer.
 

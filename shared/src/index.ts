@@ -20,8 +20,9 @@ export type ScrapingConfig = {
   linkSelector: string;
   descriptionSelector?: string | null;
   dateSelector?: string | null;
-  mode: "SCROLL" | "PAGINATE";
+  mode: "SCROLL" | "PAGINATE" | "LOAD_MORE";
   scroll?: { maxScrolls: number; waitAfterScrollMs: number };
+  loadMore?: { buttonSelector: string; waitTimeoutMs: number };
   pagination?: {
     strategy: "URL_TEMPLATE" | "QUERY_PARAM";
     startPage: number;

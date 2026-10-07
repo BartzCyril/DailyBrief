@@ -7,7 +7,14 @@ export const scrapingSchema = z
     linkSelector: selector,
     descriptionSelector: selector.nullish(),
     dateSelector: selector.nullish(),
-    mode: z.enum(["SCROLL", "PAGINATE"]),
+    mode: z.enum(["SCROLL", "PAGINATE", "LOAD_MORE"]),
+    loadMore: z
+      .object({
+        buttonSelector: selector,
+        waitTimeoutMs: z.number().int().min(1000).max(60000),
+      })
+      .strict()
+      .optional(),
     scroll: z
       .object({
         maxScrolls: z.number().int().min(0).max(8),
@@ -33,6 +40,12 @@ export const scrapingSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    if (value.mode === "LOAD_MORE" && !value.loadMore)
+      context.addIssue({
+        code: "custom",
+        path: ["loadMore"],
+        message: "Paramètres du bouton requis",
+      });
     if (value.mode === "SCROLL" && !value.scroll)
       context.addIssue({
         code: "custom",

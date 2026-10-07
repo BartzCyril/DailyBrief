@@ -42,7 +42,7 @@ export async function validateRemoteUrl(
     throw new AppError(400, "Adresses privées et locales interdites.", "UNSAFE_URL");
   return { url, ...addresses[0]! };
 }
-export type FetchText = (url: string) => Promise<string>;
+export type FetchText = (url: string, options?: RemotePageOptions) => Promise<string>;
 export type RemotePage = {
   url?: string;
   text: string;
@@ -52,6 +52,10 @@ export type RemotePage = {
   cookies: string[];
 };
 export type RemotePageOptions = {
+  method?: "GET" | "POST";
+  body?: string;
+  contentType?: string;
+  requestedWith?: string;
   userAgent?: string;
   cookie?: string;
   accept?: string;
@@ -61,9 +65,16 @@ export type FetchPage = (url: string, options?: RemotePageOptions) => Promise<Re
 export const fetchRemotePage: FetchPage = async (value, options = {}) => {
   const deadline = Date.now() + 15000;
   let originalOrigin: string | undefined;
+  let method = options.method ?? "GET";
   for (let redirect = 0; redirect <= 4; redirect++) {
     const target = await validateRemoteUrl(value);
     originalOrigin ??= target.url.origin;
+    if (method === "POST" && target.url.origin !== originalOrigin)
+      throw new AppError(
+        400,
+        "Redirection du chargement vers un autre site interdite.",
+        "UNSAFE_URL",
+      );
     if (Date.now() >= deadline)
       throw new AppError(504, "Le site a mis trop de temps à répondre.", "TIMEOUT");
     const response = await new Promise<RemotePage>((resolve, reject) => {
@@ -72,10 +83,18 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
       const req = send(
         target.url,
         {
+          method,
           headers: {
             "User-Agent": options.userAgent ?? "DailyBrief/1.0",
             "Accept-Encoding": "identity",
             ...(options.accept ? { Accept: options.accept } : {}),
+            ...(method === "POST" ? { Origin: originalOrigin } : {}),
+            ...(method === "POST" && options.contentType
+              ? { "Content-Type": options.contentType }
+              : {}),
+            ...(options.requestedWith && target.url.origin === originalOrigin
+              ? { "X-Requested-With": options.requestedWith }
+              : {}),
             ...(options.cookie && target.url.origin === originalOrigin
               ? { Cookie: options.cookie }
               : {}),
@@ -123,11 +142,14 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
             : new AppError(502, "Site inaccessible.", "NETWORK_ERROR"),
         ),
       );
-      req.end();
+      req.end(method === "POST" ? options.body : undefined);
     });
     if (!response.location || options.followRedirects === false) return response;
+    if (response.status === 303 || (method === "POST" && [301, 302].includes(response.status)))
+      method = "GET";
     value = new URL(response.location, target.url).href;
   }
   throw new AppError(502, "Trop de redirections.", "REDIRECT_LIMIT");
 };
-export const fetchRemoteText: FetchText = async (url) => (await fetchRemotePage(url)).text;
+export const fetchRemoteText: FetchText = async (url, options) =>
+  (await fetchRemotePage(url, options)).text;

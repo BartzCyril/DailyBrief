@@ -281,6 +281,43 @@ test("tests edited settings without saving, invalidates the preview and refuses 
   expect(await screen.findByRole("alert")).toHaveTextContent("sélecteurs requis");
   expect(fetcher.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
 });
+test("prefills and edits load-more fields, then drops them when changing modes", async () => {
+  const source: Source = {
+    ...scraping,
+    scrapingConfig: {
+      articleSelector: "article",
+      titleSelector: "h2",
+      linkSelector: "a",
+      mode: "LOAD_MORE",
+      loadMore: { buttonSelector: ".more", waitTimeoutMs: 25000 },
+    },
+  };
+  stored = [source];
+  render(<Harness />);
+  const ui = userEvent.setup();
+  await ui.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
+  expect(screen.getByLabelText("Sélecteur du bouton")).toHaveValue(".more");
+  expect(screen.getByLabelText("Délai maximum après un clic (ms)")).toHaveValue(25000);
+  await ui.clear(screen.getByLabelText("Sélecteur du bouton"));
+  await ui.type(screen.getByLabelText("Sélecteur du bouton"), "#next");
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Article de test");
+  expect(stored[0]?.scrapingConfig).toEqual(source.scrapingConfig);
+  await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+  await screen.findByText("Source modifiée.");
+  expect(stored[0]?.scrapingConfig?.loadMore).toEqual({
+    buttonSelector: "#next",
+    waitTimeoutMs: 25000,
+  });
+  await ui.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
+  expect(screen.getByLabelText("Sélecteur du bouton")).toHaveValue("#next");
+  await ui.click(screen.getByRole("combobox", { name: "Mode de récupération" }));
+  await ui.click(screen.getByRole("option", { name: "Pagination" }));
+  await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+  await screen.findByText("Source modifiée.");
+  expect(stored[0]?.scrapingConfig?.mode).toBe("PAGINATE");
+  expect(stored[0]?.scrapingConfig?.loadMore).toBeUndefined();
+});
 test("confirms deletion, allows cancellation and refreshes the list after deleting the edited source", async () => {
   render(<Harness />);
   const ui = userEvent.setup();

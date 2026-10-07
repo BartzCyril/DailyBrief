@@ -7,7 +7,9 @@ export type ScrapingDraft = {
   linkSelector: string;
   descriptionSelector: string;
   dateSelector: string;
-  mode: "SCROLL" | "PAGINATE";
+  mode: ScrapingConfig["mode"];
+  buttonSelector: string;
+  waitTimeoutMs: string;
   maxScrolls: string;
   waitAfterScrollMs: string;
   strategy: "QUERY_PARAM" | "URL_TEMPLATE";
@@ -22,6 +24,8 @@ export const defaultDraft: ScrapingDraft = {
   descriptionSelector: "",
   dateSelector: "",
   mode: "SCROLL",
+  buttonSelector: "",
+  waitTimeoutMs: "15000",
   maxScrolls: "3",
   waitAfterScrollMs: "1000",
   strategy: "QUERY_PARAM",
@@ -40,6 +44,8 @@ export function createScrapingDraft(config?: ScrapingConfig | null): ScrapingDra
     descriptionSelector: config.descriptionSelector ?? "",
     dateSelector: config.dateSelector ?? "",
     mode: config.mode,
+    buttonSelector: config.loadMore?.buttonSelector ?? "",
+    waitTimeoutMs: String(config.loadMore?.waitTimeoutMs ?? defaultDraft.waitTimeoutMs),
     maxScrolls: String(config.scroll?.maxScrolls ?? defaultDraft.maxScrolls),
     waitAfterScrollMs: String(config.scroll?.waitAfterScrollMs ?? defaultDraft.waitAfterScrollMs),
     strategy: config.pagination?.strategy ?? defaultDraft.strategy,
@@ -63,18 +69,51 @@ export function buildScrapingConfig(draft: ScrapingDraft): ScrapingConfig {
             waitAfterScrollMs: numeric(draft.waitAfterScrollMs),
           },
         }
-      : {
-          pagination: {
-            strategy: draft.strategy,
-            startPage: numeric(draft.startPage),
-            ...(draft.strategy === "QUERY_PARAM"
-              ? { queryParam: draft.queryParam }
-              : { urlTemplate: draft.urlTemplate }),
-          },
-        }),
+      : draft.mode === "LOAD_MORE"
+        ? {
+            loadMore: {
+              buttonSelector: draft.buttonSelector,
+              waitTimeoutMs: numeric(draft.waitTimeoutMs),
+            },
+          }
+        : {
+            pagination: {
+              strategy: draft.strategy,
+              startPage: numeric(draft.startPage),
+              ...(draft.strategy === "QUERY_PARAM"
+                ? { queryParam: draft.queryParam }
+                : { urlTemplate: draft.urlTemplate }),
+            },
+          }),
   };
 }
 type Props = { draft: ScrapingDraft; update: (value: Partial<ScrapingDraft>) => void };
+export function LoadMoreFields({ draft, update }: Props) {
+  return (
+    <div className="space-y-4">
+      <Field
+        label="Sélecteur du bouton"
+        value={draft.buttonSelector}
+        onChange={(event) => update({ buttonSelector: event.target.value })}
+        placeholder=".load-more"
+        hint="Sélecteur CSS du bouton qui affiche les articles suivants."
+      />
+      <Field
+        label="Délai maximum après un clic (ms)"
+        type="number"
+        min={1000}
+        max={60000}
+        value={draft.waitTimeoutMs}
+        onChange={(event) => update({ waitTimeoutMs: event.target.value })}
+        hint="Temps laissé au site pour ajouter de nouveaux articles."
+      />
+      <p className="text-sm text-muted-foreground">
+        Le bouton est cliqué jusqu'à ce qu'il disparaisse, soit désactivé ou n'ajoute plus
+        d'articles.
+      </p>
+    </div>
+  );
+}
 export function ScrollFields({ draft, update }: Props) {
   return (
     <div className="grid sm:grid-cols-2 gap-4">
@@ -188,14 +227,22 @@ export function ScrapingFields({ draft, update }: Props) {
       <SelectField
         label="Mode de récupération"
         value={draft.mode}
-        onChange={(value) => update({ mode: value === "PAGINATE" ? "PAGINATE" : "SCROLL" })}
+        onChange={(value) =>
+          update({
+            mode:
+              value === "PAGINATE" ? "PAGINATE" : value === "LOAD_MORE" ? "LOAD_MORE" : "SCROLL",
+          })
+        }
         choices={[
           { value: "SCROLL", label: "Scroll infini" },
           { value: "PAGINATE", label: "Pagination" },
+          { value: "LOAD_MORE", label: "Bouton charger plus" },
         ]}
       />
       {draft.mode === "SCROLL" ? (
         <ScrollFields draft={draft} update={update} />
+      ) : draft.mode === "LOAD_MORE" ? (
+        <LoadMoreFields draft={draft} update={update} />
       ) : (
         <PaginationFields draft={draft} update={update} />
       )}

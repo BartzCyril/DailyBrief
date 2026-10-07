@@ -86,7 +86,11 @@ export function SourceList({
                 <div className="mt-2 flex gap-2">
                   <Badge variant="secondary">{source.type}</Badge>
                   {source.scrapingConfig?.mode && (
-                    <Badge variant="outline">{source.scrapingConfig.mode}</Badge>
+                    <Badge variant="outline">
+                      {source.scrapingConfig.mode === "LOAD_MORE"
+                        ? "Bouton charger plus"
+                        : source.scrapingConfig.mode}
+                    </Badge>
                   )}
                   <span className="text-xs text-muted-foreground">
                     {source.enabled ? "Active" : "Inactive"}
