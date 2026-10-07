@@ -45,6 +45,15 @@ const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         ],
       }),
     );
+  if (init?.method === "DELETE") {
+    if (serverError) return new Response(JSON.stringify({ message: serverError }), { status: 500 });
+    stored = stored.filter((item) => !url.endsWith(`/${item.id}`));
+    if (pauseSave)
+      return new Promise<Response>((resolve) => {
+        pending = resolve;
+      });
+    return new Response(null, { status: 204 });
+  }
   if (init?.method === "PATCH") {
     if (serverError) return new Response(JSON.stringify({ message: serverError }), { status: 409 });
     const body = JSON.parse(String(init.body));
@@ -271,4 +280,51 @@ test("tests edited settings without saving, invalidates the preview and refuses 
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("sélecteurs requis");
   expect(fetcher.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
+});
+test("confirms deletion, allows cancellation and refreshes the list after deleting the edited source", async () => {
+  render(<Harness />);
+  const ui = userEvent.setup();
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  await ui.click(screen.getByRole("button", { name: `Supprimer ${rss.url}` }));
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("articles et résumés associés"));
+  expect(fetcher.mock.calls).toHaveLength(0);
+  expect(screen.getByText(rss.url)).toBeInTheDocument();
+  confirm.mockReturnValue(true);
+  await ui.click(screen.getByRole("button", { name: `Modifier ${rss.url}` }));
+  await ui.click(screen.getByRole("button", { name: `Supprimer ${rss.url}` }));
+  await screen.findByText("Source supprimée.");
+  expect(fetcher.mock.calls[0]?.[0]).toBe("/api/sources/s1");
+  expect(fetcher.mock.calls[0]?.[1]?.method).toBe("DELETE");
+  expect(screen.queryByText(rss.url)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("URL du flux RSS")).not.toBeInTheDocument();
+  expect(screen.getByText(scraping.url)).toBeInTheDocument();
+});
+test("keeps a source on deletion failure, supports retry and shows the empty list after the last deletion", async () => {
+  stored = [scraping];
+  serverError = "Suppression impossible.";
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<Harness />);
+  const ui = userEvent.setup();
+  await ui.click(screen.getByRole("button", { name: `Supprimer ${scraping.url}` }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Suppression impossible.");
+  expect(screen.getByText(scraping.url)).toBeInTheDocument();
+  serverError = "";
+  await ui.click(screen.getByRole("button", { name: `Supprimer ${scraping.url}` }));
+  await screen.findByText("Source supprimée.");
+  expect(screen.getByText(/Aucune source configurée/)).toBeInTheDocument();
+});
+test("blocks competing changes while a deletion is pending", async () => {
+  pauseSave = true;
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<Harness />);
+  const ui = userEvent.setup();
+  await ui.click(screen.getByRole("button", { name: `Supprimer ${scraping.url}` }));
+  for (const source of [rss, scraping]) {
+    expect(screen.getByRole("button", { name: `Modifier ${source.url}` })).toBeDisabled();
+    expect(screen.getByRole("button", { name: `Supprimer ${source.url}` })).toBeDisabled();
+  }
+  for (const control of screen.getAllByRole("switch")) expect(control).toBeDisabled();
+  pending!(new Response(null, { status: 204 }));
+  await screen.findByText("Source supprimée.");
+  expect(screen.getByRole("button", { name: `Supprimer ${rss.url}` })).toBeEnabled();
 });

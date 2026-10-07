@@ -8,7 +8,7 @@ import { sourcesApi } from "./api";
 import { errorMessage } from "@/lib/api";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Pencil } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { EditSourceForm } from "./EditSourceForm";
 export function SourceList({
   sources,
@@ -21,6 +21,28 @@ export function SourceList({
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState("");
   const [message, setMessage] = useState("");
+  async function remove(source: Source) {
+    if (
+      busy ||
+      !window.confirm(
+        `Supprimer la source ${source.url} ?\n\nLes articles et résumés associés seront également supprimés.`,
+      )
+    )
+      return;
+    setBusy(source.id);
+    setError("");
+    setMessage("");
+    try {
+      await sourcesApi.remove(source.id);
+      await onChanged?.();
+      setEditingId((previous) => (previous === source.id ? "" : previous));
+      setMessage("Source supprimée.");
+    } catch (error) {
+      setError(errorMessage(error));
+    } finally {
+      setBusy("");
+    }
+  }
   async function updateSource(source: Source, url: string, config?: ScrapingConfig) {
     if (busy) return;
     setBusy(source.id);
@@ -75,29 +97,44 @@ export function SourceList({
                 <Link to={`/sources/${source.id}/workflow`}>Tester le workflow de A à Z</Link>
               </Button>
               {onChanged && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={!!busy}
-                  onClick={() => {
-                    setEditingId(source.id);
-                    setError("");
-                    setMessage("");
-                  }}
-                  aria-label={`Modifier ${source.url}`}
-                >
-                  <Pencil />
-                  Modifier
-                </Button>
-              )}
-              {onChanged && (
-                <Switch
-                  aria-label={`Activer ${source.url}`}
-                  checked={source.enabled}
-                  disabled={!!busy}
-                  onCheckedChange={(enabled) => void toggle(source, enabled)}
-                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    className="cursor-pointer"
+                    disabled={!!busy}
+                    onClick={() => {
+                      setEditingId(source.id);
+                      setError("");
+                      setMessage("");
+                    }}
+                    aria-label={`Modifier ${source.url}`}
+                    title="Modifier la source"
+                  >
+                    <Pencil aria-hidden="true" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-sm"
+                    className="cursor-pointer text-destructive hover:text-destructive"
+                    disabled={!!busy}
+                    aria-label={`Supprimer ${source.url}`}
+                    title="Supprimer la source"
+                    onClick={() => void remove(source)}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </Button>
+                  <Switch
+                    className="cursor-pointer"
+                    title={source.enabled ? "Désactiver la source" : "Activer la source"}
+                    aria-label={`Activer ${source.url}`}
+                    checked={source.enabled}
+                    disabled={!!busy}
+                    onCheckedChange={(enabled) => void toggle(source, enabled)}
+                  />
+                </div>
               )}
               {editingId === source.id && (
                 <EditSourceForm
