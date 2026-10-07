@@ -320,6 +320,9 @@ describe("scraping source routes", () => {
   const app = createApp(db, redis, config, {
     scraping: new ScrapingService(async (url) => {
       requests.push(url);
+      if (url.endsWith("/button-batch")) return JSON.stringify({ html: html("button-next") });
+      if (url.endsWith("/button-source"))
+        return `${html("button-first")}<button id="more">Plus</button><script>document.querySelector('#more').onclick=async()=>{const data=await (await fetch('/button-batch')).json();document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);document.querySelector('#more').remove();};</script>`;
       if (url.includes("http-end") && new URL(url).searchParams.get("page") === "2")
         throw new UpstreamHttpError(404, url);
       if (url.includes("http-blocked")) throw new UpstreamHttpError(403, url);
@@ -467,4 +470,41 @@ describe("scraping source routes", () => {
       expect(await db.source.findUniqueOrThrow({ where: { id: saved.body.id } })).toEqual(before);
     }
   }, 30000);
+  test("creates and edits a button source without clicking while previews load all batches without saving articles", async () => {
+    const url = "https://fixture.example/button-source";
+    const config: ScrapingConfig = {
+      ...base,
+      mode: "LOAD_MORE",
+      loadMore: { buttonSelector: "#more", waitTimeoutMs: 1000 },
+    };
+    const articleCount = await db.article.count({ where: { userId } });
+    requests.length = 0;
+    const saved = await agent
+      .post("/sources")
+      .send({ url, type: "SCRAPING", scrapingConfig: config });
+    expect(saved.status).toBe(201);
+    expect(requests).toEqual([url]);
+    expect(saved.body.scrapingConfig).toEqual(config);
+    const edited = { ...config, loadMore: { buttonSelector: "button#more", waitTimeoutMs: 2000 } };
+    requests.length = 0;
+    expect(
+      (await agent.patch(`/sources/${saved.body.id}`).send({ scrapingConfig: edited })).status,
+    ).toBe(204);
+    expect(requests).toEqual([url]);
+    requests.length = 0;
+    const preview = await agent.post("/sources/scraping/test").send({ url, config: edited });
+    expect(preview.status).toBe(200);
+    expect(preview.body.articles).toHaveLength(2);
+    expect(requests).toEqual([url, "https://fixture.example/button-batch"]);
+    expect(await db.article.count({ where: { userId } })).toBe(articleCount);
+    const before = await db.source.findUniqueOrThrow({ where: { id: saved.body.id } });
+    expect(
+      (
+        await agent.patch(`/sources/${saved.body.id}`).send({
+          scrapingConfig: { ...edited, loadMore: { ...edited.loadMore, buttonSelector: "??" } },
+        })
+      ).status,
+    ).toBe(422);
+    expect(await db.source.findUniqueOrThrow({ where: { id: saved.body.id } })).toEqual(before);
+  }, 15000);
 });

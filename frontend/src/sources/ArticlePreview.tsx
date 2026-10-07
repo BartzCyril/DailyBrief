@@ -8,7 +8,11 @@ export function ArticlePreview({ preview }: { preview: SourcePreview }) {
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="font-semibold text-lg">{preview.feed?.title ?? "Articles récupérés"}</h2>
         <Badge variant="secondary">{preview.articles.length} articles</Badge>
-        {preview.mode && <Badge variant="outline">{preview.mode}</Badge>}
+        {preview.mode && (
+          <Badge variant="outline">
+            {preview.mode === "LOAD_MORE" ? "Bouton charger plus" : preview.mode}
+          </Badge>
+        )}
       </div>
       <div className="max-h-[32rem] overflow-y-auto space-y-3">
         {preview.articles.map((article, index) => (

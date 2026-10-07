@@ -22,6 +22,7 @@ describe("source workflow tests", () => {
   let privatePage = false;
   let needsBrowser = false;
   let manyScrapingArticles = false;
+  let buttonScraping = false;
   const previews: WorkflowPreview[] = [];
   const fullText =
     "Cette information détaillée provient de la page complète et ne figure pas dans la description RSS. ".repeat(
@@ -33,6 +34,13 @@ describe("source workflow tests", () => {
       return `<rss><channel><item><title>Déjà livré</title><link>${privatePage ? "http://127.0.0.1/private" : "https://example.com/one"}</link><description>Extrait court</description></item><item><title>Nouveau</title><link>https://example.com/two</link></item><item><title>Sans lien</title></item></channel></rss>`;
     }),
     scraping: new ScrapingService(async (url) => {
+      if (buttonScraping) {
+        if (url.endsWith("/button-batch"))
+          return JSON.stringify({
+            html: '<article><h2>Article suivant</h2><a href="/scraped-next">Lire</a></article>',
+          });
+        return `<article><h2>Article scraping</h2><a href="/scraped">Lire</a></article><button id="more">Plus</button><script>document.querySelector('#more').onclick=async()=>{const data=await(await fetch('/button-batch')).json();document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);document.querySelector('#more').remove();};</script>`;
+      }
       if (manyScrapingArticles) {
         if (Number(new URL(url).searchParams.get("page")) !== 0)
           throw new UpstreamHttpError(404, url);
@@ -127,6 +135,7 @@ describe("source workflow tests", () => {
     failPage = failAi = privatePage = false;
     needsBrowser = false;
     manyScrapingArticles = false;
+    buttonScraping = false;
     previews.length = 0;
   });
   afterEach(async () => {
@@ -167,6 +176,29 @@ describe("source workflow tests", () => {
     ).toBeGreaterThan(0);
     expect(await db.article.count({ where: { userId } })).toBe(1);
   });
+  test("loads button batches and summarizes their complete articles without production writes or email", async () => {
+    buttonScraping = true;
+    await db.source.update({
+      where: { id: sourceId },
+      data: {
+        type: "SCRAPING",
+        url: "https://example.com/buttons",
+        scrapingConfig: {
+          articleSelector: "article",
+          titleSelector: "h2",
+          linkSelector: "a",
+          mode: "LOAD_MORE",
+          loadMore: { buttonSelector: "#more", waitTimeoutMs: 1000 },
+        },
+      },
+    });
+    const preview = await collect();
+    expect(preview.articles.map((a) => a.title)).toEqual(["Article scraping", "Article suivant"]);
+    expect(events(await summarize(preview, 1)).at(-1)).toMatchObject({ type: "result" });
+    expect(pageRequests).toEqual(["https://example.com/scraped-next"]);
+    expect(await db.article.count({ where: { userId } })).toBe(1);
+    expect(emails).toBe(0);
+  }, 15000);
   test("can repeatedly summarize a delivered article from its full page without touching production or email", async () => {
     const before = await db.article.findMany({ where: { userId } });
     const preview = await collect();

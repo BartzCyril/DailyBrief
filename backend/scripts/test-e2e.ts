@@ -50,7 +50,11 @@ const app = createApp(db, redis, config, {
     scrapingRequests.push(url);
     const offset = new URL(url).searchParams.get("offset");
     if (offset !== null && offset !== "0") throw new UpstreamHttpError(404, url);
-    return '<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article>';
+    if (url.endsWith("/button-batch"))
+      return JSON.stringify({
+        html: '<article><h2>Article supplémentaire</h2><a href="/scraped-next">Lire</a></article>',
+      });
+    return `<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article><button id="more" class="more">Plus</button><script>document.querySelector('#more').onclick=async()=>{const data=await(await fetch('/button-batch')).json();document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);document.querySelector('#more').remove();};</script>`;
   }),
   summary: {
     summarize: async (input) => {
@@ -128,9 +132,12 @@ try {
   await page.getByLabel("Sélecteur des articles", { exact: true }).fill("article");
   await page.getByLabel("Sélecteur du titre", { exact: true }).fill("h2");
   await page.getByLabel("Sélecteur du lien", { exact: true }).fill("a");
-  await page.getByLabel("Nombre maximum de scrolls").fill("0");
+  await page.getByRole("combobox", { name: "Mode de récupération" }).click();
+  await page.getByRole("option", { name: "Bouton charger plus", exact: true }).click();
+  await page.getByLabel("Sélecteur du bouton").fill(".more");
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article scraping", { exact: true }).waitFor();
+  await page.getByText("Article supplémentaire", { exact: true }).waitFor();
   scrapingRequests.length = 0;
   await page.getByRole("button", { name: "Enregistrer la source" }).click();
   await page.waitForURL("**/dashboard");
@@ -174,6 +181,16 @@ try {
   await page.getByLabel("Sélecteur du titre", { exact: true }).fill("h2:first-of-type");
   await page.getByLabel("Sélecteur du lien", { exact: true }).fill("a[href]");
   await page.getByLabel("Sélecteur de description (facultatif)").fill("p");
+  assert.equal(await page.getByLabel("Sélecteur du bouton").inputValue(), ".more");
+  await page.getByLabel("Sélecteur du bouton").fill("#more");
+  await page.getByLabel("Délai maximum après un clic (ms)").fill("20000");
+  await page.getByRole("button", { name: "Tester", exact: true }).click();
+  await page.getByText("Article supplémentaire", { exact: true }).waitFor();
+  assert.deepEqual(
+    await db.source.findMany({ where: { user: { email } }, orderBy: { id: "asc" } }),
+    sourcesAfterEdit,
+  );
+  await page.screenshot({ path: "/tmp/dailybrief-load-more-mobile.png", fullPage: true });
   await page.getByRole("combobox", { name: "Mode de récupération" }).click();
   await page.getByRole("option", { name: "Pagination", exact: true }).click();
   await page.getByLabel("Nom du paramètre").fill("offset");
