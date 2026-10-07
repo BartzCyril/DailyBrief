@@ -5,7 +5,7 @@ import type { ScrapingConfig } from "@dailybrief/shared";
 import { scrapingSchema } from "../../shared/src/scraping";
 import { ScrapingService, paginationUrl } from "../src/scraping";
 import { createApp } from "../src/app";
-import { AppError } from "../src/errors";
+import { AppError, UpstreamHttpError } from "../src/errors";
 import { config, db, redis, connect, disconnect } from "./helpers";
 const base = {
   articleSelector: "article",
@@ -85,6 +85,112 @@ test("collects more than fifteen pages until the first empty page", async () => 
   expect(result.articles).toHaveLength(16);
   expect(result.articles.at(-1)?.title).toBe("Article 16");
 }, 30000);
+test("keeps all 37 pages when page 38 returns HTTP 404 with a path-based template", async () => {
+  const pages: number[] = [];
+  const service = new ScrapingService(async (url) => {
+    const number = Number(new URL(url).pathname.split("/").filter(Boolean).at(-1));
+    pages.push(number);
+    if (number === 38) throw new UpstreamHttpError(404, url);
+    return (
+      '<meta charset="utf-8">' +
+      Array.from(
+        { length: 20 },
+        (_, index) =>
+          `<article class="post"><h2 class="fl-post-title"><a href="/member/${number}-${index}">Adhérent ${number}-${index}</a></h2><a class="fl-post-more-link" href="/member/${number}-${index}">Lire</a></article>`,
+      ).join("")
+    );
+  });
+  const result = await service.collect("https://fixture.example/adherents/", {
+    articleSelector: ".post",
+    titleSelector: ".fl-post-title a",
+    linkSelector: ".fl-post-more-link",
+    mode: "PAGINATE",
+    pagination: {
+      strategy: "URL_TEMPLATE",
+      startPage: 1,
+      urlTemplate: "https://fixture.example/adherents/page/{page}/",
+    },
+  });
+  expect(pages).toEqual(Array.from({ length: 38 }, (_, index) => index + 1));
+  expect(result.articles).toHaveLength(740);
+  expect(result.articles.at(-1)?.title).toBe("Adhérent 37-19");
+  expect(result.warnings).toHaveLength(1);
+  expect(result.warnings?.[0]).toContain("page 38");
+  expect(result.warnings?.[0]).toContain("HTTP 404");
+}, 45000);
+test("recognizes HTTP 410 as an end after valid pages with query pagination", async () => {
+  const service = new ScrapingService(async (url) => {
+    if (new URL(url).searchParams.get("page") === "2") throw new UpstreamHttpError(410, url);
+    return html("one");
+  });
+  const result = await service.collect("https://fixture.example/items", paginate);
+  expect(result.articles).toHaveLength(1);
+  expect(result.warnings?.[0]).toContain("HTTP 410");
+}, 15000);
+test("rejects missing first pages for validation, pagination and scrolling", async () => {
+  for (const status of [404, 410]) {
+    const service = new ScrapingService(async (url) => {
+      throw new UpstreamHttpError(status, url);
+    });
+    const error = { code: "UPSTREAM_ERROR", upstreamStatus: status };
+    expect(
+      await service.collect("https://fixture.example/items", paginate).catch((error) => error),
+    ).toMatchObject(error);
+    expect(
+      await service
+        .validateFirstPage("https://fixture.example/items", paginate)
+        .catch((error) => error),
+    ).toMatchObject(error);
+    expect(
+      await service.collect("https://fixture.example/items", scroll).catch((error) => error),
+    ).toMatchObject(error);
+  }
+}, 15000);
+test("later blocking, rate limits, server and network failures never become a successful partial collection", async () => {
+  for (const status of [403, 429, 500, 503]) {
+    const service = new ScrapingService(async (url) => {
+      if (new URL(url).searchParams.get("page") === "2") throw new UpstreamHttpError(status, url);
+      return html("one");
+    });
+    expect(
+      await service.collect("https://fixture.example/items", paginate).catch((error) => error),
+    ).toMatchObject({
+      code: "UPSTREAM_ERROR",
+      upstreamStatus: status,
+      url: "https://fixture.example/items?page=2",
+    });
+  }
+  const service = new ScrapingService(async (url) => {
+    if (new URL(url).searchParams.get("page") === "2")
+      throw new AppError(504, "Délai dépassé.", "TIMEOUT");
+    return html("one");
+  });
+  expect(
+    await service.collect("https://fixture.example/items", paginate).catch((error) => error),
+  ).toMatchObject({
+    code: "TIMEOUT",
+  });
+}, 30000);
+test("does not confuse missing embedded frames or redirected pages with the end of pagination", async () => {
+  const frames = new ScrapingService(async (url) => {
+    if (url.endsWith("/missing-frame")) throw new UpstreamHttpError(404, url);
+    if (new URL(url).searchParams.get("page") === "2") throw new UpstreamHttpError(503, url);
+    return html("one") + '<iframe src="/missing-frame"></iframe>';
+  });
+  expect(
+    await frames.collect("https://fixture.example/items", paginate).catch((error) => error),
+  ).toMatchObject({
+    upstreamStatus: 503,
+  });
+  const redirected = new ScrapingService(async (url) => {
+    if (new URL(url).searchParams.get("page") === "2")
+      throw new UpstreamHttpError(404, "https://fixture.example/login");
+    return html("one");
+  });
+  expect(
+    await redirected.collect("https://fixture.example/items", paginate).catch((error) => error),
+  ).toMatchObject({ upstreamStatus: 404, url: "https://fixture.example/login" });
+}, 15000);
 test("keeps every item on pages exceeding 200 items and a collection exceeding 500", async () => {
   const legacy = { ...paginate, pagination: { ...paginate.pagination!, maxPages: 1 } };
   const service = new ScrapingService(async (url) => {
@@ -214,6 +320,9 @@ describe("scraping source routes", () => {
   const app = createApp(db, redis, config, {
     scraping: new ScrapingService(async (url) => {
       requests.push(url);
+      if (url.includes("http-end") && new URL(url).searchParams.get("page") === "2")
+        throw new UpstreamHttpError(404, url);
+      if (url.includes("http-blocked")) throw new UpstreamHttpError(403, url);
       if (
         url.includes("first-page-only") &&
         new URL(url).searchParams.get("page") !== "5" &&
@@ -289,6 +398,29 @@ describe("scraping source routes", () => {
     expect(
       (await db.source.findUniqueOrThrow({ where: { id: saved.body.id } })).scrapingConfig,
     ).toEqual(saved.body.scrapingConfig);
+  }, 15000);
+  test("returns a preview and end warning for a later 404, but precise HTTP diagnostics for a missing first page or blocking", async () => {
+    const url = "https://fixture.example/http-end";
+    const preview = await agent.post("/sources/scraping/test").send({ url, config: paginate });
+    expect(preview.status).toBe(200);
+    expect(preview.body.articles).toHaveLength(1);
+    expect(preview.body.warnings[0]).toContain("HTTP 404");
+    const first = await agent
+      .post("/sources/scraping/test")
+      .send({ url, config: { ...paginate, pagination: { ...paginate.pagination, startPage: 2 } } });
+    expect(first.status).toBe(502);
+    expect(first.body).toMatchObject({
+      code: "UPSTREAM_ERROR",
+      upstreamStatus: 404,
+      url: `${url}?page=2`,
+    });
+    expect(first.body.message).toContain("HTTP 404");
+    const blocked = await agent
+      .post("/sources/scraping/test")
+      .send({ url: "https://fixture.example/http-blocked", config: paginate });
+    expect(blocked.status).toBe(502);
+    expect(blocked.body).toMatchObject({ code: "UPSTREAM_ERROR", upstreamStatus: 403 });
+    expect(blocked.body.message).toContain("HTTP 403");
   }, 15000);
   test("creation and editing validate only the configured starting page while explicit tests still visit later pages", async () => {
     for (const pagination of [

@@ -66,6 +66,10 @@ d'articles au total. Une page déjà rencontrée (même si l'ordre change) arrê
 la pagination avec un avertissement pour éviter une boucle. Les chevauchements
 entre pages sont dédupliqués ; une erreur réseau ou un sélecteur de titre sans
 résultat dans des blocs présents provoque une erreur, pas un aperçu partiel.
+Une réponse HTTP 404 ou 410 sur la page demandée après des pages ayant fourni des
+articles termine la pagination avec un avertissement et conserve les résultats.
+Une erreur sur la première page, une redirection vers une autre page absente ou
+un autre statut HTTP reste un échec. Le message précise le statut et l'URL en erreur.
 Les anciens `maxPages` enregistrés sont acceptés puis ignorés ; aucune migration
 de base n'est nécessaire. La page de départ peut être 0 selon le site.
 Chaque navigation garde son délai de 15 secondes ; la durée totale de pagination

@@ -3,7 +3,7 @@ import type { ArticlePreview, ScrapingConfig, SourcePreview } from "@dailybrief/
 import { scrapingSchema } from "../../shared/src/scraping";
 import { fetchRemoteText, type FetchText } from "./network";
 import { articleDate, articleUrl } from "./rss";
-import { AppError } from "./errors";
+import { AppError, UpstreamHttpError } from "./errors";
 import { ConcurrencyLimiter } from "./concurrency";
 import { createHash } from "node:crypto";
 
@@ -26,6 +26,16 @@ export function deduplicatePreviews(items: ArticlePreview[]): ArticlePreview[] {
 }
 function previewKey(item: ArticlePreview): string {
   return item.url ?? `${item.title}:${item.description}`;
+}
+function samePage(first: string, second: string): boolean {
+  const normalize = (value: string) => {
+    const url = new URL(value);
+    url.hash = "";
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    url.searchParams.sort();
+    return url.href;
+  };
+  return normalize(first) === normalize(second);
 }
 async function extract(page: Page, config: ScrapingConfig): Promise<ArticlePreview[]> {
   const entries = await page.evaluate(
@@ -89,6 +99,8 @@ export class ScrapingService {
             }, 45000)
           : undefined;
       try {
+        const page = await context.newPage();
+        page.setDefaultTimeout(15000);
         // Fulfil every network request through the same DNS-pinned SSRF guard as RSS.
         await context.route("**/*", async (route) => {
           const request = route.request();
@@ -111,17 +123,26 @@ export class ScrapingService {
               )[request.resourceType()] ?? "application/json";
             await route.fulfill({ body, contentType });
           } catch (error) {
-            if (request.isNavigationRequest()) networkError = error;
+            if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+              networkError = error;
             await route.abort().catch(() => {});
           }
         });
         await context.routeWebSocket("**/*", (socket) => socket.close());
-        const page = await context.newPage();
-        page.setDefaultTimeout(15000);
+        async function navigate(target: string) {
+          networkError = undefined;
+          try {
+            await page.goto(target, { waitUntil: "networkidle" });
+          } catch (error) {
+            if (networkError instanceof AppError) throw networkError;
+            throw error;
+          }
+          if (networkError instanceof AppError) throw networkError;
+        }
         const articles: ArticlePreview[] = [];
         const warnings: string[] = [];
         if (config.mode === "SCROLL") {
-          await page.goto(url, { waitUntil: "networkidle" });
+          await navigate(url);
           articles.push(...(await extract(page, config)));
           for (let i = 0; i < (firstPageOnly ? 0 : config.scroll!.maxScrolls); i++) {
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
@@ -132,9 +153,24 @@ export class ScrapingService {
           const seenPages = new Set<string>();
           const seenArticles = new Set<string>();
           for (let number = config.pagination!.startPage; ; number++) {
-            await page.goto(paginationUrl(url, config, number), {
-              waitUntil: "networkidle",
-            });
+            const target = paginationUrl(url, config, number);
+            try {
+              await navigate(target);
+            } catch (error) {
+              if (
+                articles.length &&
+                error instanceof UpstreamHttpError &&
+                [404, 410].includes(error.upstreamStatus) &&
+                samePage(target, error.url)
+              ) {
+                warnings.push(
+                  `Fin de pagination à la page ${number} : ${target} renvoie HTTP ${error.upstreamStatus}. Les articles des pages précédentes sont conservés.`,
+                );
+                networkError = undefined;
+                break;
+              }
+              throw error;
+            }
             const entries = await extract(page, config);
             if (!entries.length) break;
             // Ignore ordering changes when a site repeats a page or cycles through
