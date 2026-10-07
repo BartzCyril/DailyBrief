@@ -105,7 +105,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
           input.scrapingConfig !== undefined ||
           (input.urlTemplate !== undefined && input.urlTemplate !== config.pagination?.urlTemplate)
         )
-          await scraping.collect(url, updated);
+          await scraping.validateFirstPage(url, updated);
         if (input.urlTemplate !== undefined || input.scrapingConfig !== undefined)
           data.scrapingConfig = updated;
       }
@@ -127,7 +127,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
       ])
       .parse(req.body);
     if (input.type === "RSS") await rss.collect(input.url);
-    else await scraping.collect(input.url, input.scrapingConfig);
+    else await scraping.validateFirstPage(input.url, input.scrapingConfig);
     res.status(201).json(
       await db.source.create({
         data: {

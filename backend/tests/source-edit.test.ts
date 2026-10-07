@@ -198,10 +198,7 @@ describe("source URL editing", () => {
     };
     requests.length = 0;
     expect((await patch({ scrapingConfig: paginationConfig })).status).toBe(204);
-    expect(requests).toEqual([
-      "https://fixture.example/pages/0",
-      "https://fixture.example/pages/1",
-    ]);
+    expect(requests).toEqual(["https://fixture.example/pages/0"]);
     expect(await db.source.findUniqueOrThrow({ where: { id: sourceId } })).toMatchObject({
       id: sourceId,
       enabled: false,
@@ -240,10 +237,7 @@ describe("source URL editing", () => {
       data: { type: "SCRAPING", url: "https://fixture.example/old-news", scrapingConfig },
     });
     expect((await patch({ url: "https://fixture.example/new-news" })).status).toBe(204);
-    expect(requests).toEqual([
-      "https://fixture.example/new-news?page=0",
-      "https://fixture.example/new-news?page=1",
-    ]);
+    expect(requests).toEqual(["https://fixture.example/new-news?page=0"]);
     expect(await db.source.findUniqueOrThrow({ where: { id: sourceId } })).toMatchObject({
       url: "https://fixture.example/new-news",
       enabled: false,
@@ -284,7 +278,7 @@ describe("source URL editing", () => {
         })
       ).status,
     ).toBe(204);
-    expect(requests).toEqual(["https://fixture.example/new/0", "https://fixture.example/new/1"]);
+    expect(requests).toEqual(["https://fixture.example/new/0"]);
     const saved = await db.source.findUniqueOrThrow({ where: { id: sourceId } });
     expect(saved.scrapingConfig).toMatchObject({
       articleSelector: "article",
