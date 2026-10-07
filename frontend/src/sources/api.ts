@@ -11,6 +11,7 @@ import { api, apiResponse, ApiError } from "@/lib/api";
 import { readEventStream } from "@/lib/event-stream";
 export const sourcesApi = {
   list: () => api<Source[]>("/sources"),
+  remove: (id: string) => api<void>(`/sources/${id}`, { method: "DELETE" }),
   testRss: (url: string) =>
     api<SourcePreview>("/sources/rss/test", { method: "POST", body: { url } }),
   saveRss: (url: string) => api<Source>("/sources", { method: "POST", body: { url, type: "RSS" } }),

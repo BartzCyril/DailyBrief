@@ -29,6 +29,13 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
     const result = await scraping.collect(input.url, input.config);
     res.json({ ...result, articles: result.articles.slice(0, 50) });
   });
+  router.delete("/:id", async (req, res) => {
+    const result = await db.source.deleteMany({
+      where: { id: String(req.params.id), userId: req.session.userId! },
+    });
+    if (!result.count) throw new AppError(404, "Source introuvable.", "SOURCE_NOT_FOUND");
+    res.status(204).end();
+  });
   router.patch("/:id", async (req, res) => {
     const input = z
       .object({

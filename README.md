@@ -41,6 +41,7 @@ chiffre. Les routes `POST /auth/register`, `/auth/login`, `/auth/logout` et
 `GET /sources` liste les sources du compte ; `PATCH /sources/:id` accepte `{enabled}`
 ou `{url?, scrapingConfig?}` pour modifier son adresse et sa configuration.
 L'ancien champ `urlTemplate` reste accepté avec `url` pour les clients précédents.
+`DELETE /sources/:id` supprime une source du compte et ses articles associés.
 
 Le lecteur RSS/Atom normalise les espaces et BOM avant la déclaration XML ainsi
 que les esperluettes et entités HTML non échappées. Les corrections apparaissent
@@ -234,6 +235,12 @@ Les sélecteurs facultatifs peuvent être effacés et le mode de récupération 
 Pour une pagination par modèle d'URL, conservez `{page}`. Son préfixe suit l'URL de départ
 si le modèle utilise cette adresse et n'a pas été modifié manuellement.
 Seul le propriétaire de la source peut la modifier.
+
+Les actions « Modifier » (crayon) et « Supprimer » (corbeille) sont des icônes avec
+un libellé accessible et une infobulle. La corbeille demande confirmation avant
+de supprimer la source ainsi que ses articles et résumés associés. Les autres
+sources et les newsletters restent conservées. L'interrupteur d'activation affiche
+un curseur pointeur lorsqu'il est disponible.
 
 ### Tester une source de A à Z
 

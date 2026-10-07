@@ -290,11 +290,48 @@ try {
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     "Mobile layout should not overflow horizontally",
   );
+  const rssUrl = "https://fixture.example/updated-feed";
+  const scrapingUrl = "https://fixture.example/updated-news";
+  for (const sourceUrl of [rssUrl, scrapingUrl]) {
+    for (const action of ["Modifier", "Supprimer"]) {
+      const button = page.getByRole("button", { name: `${action} ${sourceUrl}`, exact: true });
+      assert.equal(
+        (await button.textContent())?.trim(),
+        "",
+        "Source actions must display only an icon",
+      );
+      assert.equal(await button.evaluate((element) => getComputedStyle(element).cursor), "pointer");
+    }
+  }
+  const activation = page.getByRole("switch", { name: `Activer ${rssUrl}`, exact: true });
+  assert.equal(await activation.evaluate((element) => getComputedStyle(element).cursor), "pointer");
+  await activation.click();
+  await activation.and(page.locator('[aria-checked="false"]')).waitFor();
+  assert.equal(await activation.evaluate((element) => getComputedStyle(element).cursor), "pointer");
+  await page.screenshot({ path: "/tmp/dailybrief-source-actions-mobile.png", fullPage: true });
+  page.once("dialog", (dialog) => void dialog.dismiss());
+  await page.getByRole("button", { name: `Supprimer ${scrapingUrl}`, exact: true }).click();
+  assert.equal(
+    await db.source.count({ where: { userId: user.id } }),
+    2,
+    "Cancelling deletion must keep sources",
+  );
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: `Supprimer ${scrapingUrl}`, exact: true }).click();
+  await page.getByText("Source supprimée.", { exact: true }).waitFor();
+  assert.equal(await db.source.count({ where: { userId: user.id } }), 1);
+  assert.equal(await db.article.count({ where: { userId: user.id } }), 1);
+  assert.equal(await db.newsletter.count({ where: { userId: user.id, status: "SENT" } }), 1);
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: `Supprimer ${rssUrl}`, exact: true }).click();
+  await page.getByText(/Aucune source configurée/).waitFor();
+  assert.equal(await db.source.count({ where: { userId: user.id } }), 0);
+  assert.equal(await db.article.count({ where: { userId: user.id } }), 0);
   await page.getByRole("button", { name: "Se déconnecter" }).click();
   await page.waitForURL("**/login");
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, RSS URL editing, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: register, login, RSS URL editing, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();
