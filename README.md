@@ -84,7 +84,12 @@ Si aucun nouvel article n'apparaît dans le délai, il s'arrête avec un avertis
 et conserve les résultats. Un bouton absent dès le départ est également signalé.
 Les chargements JavaScript/AJAX sont pris en charge, y compris les requêtes POST
 sur le même site ; les requêtes et redirections conservent la validation des adresses
-publiques. Une erreur AJAX reste un échec de collecte.
+publiques. Les POST vers un autre site sont bloqués ; une requête annexe, comme une
+mesure d'audience, ne fait pas échouer un lot d'articles chargé correctement. Si
+aucun chargement sur le site n'aboutit et qu'une requête POST a été bloquée, son
+URL est indiquée dans l'erreur. Une réponse de chargement réussie sans nouvel
+article termine normalement la collecte avec un avertissement, même si une
+requête annexe a été bloquée. Les autres erreurs AJAX restent des échecs de collecte.
 Seuls des sites accessibles sans connexion sont pris en charge.
 
 Installez Chromium avec `bun run browser:install`. Si le CDN Playwright est
