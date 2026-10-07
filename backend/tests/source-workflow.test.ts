@@ -6,7 +6,7 @@ import { createApp } from "../src/app";
 import { ArticleContentService } from "../src/article-content";
 import { RssService } from "../src/rss";
 import { ScrapingService } from "../src/scraping";
-import { AppError } from "../src/errors";
+import { AppError, UpstreamHttpError } from "../src/errors";
 import { ArticleBrowser } from "../src/article-browser";
 import { config, db, redis, connect, disconnect } from "./helpers";
 
@@ -32,17 +32,18 @@ describe("source workflow tests", () => {
       feedRequests++;
       return `<rss><channel><item><title>Déjà livré</title><link>${privatePage ? "http://127.0.0.1/private" : "https://example.com/one"}</link><description>Extrait court</description></item><item><title>Nouveau</title><link>https://example.com/two</link></item><item><title>Sans lien</title></item></channel></rss>`;
     }),
-    scraping: new ScrapingService(async (url) =>
-      manyScrapingArticles
-        ? Number(new URL(url).searchParams.get("page")) === 0
-          ? Array.from(
-              { length: 550 },
-              (_, index) =>
-                `<article><h2>Article ${index}</h2><a href="/scraped/${index}">Lire</a></article>`,
-            ).join("")
-          : "<main></main>"
-        : `<article><h2>Article scraping</h2><a href="/scraped">Lire</a><p>Extrait court</p></article>`,
-    ),
+    scraping: new ScrapingService(async (url) => {
+      if (manyScrapingArticles) {
+        if (Number(new URL(url).searchParams.get("page")) !== 0)
+          throw new UpstreamHttpError(404, url);
+        return Array.from(
+          { length: 550 },
+          (_, index) =>
+            `<article><h2>Article ${index}</h2><a href="/scraped/${index}">Lire</a></article>`,
+        ).join("");
+      }
+      return `<article><h2>Article scraping</h2><a href="/scraped">Lire</a><p>Extrait court</p></article>`;
+    }),
     articleContent: new ArticleContentService(
       async (url) => {
         pageRequests.push(url);
@@ -274,6 +275,7 @@ describe("source workflow tests", () => {
     });
     const preview = await collect();
     expect(preview.articles).toHaveLength(550);
+    expect(preview.warnings?.[0]).toContain("HTTP 404");
     expect(events(await summarize(preview, 549)).at(-1)).toMatchObject({ type: "result" });
     expect(pageRequests).toEqual(["https://example.com/scraped/549"]);
     expect(await db.article.count({ where: { userId } })).toBe(1);

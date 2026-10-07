@@ -2,7 +2,7 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import ipaddr from "ipaddr.js";
-import { AppError } from "./errors";
+import { AppError, UpstreamHttpError } from "./errors";
 import { readRemoteResponse } from "./remote-response";
 
 export function isPublicAddress(address: string): boolean {
@@ -99,7 +99,7 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
           }
           if ((res.statusCode ?? 500) >= 400) {
             res.resume();
-            reject(new AppError(502, "Le site a retourné une erreur HTTP.", "UPSTREAM_ERROR"));
+            reject(new UpstreamHttpError(metadata.status, target.url.href));
             return;
           }
           void readRemoteResponse(res).then(

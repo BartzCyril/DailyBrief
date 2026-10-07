@@ -11,6 +11,7 @@ import { createRedis } from "../src/redis";
 import { readConfig } from "../src/config";
 import { RssService } from "../src/rss";
 import { ScrapingService } from "../src/scraping";
+import { UpstreamHttpError } from "../src/errors";
 import { NewsletterEmailService, type NewsletterMessage } from "../src/email";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -48,9 +49,8 @@ const app = createApp(db, redis, config, {
   scraping: new ScrapingService(async (url) => {
     scrapingRequests.push(url);
     const offset = new URL(url).searchParams.get("offset");
-    return offset !== null && offset !== "0"
-      ? "<main></main>"
-      : '<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article>';
+    if (offset !== null && offset !== "0") throw new UpstreamHttpError(404, url);
+    return '<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article>';
   }),
   summary: {
     summarize: async (input) => {
@@ -180,6 +180,7 @@ try {
   await page.getByLabel("Page de départ").fill("0");
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article scraping", { exact: true }).waitFor();
+  await page.getByText(/Fin de pagination à la page 1.*HTTP 404/).waitFor();
   assert.equal(
     await db.article.count({ where: { user: { email } } }),
     0,

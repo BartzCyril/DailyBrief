@@ -10,6 +10,14 @@ export class AppError extends Error {
     super(message);
   }
 }
+export class UpstreamHttpError extends AppError {
+  constructor(
+    public readonly upstreamStatus: number,
+    public readonly url: string,
+  ) {
+    super(502, `Le site a retourné HTTP ${upstreamStatus} pour ${url}.`, "UPSTREAM_ERROR");
+  }
+}
 export const errorHandler: ErrorRequestHandler = (error: unknown, _req, res, _next) => {
   if (error instanceof ZodError) {
     res.status(400).json({
@@ -20,7 +28,13 @@ export const errorHandler: ErrorRequestHandler = (error: unknown, _req, res, _ne
     return;
   }
   if (error instanceof AppError) {
-    res.status(error.status).json({ message: error.message, code: error.code });
+    res.status(error.status).json({
+      message: error.message,
+      code: error.code,
+      ...(error instanceof UpstreamHttpError
+        ? { upstreamStatus: error.upstreamStatus, url: error.url }
+        : {}),
+    });
     return;
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
