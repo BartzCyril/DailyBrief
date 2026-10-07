@@ -8,6 +8,8 @@ import { sourcesApi } from "./api";
 import { errorMessage } from "@/lib/api";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Pencil } from "lucide-react";
+import { EditSourceForm } from "./EditSourceForm";
 export function SourceList({
   sources,
   onChanged,
@@ -17,10 +19,29 @@ export function SourceList({
 }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [editingId, setEditingId] = useState("");
+  const [message, setMessage] = useState("");
+  async function updateUrl(source: Source, url: string, urlTemplate?: string) {
+    if (busy) return;
+    setBusy(source.id);
+    setError("");
+    setMessage("");
+    try {
+      await sourcesApi.updateUrl(source.id, url, urlTemplate);
+      await onChanged?.();
+      setEditingId("");
+      setMessage("Source modifiée.");
+    } catch (error) {
+      setError(errorMessage(error));
+    } finally {
+      setBusy("");
+    }
+  }
   async function toggle(source: Source, enabled: boolean) {
     if (busy) return;
     setBusy(source.id);
     setError("");
+    setMessage("");
     try {
       await sourcesApi.setEnabled(source.id, enabled);
       await onChanged?.();
@@ -33,11 +54,12 @@ export function SourceList({
   return (
     <div className="space-y-3">
       <Feedback message={error} error />
+      <Feedback message={message} />
       {sources.length ? (
         sources.map((source) => (
           <Card className="shadow-none" key={source.id}>
             <CardContent className="flex flex-wrap items-center gap-3 py-4">
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
                 <p className="text-sm break-all">{source.url}</p>
                 <div className="mt-2 flex gap-2">
                   <Badge variant="secondary">{source.type}</Badge>
@@ -53,11 +75,40 @@ export function SourceList({
                 <Link to={`/sources/${source.id}/workflow`}>Tester le workflow de A à Z</Link>
               </Button>
               {onChanged && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!!busy}
+                  onClick={() => {
+                    setEditingId(source.id);
+                    setError("");
+                    setMessage("");
+                  }}
+                  aria-label={`Modifier ${source.url}`}
+                >
+                  <Pencil />
+                  Modifier
+                </Button>
+              )}
+              {onChanged && (
                 <Switch
                   aria-label={`Activer ${source.url}`}
                   checked={source.enabled}
                   disabled={!!busy}
                   onCheckedChange={(enabled) => void toggle(source, enabled)}
+                />
+              )}
+              {editingId === source.id && (
+                <EditSourceForm
+                  key={source.id}
+                  source={source}
+                  busy={!!busy}
+                  onSave={(url, template) => updateUrl(source, url, template)}
+                  onCancel={() => {
+                    setEditingId("");
+                    setError("");
+                  }}
                 />
               )}
             </CardContent>

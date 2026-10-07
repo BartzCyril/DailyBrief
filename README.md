@@ -38,7 +38,8 @@ chiffre. Les routes `POST /auth/register`, `/auth/login`, `/auth/logout` et
 `GET /auth/me` gèrent le compte. Les routes `/sources` nécessitent une session.
 `POST /sources/rss/test` attend `{url}` ; `/sources/scraping/test` attend
 `{url, config}`. `POST /sources` accepte `RSS` ou `SCRAPING` avec `scrapingConfig`.
-`GET /sources` liste les sources du compte ; `PATCH /sources/:id` accepte `{enabled}`.
+`GET /sources` liste les sources du compte ; `PATCH /sources/:id` accepte `{enabled}`
+ou `{url, urlTemplate?}` pour modifier son adresse.
 
 Le lecteur RSS/Atom normalise les espaces et BOM avant la déclaration XML ainsi
 que les esperluettes et entités HTML non échappées. Les corrections apparaissent
@@ -211,6 +212,19 @@ sans mise en tampon (`X-Accel-Buffering: no`). Fermer la page interrompt le suiv
 mais la collecte continue côté serveur ; aucune relance automatique n'est faite.
 Le journal est visible pendant la session de la page. Le bilan et les erreurs
 restent enregistrés dans l'historique serveur.
+
+### Modifier une source
+
+Dans « Vos sources », le bouton « Modifier » permet de changer l'URL d'un flux RSS
+ou d'une source de scraping. La nouvelle adresse est testée avant l'enregistrement.
+Une erreur de récupération ou une adresse déjà utilisée laisse la source existante
+inchangée. « Annuler » ferme le formulaire sans enregistrer.
+
+L'identifiant, les articles existants, les sélecteurs de scraping et l'état actif ou
+inactif sont conservés. Pour une pagination par modèle d'URL, le formulaire permet
+aussi de modifier ce modèle en conservant `{page}`. Son préfixe suit l'URL de départ
+si le modèle utilise cette adresse et n'a pas été modifié manuellement.
+Seul le propriétaire de la source peut la modifier.
 
 ### Tester une source de A à Z
 
