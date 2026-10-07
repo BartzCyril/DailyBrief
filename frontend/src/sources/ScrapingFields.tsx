@@ -30,6 +30,24 @@ export const defaultDraft: ScrapingDraft = {
   urlTemplate: "",
 };
 const numeric = (value: string) => (value.trim() ? Number(value) : NaN);
+export function createScrapingDraft(config?: ScrapingConfig | null): ScrapingDraft {
+  if (!config) return { ...defaultDraft };
+  return {
+    ...defaultDraft,
+    articleSelector: config.articleSelector,
+    titleSelector: config.titleSelector,
+    linkSelector: config.linkSelector,
+    descriptionSelector: config.descriptionSelector ?? "",
+    dateSelector: config.dateSelector ?? "",
+    mode: config.mode,
+    maxScrolls: String(config.scroll?.maxScrolls ?? defaultDraft.maxScrolls),
+    waitAfterScrollMs: String(config.scroll?.waitAfterScrollMs ?? defaultDraft.waitAfterScrollMs),
+    strategy: config.pagination?.strategy ?? defaultDraft.strategy,
+    startPage: String(config.pagination?.startPage ?? defaultDraft.startPage),
+    queryParam: config.pagination?.queryParam ?? defaultDraft.queryParam,
+    urlTemplate: config.pagination?.urlTemplate ?? "",
+  };
+}
 export function buildScrapingConfig(draft: ScrapingDraft): ScrapingConfig {
   return {
     articleSelector: draft.articleSelector,

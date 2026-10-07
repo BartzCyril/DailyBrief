@@ -34,11 +34,18 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
       .object({
         enabled: z.boolean().optional(),
         url: urlSchema.optional(),
+        scrapingConfig: scrapingSchema.optional(),
         urlTemplate: z.string().trim().min(1).max(2000).optional(),
       })
       .strict()
-      .refine((value) => value.url !== undefined || value.enabled !== undefined)
+      .refine(
+        (value) =>
+          value.url !== undefined ||
+          value.enabled !== undefined ||
+          value.scrapingConfig !== undefined,
+      )
       .refine((value) => value.urlTemplate === undefined || value.url !== undefined)
+      .refine((value) => value.urlTemplate === undefined || value.scrapingConfig === undefined)
       .parse(req.body);
     const userId = req.session.userId!;
     const id = String(req.params.id);
@@ -50,22 +57,23 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
       scrapingConfig?: z.infer<typeof scrapingSchema>;
     } = {};
     if (input.enabled !== undefined) data.enabled = input.enabled;
-    if (input.url !== undefined) {
-      data.url = new URL(input.url).href;
+    if (input.url !== undefined || input.scrapingConfig !== undefined) {
+      const url = input.url === undefined ? source.url : new URL(input.url).href;
+      if (input.url !== undefined) data.url = url;
       const duplicate = await db.source.findFirst({
-        where: { userId, url: data.url, id: { not: id } },
+        where: { userId, url, id: { not: id } },
       });
       if (duplicate) throw new AppError(409, "Une source utilise déjà cette URL.", "DUPLICATE");
       if (source.type === "RSS") {
-        if (input.urlTemplate !== undefined)
+        if (input.urlTemplate !== undefined || input.scrapingConfig !== undefined)
           throw new AppError(
             400,
-            "Un flux RSS n'utilise pas de modèle de pagination.",
+            "Un flux RSS n'utilise pas de configuration de scraping.",
             "VALIDATION_ERROR",
           );
-        if (data.url !== source.url) await rss.collect(data.url);
+        if (url !== source.url) await rss.collect(url);
       } else {
-        const config = scrapingSchema.parse(source.scrapingConfig);
+        const config = input.scrapingConfig ?? scrapingSchema.parse(source.scrapingConfig);
         const templatePagination =
           config.mode === "PAGINATE" && config.pagination?.strategy === "URL_TEMPLATE";
         if (input.urlTemplate !== undefined && !templatePagination)
@@ -74,7 +82,12 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
             "Cette source n'utilise pas de modèle de pagination.",
             "VALIDATION_ERROR",
           );
-        if (templatePagination && data.url !== source.url && input.urlTemplate === undefined)
+        if (
+          templatePagination &&
+          url !== source.url &&
+          input.urlTemplate === undefined &&
+          input.scrapingConfig === undefined
+        )
           throw new AppError(
             400,
             "Précisez également le modèle d'URL de pagination pour cette source.",
@@ -88,11 +101,13 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
                 pagination: { ...config.pagination, urlTemplate: input.urlTemplate },
               });
         if (
-          data.url !== source.url ||
+          url !== source.url ||
+          input.scrapingConfig !== undefined ||
           (input.urlTemplate !== undefined && input.urlTemplate !== config.pagination?.urlTemplate)
         )
-          await scraping.collect(data.url, updated);
-        if (input.urlTemplate !== undefined) data.scrapingConfig = updated;
+          await scraping.collect(url, updated);
+        if (input.urlTemplate !== undefined || input.scrapingConfig !== undefined)
+          data.scrapingConfig = updated;
       }
     }
     const result = await db.source.updateMany({
