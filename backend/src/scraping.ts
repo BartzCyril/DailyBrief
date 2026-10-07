@@ -93,8 +93,9 @@ export class ScrapingService {
       let networkError: unknown;
       let failLoad: ((error: unknown) => void) | undefined;
       let pendingLoads = 0;
-      let completedLoads = 0;
+      let attemptedLoads = 0;
       const blockedPosts = new Set<string>();
+      const scriptErrors = new Set<string>();
       const timer =
         config.mode === "SCROLL"
           ? setTimeout(() => {
@@ -105,6 +106,9 @@ export class ScrapingService {
       try {
         const page = await context.newPage();
         page.setDefaultTimeout(15000);
+        page.on("pageerror", (error) => {
+          if (scriptErrors.size < 3) scriptErrors.add(error.message.slice(0, 300));
+        });
         // Fulfil every network request through the same DNS-pinned SSRF guard as RSS.
         await context.route("**/*", async (route) => {
           const request = route.request();
@@ -127,6 +131,8 @@ export class ScrapingService {
               await route.abort().catch(() => {});
               return;
             }
+            if (tracked && new URL(request.url()).origin === new URL(page.url()).origin)
+              attemptedLoads++;
             const headers = request.headers();
             const body = await this.fetchText(request.url(), {
               method: post ? "POST" : "GET",
@@ -146,8 +152,6 @@ export class ScrapingService {
                 } as Record<string, string>
               )[request.resourceType()] ?? "application/json";
             await route.fulfill({ body, contentType: `${contentType}; charset=utf-8` });
-            if (tracked && new URL(request.url()).origin === new URL(page.url()).origin)
-              completedLoads++;
           } catch (error) {
             if (
               (request.isNavigationRequest() && request.frame() === page.mainFrame()) ||
@@ -219,7 +223,7 @@ export class ScrapingService {
             if (!(await buttons.isEnabled())) break;
             networkError = undefined;
             blockedPosts.clear();
-            completedLoads = 0;
+            attemptedLoads = 0;
             const failure = new Promise<never>((_resolve, reject) => {
               failLoad = reject;
             });
@@ -285,12 +289,21 @@ export class ScrapingService {
                       previous = snapshot;
                       changedAt = Date.now();
                     }
-                    if (!pendingLoads && Date.now() - changedAt >= 300) return entries;
+                    // Some themes ignore clicks while their own loading lock is set,
+                    // even after the new DOM is stable and the AJAX response has finished.
+                    const busy = await buttons.evaluateAll((elements) =>
+                      elements.some((button) =>
+                        button.matches(
+                          '.fetching, .loading, .is-loading, [aria-busy="true"], [data-loading="true"]',
+                        ),
+                      ),
+                    );
+                    if (!pendingLoads && !busy && Date.now() - changedAt >= 300) return entries;
                     await page.waitForTimeout(100);
                   }
                   throw new AppError(
                     504,
-                    "Les articles ne se sont pas stabilisés dans le délai après le clic. Augmentez le délai de chargement.",
+                    "Le chargement ne s'est pas terminé ou le bouton reste occupé après le délai autorisé. Augmentez le délai de chargement.",
                     "LOAD_MORE_TIMEOUT",
                   );
                 })(),
@@ -302,15 +315,21 @@ export class ScrapingService {
             if (!entries) {
               // Check extraction again so an invalid selector cannot pass as an exhausted button.
               await extract(page, config);
-              if (blockedPosts.size && !completedLoads)
-                throw new AppError(
-                  400,
-                  `Aucun nouvel article après le clic. Requête(s) POST vers un autre site bloquée(s) : ${Array.from(blockedPosts).join(", ")}. Vérifiez l'adresse de chargement utilisée par le bouton.`,
-                  "UNSAFE_URL",
-                );
               warnings.push(
                 `Chargement arrêté après ${clicks} clic(s) : aucun nouvel article dans le délai de ${waitTimeoutMs} ms. Les articles déjà récupérés sont conservés.`,
               );
+              if (!attemptedLoads)
+                warnings.push(
+                  "Aucune requête de chargement AJAX vers le site n'a été observée après le clic. Vérifiez le fonctionnement du bouton et l'initialisation de son script.",
+                );
+              if (scriptErrors.size)
+                warnings.push(
+                  `Erreur(s) JavaScript observée(s) : ${Array.from(scriptErrors).join(" ; ")}.`,
+                );
+              if (blockedPosts.size)
+                warnings.push(
+                  `Requête(s) POST externe(s) bloquée(s) : ${Array.from(blockedPosts).join(", ")}. Elles peuvent provenir de services annexes ; cela ne permet pas d'identifier la cause de l'absence de nouveaux articles.`,
+                );
               break;
             }
             let added = 0;

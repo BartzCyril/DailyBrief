@@ -152,12 +152,8 @@ test("forwards same-origin AJAX POST bodies and headers through the guarded tran
   });
 }, 10000);
 
-test("does not treat AJAX failures or private and cross-origin POST targets as exhaustion", async () => {
-  for (const target of [
-    "https://fixture.example/failure",
-    "http://127.0.0.1/private",
-    "https://other.example/post",
-  ]) {
+test("does not treat AJAX failures or private GET targets as exhaustion", async () => {
+  for (const target of ["https://fixture.example/failure", "http://127.0.0.1/private"]) {
     const calls: string[] = [];
     const service = new ScrapingService(async (url, options) => {
       calls.push(url);
@@ -172,7 +168,6 @@ test("does not treat AJAX failures or private and cross-origin POST targets as e
     expect(
       await service.collect("https://fixture.example/news", config).catch((e) => e),
     ).toMatchObject({ code: target.endsWith("/failure") ? "UPSTREAM_ERROR" : "UNSAFE_URL" });
-    if (target.includes("other.example")) expect(calls).toEqual(["https://fixture.example/news"]);
   }
 }, 10000);
 
@@ -199,17 +194,40 @@ test("collects WordPress article batches when a click also triggers an unrelated
   expect(calls).toEqual([`${origin}/tous-les-medias/`, ajax]);
 }, 10000);
 
-test("reports a blocked POST target when the click cannot load any new articles", async () => {
-  const target = "https://other.example/load";
-  const service = new ScrapingService(async () =>
-    page(
-      `document.querySelector('#more').onclick=()=>fetch(${JSON.stringify(target)},{method:'POST',body:'page=2'}).catch(()=>{});`,
-    ),
-  );
-  const error = await service.collect("https://fixture.example/news", config).catch((e) => e);
-  expect(error).toMatchObject({ code: "UNSAFE_URL", status: 400 });
-  expect(error.message).toContain(target);
-  expect(error.message).toContain("Aucun nouvel article");
+test("retains the preview and reports blocked external POSTs without claiming they caused the lack of articles", async () => {
+  const targets = [
+    "https://api.axept.io/v1/analytics/evts",
+    "https://www.google.com/recaptcha/api2/reload?k=fixture",
+    "https://www.google.com/recaptcha/api2/clr?k=fixture",
+    "https://other.example/load",
+  ];
+  const calls: string[] = [];
+  const service = new ScrapingService(async (url) => {
+    calls.push(url);
+    return page(`document.querySelector('#more').onclick=()=>{
+      for(const target of ${JSON.stringify(targets)})
+        fetch(target,{method:'POST',body:'event=click'}).catch(()=>{});
+    };`);
+  });
+  const result = await service.collect("https://fixture.example/news", config);
+  expect(result.articles).toHaveLength(1);
+  expect(calls).toEqual(["https://fixture.example/news"]);
+  expect(result.warnings?.[0]).toContain("aucun nouvel article");
+  expect(result.warnings?.join(" ")).toContain("Aucune requête de chargement AJAX");
+  for (const target of targets) expect(result.warnings?.join(" ")).toContain(target);
+  expect(result.warnings?.join(" ")).toContain("cela ne permet pas d'identifier la cause");
+}, 10000);
+
+test("reports script initialization errors when a visible button never starts its article request", async () => {
+  const service = new ScrapingService(async (url) => {
+    if (url.endsWith("/theme.js"))
+      return "throw new Error('Article loader initialization failed');";
+    return `${page("")}<script src="/theme.js"></script>`;
+  });
+  const result = await service.collect("https://fixture.example/news", config);
+  expect(result.articles).toHaveLength(1);
+  expect(result.warnings?.join(" ")).toContain("Aucune requête de chargement AJAX");
+  expect(result.warnings?.join(" ")).toContain("Article loader initialization failed");
 }, 10000);
 test("checks POST requests against the current page after a JavaScript redirect", async () => {
   const calls: string[] = [];
@@ -248,4 +266,80 @@ test("accepts an empty final WordPress batch even when the click triggers a bloc
   expect(result.articles).toHaveLength(1);
   expect(result.warnings?.[0]).toContain("aucun nouvel article");
   expect(requests).toEqual(["https://fixture.example/news", "https://fixture.example/ajax"]);
+}, 10000);
+
+test("waits for the OPC theme fetching lock before clicking the next WordPress batch", async () => {
+  const origin = "https://www.observatoire-culture.net";
+  const batches: string[] = [];
+  const service = new ScrapingService(async (url, options) => {
+    if (url.endsWith("/wp-admin/admin-ajax.php")) {
+      batches.push(options?.body ?? "");
+      return JSON.stringify({ template: card(String(batches.length)), maxPage: 3 });
+    }
+    return `${card("first")}<div id="grid" data-offset="12" data-paged="1"></div>
+      <div><button id="more-posts">Voir plus</button></div><script>
+      const button=document.querySelector('#more-posts'), grid=document.querySelector('#grid');
+      button.onclick=async()=>{
+        if(button.classList.contains('fetching')) return;
+        button.classList.add('fetching');
+        const body=new URLSearchParams({action:'load_objects',offset:grid.dataset.offset,page:grid.dataset.paged,object:'post'});
+        const data=await(await fetch('/wp-admin/admin-ajax.php',{method:'POST',body})).json();
+        grid.insertAdjacentHTML('beforeend',data.template);
+        grid.dataset.offset=Number(grid.dataset.offset)+12;
+        grid.dataset.paged=Number(grid.dataset.paged)+1;
+        if(Number(grid.dataset.paged)>data.maxPage) button.parentElement.style.display='none';
+        setTimeout(()=>button.classList.remove('fetching'),500);
+      };</script>`;
+  });
+  const result = await service.collect(`${origin}/tous-les-medias/`, {
+    ...config,
+    loadMore: { buttonSelector: "#more-posts", waitTimeoutMs: 1500 },
+  });
+  expect(batches).toEqual([
+    "action=load_objects&offset=12&page=1&object=post",
+    "action=load_objects&offset=24&page=2&object=post",
+    "action=load_objects&offset=36&page=3&object=post",
+  ]);
+  expect(result.articles.map((a) => a.title)).toEqual([
+    "Article first",
+    "Article 1",
+    "Article 2",
+    "Article 3",
+  ]);
+  expect(result.warnings).toBeUndefined();
+}, 10000);
+
+test("waits for an accessible busy button to be ready before the next click", async () => {
+  const service = new ScrapingService(async () =>
+    page(`let n=0;
+    document.querySelector('#more').onclick=()=>{
+      const button=document.querySelector('#more');
+      if(button.getAttribute('aria-busy')==='true') return;
+      button.setAttribute('aria-busy','true');
+      button.insertAdjacentHTML('beforebegin','<article><h2>Batch '+(++n)+'</h2><a href="/batch/'+n+'">Lire</a></article>');
+      setTimeout(()=>{
+        button.setAttribute('aria-busy','false');
+        if(n===2) button.disabled=true;
+      },600);
+    };`),
+  );
+  const result = await service.collect("https://fixture.example/news", {
+    ...config,
+    loadMore: { buttonSelector: "#more", waitTimeoutMs: 1500 },
+  });
+  expect(result.articles.map((a) => a.title)).toEqual(["Article first", "Batch 1", "Batch 2"]);
+  expect(result.warnings).toBeUndefined();
+}, 10000);
+
+test("reports a loading lock that never clears instead of sending ignored clicks", async () => {
+  const service = new ScrapingService(async () =>
+    page(`document.querySelector('#more').onclick=()=>{
+    const button=document.querySelector('#more');
+    button.classList.add('fetching');
+    button.insertAdjacentHTML('beforebegin',${JSON.stringify(card("locked"))});
+  };`),
+  );
+  const error = await service.collect("https://fixture.example/news", config).catch((e) => e);
+  expect(error).toMatchObject({ code: "LOAD_MORE_TIMEOUT", status: 504 });
+  expect(error.message).toContain("bouton");
 }, 10000);
