@@ -20,10 +20,10 @@ export const sourcesApi = {
     api<Source>("/sources", { method: "POST", body: { url, type: "SCRAPING", scrapingConfig } }),
   setEnabled: (id: string, enabled: boolean) =>
     api<void>(`/sources/${id}`, { method: "PATCH", body: { enabled } }),
-  updateUrl: (id: string, url: string, urlTemplate?: string) =>
+  update: (id: string, url: string, scrapingConfig?: ScrapingConfig) =>
     api<void>(`/sources/${id}`, {
       method: "PATCH",
-      body: { url, ...(urlTemplate !== undefined ? { urlTemplate } : {}) },
+      body: { url, ...(scrapingConfig !== undefined ? { scrapingConfig } : {}) },
     }),
   workflow: (sourceId: string, signal?: AbortSignal) =>
     api<WorkflowPreview>(`/sources/${sourceId}/workflow`, { method: "POST", body: {}, signal }),

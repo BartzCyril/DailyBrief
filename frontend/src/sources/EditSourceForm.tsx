@@ -1,10 +1,19 @@
 import { useState, type FormEvent } from "react";
-import type { Source } from "@dailybrief/shared";
+import type { Source, ScrapingConfig, SourcePreview } from "@dailybrief/shared";
+import { scrapingSchema } from "../../../shared/src/scraping";
 import { LoaderCircle } from "lucide-react";
 import { Field } from "@/components/Field";
 import { Button } from "@/components/ui/button";
 import { Feedback } from "@/components/Feedback";
-import { validHttpUrl } from "./api";
+import { errorMessage } from "@/lib/api";
+import { sourcesApi, validHttpUrl } from "./api";
+import { ArticlePreview } from "./ArticlePreview";
+import {
+  ScrapingFields,
+  createScrapingDraft,
+  buildScrapingConfig,
+  type ScrapingDraft,
+} from "./ScrapingFields";
 
 export function EditSourceForm({
   source,
@@ -14,47 +23,91 @@ export function EditSourceForm({
 }: {
   source: Source;
   busy: boolean;
-  onSave: (url: string, urlTemplate?: string) => Promise<void>;
+  onSave: (url: string, config?: ScrapingConfig) => Promise<void>;
   onCancel: () => void;
 }) {
-  const pagination =
-    source.scrapingConfig?.mode === "PAGINATE" ? source.scrapingConfig.pagination : undefined;
-  const hasTemplate = pagination?.strategy === "URL_TEMPLATE";
   const [url, setUrl] = useState(source.url);
-  const [template, setTemplate] = useState(pagination?.urlTemplate ?? "");
+  const [draft, setDraft] = useState(() => createScrapingDraft(source.scrapingConfig));
   const [templateEdited, setTemplateEdited] = useState(false);
   const [error, setError] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [preview, setPreview] = useState<SourcePreview | null>(null);
+  const pending = busy || testing;
   const unchanged =
-    url.trim() === source.url && (!hasTemplate || template.trim() === pagination?.urlTemplate);
+    url.trim() === source.url &&
+    (source.type === "RSS" ||
+      JSON.stringify(buildScrapingConfig(draft)) ===
+        JSON.stringify(buildScrapingConfig(createScrapingDraft(source.scrapingConfig))));
+  function update(value: Partial<ScrapingDraft>) {
+    if (value.urlTemplate !== undefined) setTemplateEdited(true);
+    setDraft((previous) => ({ ...previous, ...value }));
+    setPreview(null);
+    setError("");
+  }
   function changeUrl(value: string) {
-    const originalTemplate = pagination?.urlTemplate ?? "";
+    const originalTemplate = source.scrapingConfig?.pagination?.urlTemplate ?? "";
     const suffix = originalTemplate.slice(source.url.length);
     if (
-      hasTemplate &&
+      draft.mode === "PAGINATE" &&
+      draft.strategy === "URL_TEMPLATE" &&
       !templateEdited &&
       originalTemplate.startsWith(source.url) &&
       (source.url.endsWith("/") || !suffix || "/?&#".includes(suffix[0]!))
     )
-      setTemplate(value + suffix);
+      setDraft((previous) => ({ ...previous, urlTemplate: value + suffix }));
     setUrl(value);
+    setPreview(null);
     setError("");
   }
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (busy || unchanged) return;
+  function validate(): { url: string; config?: ScrapingConfig } | null {
     setError("");
     if (!validHttpUrl(url.trim())) {
       setError("Saisissez une URL HTTP ou HTTPS valide.");
-      return;
+      return null;
+    }
+    if (source.type === "RSS") return { url: url.trim() };
+    const validation = scrapingSchema.safeParse(buildScrapingConfig(draft));
+    if (!validation.success) {
+      setError(
+        validation.error.issues.some((issue) => issue.path.includes("urlTemplate"))
+          ? "Le modèle d'URL doit contenir {page}."
+          : "Vérifiez les sélecteurs requis et les paramètres de collecte.",
+      );
+      return null;
     }
     if (
-      hasTemplate &&
-      (!template.includes("{page}") || !validHttpUrl(template.replaceAll("{page}", "0").trim()))
+      validation.data.mode === "PAGINATE" &&
+      validation.data.pagination?.strategy === "URL_TEMPLATE" &&
+      !validHttpUrl(validation.data.pagination.urlTemplate!.replaceAll("{page}", "0"))
     ) {
-      setError("Le modèle de pagination doit être une URL HTTP ou HTTPS contenant {page}.");
-      return;
+      setError("Le modèle d'URL doit être une URL HTTP ou HTTPS contenant {page}.");
+      return null;
     }
-    await onSave(url.trim(), hasTemplate ? template.trim() : undefined);
+    return { url: url.trim(), config: validation.data };
+  }
+  async function test() {
+    if (pending) return;
+    const input = validate();
+    if (!input) return;
+    setTesting(true);
+    setPreview(null);
+    try {
+      setPreview(
+        input.config
+          ? await sourcesApi.testScraping(input.url, input.config)
+          : await sourcesApi.testRss(input.url),
+      );
+    } catch (error) {
+      setError(errorMessage(error));
+    } finally {
+      setTesting(false);
+    }
+  }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (pending || unchanged) return;
+    const input = validate();
+    if (input) await onSave(input.url, input.config);
   }
   return (
     <form
@@ -63,37 +116,32 @@ export function EditSourceForm({
       className="w-full space-y-4 border-t pt-4"
       aria-label={`Modifier ${source.url}`}
     >
-      <Field
-        label={source.type === "RSS" ? "URL du flux RSS" : "URL du site"}
-        type="url"
-        value={url}
-        autoFocus
-        disabled={busy}
-        onChange={(event) => changeUrl(event.target.value)}
-      />
-      {hasTemplate && (
+      <fieldset disabled={pending} className="space-y-5 min-w-0">
         <Field
-          label="Modèle d'URL de pagination"
-          value={template}
-          disabled={busy}
-          onChange={(event) => {
-            setTemplateEdited(true);
-            setTemplate(event.target.value);
-            setError("");
-          }}
-          hint="Vérifiez l'adresse utilisée pour chaque page ; conservez {page} dans le modèle."
+          label={source.type === "RSS" ? "URL du flux RSS" : "URL du site"}
+          type="url"
+          value={url}
+          autoFocus
+          onChange={(event) => changeUrl(event.target.value)}
         />
-      )}
+        {source.type === "SCRAPING" && <ScrapingFields draft={draft} update={update} />}
+      </fieldset>
       <Feedback message={error} error />
+      <Feedback message={preview?.warnings?.join(" ") ?? ""} />
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={busy || unchanged}>
+        <Button type="button" variant="outline" disabled={pending} onClick={() => void test()}>
+          {testing && <LoaderCircle className="animate-spin" />}
+          {testing ? "Test en cours…" : "Tester"}
+        </Button>
+        <Button type="submit" disabled={pending || unchanged}>
           {busy && <LoaderCircle className="animate-spin" />}
           {busy ? "Vérification et enregistrement…" : "Enregistrer les modifications"}
         </Button>
-        <Button type="button" variant="outline" disabled={busy} onClick={onCancel}>
+        <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>
           Annuler
         </Button>
       </div>
+      {preview && <ArticlePreview preview={preview} />}
     </form>
   );
 }

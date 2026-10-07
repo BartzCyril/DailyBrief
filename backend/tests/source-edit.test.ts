@@ -29,8 +29,12 @@ describe("source URL editing", () => {
     scraping: new ScrapingService(async (url) => {
       requests.push(url);
       if (url.includes("broken")) throw new AppError(502, "Page inaccessible.", "NETWORK_ERROR");
-      if (url.endsWith("/0") || new URL(url).searchParams.get("page") === "0")
-        return '<article><h2>Article</h2><a href="/article">Lire</a></article>';
+      if (
+        url.endsWith("/scroll") ||
+        url.endsWith("/0") ||
+        new URL(url).searchParams.get("page") === "0"
+      )
+        return '<article><h2>Article</h2><a href="/article">Lire</a><p>Description</p><time datetime="2026-10-07">7 octobre</time></article>';
       return "<main></main>";
     }),
   });
@@ -142,6 +146,94 @@ describe("source URL editing", () => {
     expect(requests).toHaveLength(0);
     expect((await db.source.findUniqueOrThrow({ where: { id: sourceId } })).enabled).toBe(true);
   });
+  test("rejects scraping settings on RSS and ambiguous template edits", async () => {
+    expect((await patch({ scrapingConfig })).status).toBe(400);
+    expect(
+      (
+        await patch({
+          url: "https://fixture.example/new",
+          scrapingConfig,
+          urlTemplate: "https://fixture.example/{page}",
+        })
+      ).status,
+    ).toBe(400);
+    expect(requests).toHaveLength(0);
+  });
+  test("edits all scraping settings at the same URL, clears optional selectors and switches modes without losing history", async () => {
+    await db.source.update({
+      where: { id: sourceId },
+      data: { type: "SCRAPING", url: "https://fixture.example/scroll", scrapingConfig },
+    });
+    const article = await db.article.create({
+      data: {
+        userId,
+        sourceId,
+        title: "Existant",
+        summary: "Résumé conservé",
+        fingerprint: randomUUID(),
+        contentHash: randomUUID(),
+      },
+    });
+    const scrollConfig = {
+      articleSelector: "article",
+      titleSelector: "h2:first-of-type",
+      linkSelector: "a[href]",
+      descriptionSelector: "p",
+      dateSelector: "time",
+      mode: "SCROLL",
+      scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+    };
+    expect((await patch({ scrapingConfig: scrollConfig })).status).toBe(204);
+    expect(requests).toEqual(["https://fixture.example/scroll"]);
+    expect((await db.source.findUniqueOrThrow({ where: { id: sourceId } })).scrapingConfig).toEqual(
+      scrollConfig,
+    );
+    const paginationConfig = {
+      ...scrapingConfig,
+      pagination: {
+        strategy: "URL_TEMPLATE",
+        startPage: 0,
+        urlTemplate: "https://fixture.example/pages/{page}",
+      },
+    };
+    requests.length = 0;
+    expect((await patch({ scrapingConfig: paginationConfig })).status).toBe(204);
+    expect(requests).toEqual([
+      "https://fixture.example/pages/0",
+      "https://fixture.example/pages/1",
+    ]);
+    expect(await db.source.findUniqueOrThrow({ where: { id: sourceId } })).toMatchObject({
+      id: sourceId,
+      enabled: false,
+      scrapingConfig: paginationConfig,
+    });
+    expect((await db.article.findUniqueOrThrow({ where: { id: article.id } })).summary).toBe(
+      "Résumé conservé",
+    );
+  }, 15000);
+  test("invalid selectors or retrieval failures leave all existing scraping settings unchanged", async () => {
+    await db.source.update({
+      where: { id: sourceId },
+      data: { type: "SCRAPING", url: "https://fixture.example/scroll", scrapingConfig },
+    });
+    for (const edited of [
+      { ...scrapingConfig, titleSelector: "" },
+      { ...scrapingConfig, pagination: { ...scrapingConfig.pagination, startPage: -1 } },
+    ])
+      expect((await patch({ scrapingConfig: edited })).status).toBe(400);
+    expect(requests).toHaveLength(0);
+    const failure = await patch({
+      url: "https://fixture.example/broken",
+      scrapingConfig: { ...scrapingConfig, titleSelector: "h2:first-of-type" },
+      enabled: true,
+    });
+    expect(failure.status).toBe(502);
+    expect(await db.source.findUniqueOrThrow({ where: { id: sourceId } })).toMatchObject({
+      url: "https://fixture.example/scroll",
+      enabled: false,
+      scrapingConfig,
+    });
+  }, 15000);
   test("uses the saved scraping selectors and pagination at the new URL", async () => {
     await db.source.update({
       where: { id: sourceId },

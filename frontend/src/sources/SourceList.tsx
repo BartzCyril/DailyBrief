@@ -1,4 +1,4 @@
-import type { Source } from "@dailybrief/shared";
+import type { Source, ScrapingConfig } from "@dailybrief/shared";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { useState } from "react";
@@ -21,13 +21,13 @@ export function SourceList({
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState("");
   const [message, setMessage] = useState("");
-  async function updateUrl(source: Source, url: string, urlTemplate?: string) {
+  async function updateSource(source: Source, url: string, config?: ScrapingConfig) {
     if (busy) return;
     setBusy(source.id);
     setError("");
     setMessage("");
     try {
-      await sourcesApi.updateUrl(source.id, url, urlTemplate);
+      await sourcesApi.update(source.id, url, config);
       await onChanged?.();
       setEditingId("");
       setMessage("Source modifiée.");
@@ -104,7 +104,7 @@ export function SourceList({
                   key={source.id}
                   source={source}
                   busy={!!busy}
-                  onSave={(url, template) => updateUrl(source, url, template)}
+                  onSave={(url, config) => updateSource(source, url, config)}
                   onCancel={() => {
                     setEditingId("");
                     setError("");

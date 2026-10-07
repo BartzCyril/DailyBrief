@@ -44,10 +44,12 @@ const app = createApp(db, redis, config, {
     async () =>
       "<rss><channel><title>Flux de test</title><item><title>Article RSS</title><link>https://fixture.example/rss-article</link><description>Informations RSS contrôlées.</description></item></channel></rss>",
   ),
-  scraping: new ScrapingService(
-    async () =>
-      '<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article>',
-  ),
+  scraping: new ScrapingService(async (url) => {
+    const offset = new URL(url).searchParams.get("offset");
+    return offset !== null && offset !== "0"
+      ? "<main></main>"
+      : '<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article>';
+  }),
   summary: {
     summarize: async (input) => {
       await summaryGate;
@@ -157,6 +159,50 @@ try {
     sourcesAfterEdit.map((source) => source.scrapingConfig),
     sourcesBeforeEdit.map((source) => source.scrapingConfig),
   );
+  await page
+    .getByRole("button", { name: "Modifier https://fixture.example/updated-news", exact: true })
+    .click();
+  await page.getByLabel("Sélecteur des articles", { exact: true }).fill("article");
+  await page.getByLabel("Sélecteur du titre", { exact: true }).fill("h2:first-of-type");
+  await page.getByLabel("Sélecteur du lien", { exact: true }).fill("a[href]");
+  await page.getByLabel("Sélecteur de description (facultatif)").fill("p");
+  await page.getByRole("combobox", { name: "Mode de récupération" }).click();
+  await page.getByRole("option", { name: "Pagination", exact: true }).click();
+  await page.getByLabel("Nom du paramètre").fill("offset");
+  await page.getByLabel("Page de départ").fill("0");
+  await page.getByRole("button", { name: "Tester", exact: true }).click();
+  await page.getByText("Article scraping", { exact: true }).waitFor();
+  assert.equal(
+    await db.article.count({ where: { user: { email } } }),
+    0,
+    "Testing edits should not save articles",
+  );
+  assert.deepEqual(
+    await db.source.findMany({ where: { user: { email } }, orderBy: { id: "asc" } }),
+    sourcesAfterEdit,
+    "Testing edits should not change sources",
+  );
+  await page.screenshot({
+    path: "/tmp/dailybrief-edit-source-settings-mobile.png",
+    fullPage: true,
+  });
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "Full source settings must fit mobile viewport",
+  );
+  await page.getByRole("button", { name: "Enregistrer les modifications" }).click();
+  await page.getByLabel("URL du site").waitFor({ state: "hidden" });
+  const editedSource = await db.source.findFirstOrThrow({
+    where: { user: { email }, type: "SCRAPING" },
+  });
+  assert.deepEqual(editedSource.scrapingConfig, {
+    articleSelector: "article",
+    titleSelector: "h2:first-of-type",
+    linkSelector: "a[href]",
+    descriptionSelector: "p",
+    mode: "PAGINATE",
+    pagination: { strategy: "QUERY_PARAM", queryParam: "offset", startPage: 0 },
+  });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("switch", { name: "Récupération automatique", exact: true }).click();
   await page.getByLabel("Heure quotidienne").fill("08:45");
@@ -225,7 +271,7 @@ try {
   await page.waitForURL("**/login");
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, RSS and scraping URL editing with preserved source identities and selectors, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: register, login, RSS URL editing, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();

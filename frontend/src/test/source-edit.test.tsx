@@ -32,6 +32,19 @@ let serverError = "";
 let pending: ((response: Response) => void) | undefined;
 let pauseSave = false;
 const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+  if (url.endsWith("/test"))
+    return new Response(
+      JSON.stringify({
+        articles: [
+          {
+            title: "Article de test",
+            url: "https://example.com/article",
+            description: null,
+            publishedAt: null,
+          },
+        ],
+      }),
+    );
   if (init?.method === "PATCH") {
     if (serverError) return new Response(JSON.stringify({ message: serverError }), { status: 409 });
     const body = JSON.parse(String(init.body));
@@ -42,17 +55,7 @@ const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         : {
             ...item,
             url: body.url ?? item.url,
-            ...(body.urlTemplate
-              ? {
-                  scrapingConfig: {
-                    ...item.scrapingConfig!,
-                    pagination: {
-                      ...item.scrapingConfig!.pagination!,
-                      urlTemplate: body.urlTemplate,
-                    },
-                  },
-                }
-              : {}),
+            ...(body.scrapingConfig ? { scrapingConfig: body.scrapingConfig } : {}),
           },
     );
     if (pauseSave)
@@ -151,7 +154,7 @@ test("supports changing a pagination template with validation of its page placeh
   ];
   render(<Harness />);
   const ui = await edit(scraping, "https://example.com/new-news");
-  const template = screen.getByLabelText("Modèle d'URL de pagination");
+  const template = screen.getByLabelText("Modèle d'URL");
   expect(template).toHaveValue("https://example.com/new-news/{page}");
   await ui.clear(template);
   await ui.type(template, "https://example.com/no-page");
@@ -164,7 +167,14 @@ test("supports changing a pagination template with validation of its page placeh
   await screen.findByText("Source modifiée.");
   expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
     url: "https://example.com/new-news",
-    urlTemplate: "https://example.com/new-news/{page}",
+    scrapingConfig: {
+      ...scraping.scrapingConfig,
+      pagination: {
+        strategy: "URL_TEMPLATE",
+        startPage: 0,
+        urlTemplate: "https://example.com/new-news/{page}",
+      },
+    },
   });
 });
 test("disables competing edits and activation while the URL is being verified", async () => {
@@ -178,4 +188,87 @@ test("disables competing edits and activation while the URL is being verified", 
   for (const control of screen.getAllByRole("switch")) expect(control).toBeDisabled();
   pending!(new Response(null, { status: 204 }));
   await screen.findByText("Source modifiée.");
+});
+test("prefills every scraping field and saves selector and mode changes without changing the URL", async () => {
+  stored = [
+    {
+      ...scraping,
+      scrapingConfig: {
+        ...scraping.scrapingConfig!,
+        descriptionSelector: "p",
+        dateSelector: "time",
+      },
+    },
+  ];
+  render(<Harness />);
+  const ui = userEvent.setup();
+  await ui.click(screen.getByRole("button", { name: `Modifier ${scraping.url}` }));
+  expect(screen.getByLabelText("Sélecteur des articles")).toHaveValue("article");
+  expect(screen.getByLabelText("Sélecteur du titre")).toHaveValue("h2");
+  expect(screen.getByLabelText("Sélecteur du lien")).toHaveValue("a");
+  expect(screen.getByLabelText("Sélecteur de description (facultatif)")).toHaveValue("p");
+  expect(screen.getByLabelText("Sélecteur de date (facultatif)")).toHaveValue("time");
+  expect(screen.getByLabelText("Page de départ")).toHaveValue(0);
+  expect(screen.getByRole("button", { name: "Enregistrer les modifications" })).toBeDisabled();
+  for (const [label, value] of [
+    ["Sélecteur des articles", ".card"],
+    ["Sélecteur du titre", "h3"],
+    ["Sélecteur du lien", ".link"],
+    ["Sélecteur de description (facultatif)", ""],
+    ["Sélecteur de date (facultatif)", ""],
+  ]) {
+    const input = screen.getByLabelText(label!);
+    await ui.clear(input);
+    if (value) await ui.type(input, value);
+  }
+  await ui.click(screen.getByRole("combobox", { name: "Mode de récupération" }));
+  await ui.click(screen.getByRole("option", { name: "Scroll infini" }));
+  await ui.clear(screen.getByLabelText("Nombre maximum de scrolls"));
+  await ui.type(screen.getByLabelText("Nombre maximum de scrolls"), "0");
+  await ui.clear(screen.getByLabelText("Attente après un scroll (ms)"));
+  await ui.type(screen.getByLabelText("Attente après un scroll (ms)"), "250");
+  await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+  await screen.findByText("Source modifiée.");
+  expect(stored[0]?.scrapingConfig).toEqual({
+    articleSelector: ".card",
+    titleSelector: "h3",
+    linkSelector: ".link",
+    mode: "SCROLL",
+    scroll: { maxScrolls: 0, waitAfterScrollMs: 250 },
+  });
+  await ui.click(screen.getByRole("button", { name: `Modifier ${scraping.url}` }));
+  expect(screen.getByLabelText("Nombre maximum de scrolls")).toHaveValue(0);
+  expect(screen.getByLabelText("Attente après un scroll (ms)")).toHaveValue(250);
+  await ui.click(screen.getByRole("combobox", { name: "Mode de récupération" }));
+  await ui.click(screen.getByRole("option", { name: "Pagination" }));
+  await ui.clear(screen.getByLabelText("Nom du paramètre"));
+  await ui.type(screen.getByLabelText("Nom du paramètre"), "offset");
+  await ui.clear(screen.getByLabelText("Page de départ"));
+  await ui.type(screen.getByLabelText("Page de départ"), "2");
+  await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+  await screen.findByText("Source modifiée.");
+  expect(stored[0]?.scrapingConfig?.pagination).toEqual({
+    strategy: "QUERY_PARAM",
+    queryParam: "offset",
+    startPage: 2,
+  });
+  expect(stored[0]?.scrapingConfig?.scroll).toBeUndefined();
+});
+test("tests edited settings without saving, invalidates the preview and refuses empty required selectors", async () => {
+  render(<Harness />);
+  const ui = await edit(scraping, "https://example.com/new-news");
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Article de test");
+  expect(stored[1]?.url).toBe(scraping.url);
+  const call = fetcher.mock.calls[0]!;
+  expect(call[0]).toBe("/api/sources/scraping/test");
+  expect(JSON.parse(String(call[1]?.body))).toEqual({
+    url: "https://example.com/new-news",
+    config: scraping.scrapingConfig,
+  });
+  await ui.clear(screen.getByLabelText("Sélecteur du titre"));
+  expect(screen.queryByText("Article de test")).not.toBeInTheDocument();
+  await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("sélecteurs requis");
+  expect(fetcher.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
 });
