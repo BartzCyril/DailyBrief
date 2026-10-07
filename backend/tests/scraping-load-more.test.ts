@@ -175,3 +175,77 @@ test("does not treat AJAX failures or private and cross-origin POST targets as e
     if (target.includes("other.example")) expect(calls).toEqual(["https://fixture.example/news"]);
   }
 }, 10000);
+
+test("collects WordPress article batches when a click also triggers an unrelated third-party POST", async () => {
+  const calls: string[] = [];
+  const origin = "https://www.observatoire-culture.net";
+  const ajax = `${origin}/wp-admin/admin-ajax.php`;
+  const service = new ScrapingService(async (url, options) => {
+    calls.push(url);
+    if (url === ajax) {
+      expect(options).toMatchObject({ method: "POST", body: "action=more_posts&page=2" });
+      return JSON.stringify({ html: card("wordpress-next") });
+    }
+    return page(`document.querySelector('#more').onclick=async()=>{
+      fetch('https://metrics.example/event',{method:'POST',body:'click=more'}).catch(()=>{});
+      const data=await(await fetch(${JSON.stringify(ajax)},{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'action=more_posts&page=2'})).json();
+      document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);
+      document.querySelector('#more').remove();
+    };`);
+  });
+  const result = await service.collect(`${origin}/tous-les-medias/`, config);
+  expect(result.articles.map((a) => a.title)).toEqual(["Article first", "Article wordpress-next"]);
+  expect(result.warnings).toBeUndefined();
+  expect(calls).toEqual([`${origin}/tous-les-medias/`, ajax]);
+}, 10000);
+
+test("reports a blocked POST target when the click cannot load any new articles", async () => {
+  const target = "https://other.example/load";
+  const service = new ScrapingService(async () =>
+    page(
+      `document.querySelector('#more').onclick=()=>fetch(${JSON.stringify(target)},{method:'POST',body:'page=2'}).catch(()=>{});`,
+    ),
+  );
+  const error = await service.collect("https://fixture.example/news", config).catch((e) => e);
+  expect(error).toMatchObject({ code: "UNSAFE_URL", status: 400 });
+  expect(error.message).toContain(target);
+  expect(error.message).toContain("Aucun nouvel article");
+}, 10000);
+test("checks POST requests against the current page after a JavaScript redirect", async () => {
+  const calls: string[] = [];
+  const service = new ScrapingService(async (url) => {
+    calls.push(url);
+    if (url === "https://www.fixture.example/news")
+      return '<script>location.href="https://fixture.example/news"</script>';
+    if (url.endsWith("/ajax")) return JSON.stringify({ html: card("redirected") });
+    return page(`document.querySelector('#more').onclick=async()=>{
+      const data=await(await fetch('/ajax',{method:'POST',body:'page=2'})).json();
+      document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);
+      document.querySelector('#more').remove();
+    };`);
+  });
+  const result = await service.collect("https://www.fixture.example/news", config);
+  expect(result.articles).toHaveLength(2);
+  expect(calls).toEqual([
+    "https://www.fixture.example/news",
+    "https://fixture.example/news",
+    "https://fixture.example/ajax",
+  ]);
+}, 10000);
+test("accepts an empty final WordPress batch even when the click triggers a blocked third-party POST", async () => {
+  const requests: string[] = [];
+  const service = new ScrapingService(async (url) => {
+    requests.push(url);
+    if (url.endsWith("/ajax")) return JSON.stringify({ html: "" });
+    return page(`document.querySelector('#more').onclick=async()=>{
+      fetch('https://metrics.example/event',{method:'POST',body:'click=more'}).catch(()=>{});
+      const data=await(await fetch('/ajax',{method:'POST',body:'page=2'})).json();
+      document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);
+      document.querySelector('#more').remove();
+    };`);
+  });
+  const result = await service.collect("https://fixture.example/news", config);
+  expect(result.articles).toHaveLength(1);
+  expect(result.warnings?.[0]).toContain("aucun nouvel article");
+  expect(requests).toEqual(["https://fixture.example/news", "https://fixture.example/ajax"]);
+}, 10000);

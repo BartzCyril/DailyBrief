@@ -93,6 +93,8 @@ export class ScrapingService {
       let networkError: unknown;
       let failLoad: ((error: unknown) => void) | undefined;
       let pendingLoads = 0;
+      let completedLoads = 0;
+      const blockedPosts = new Set<string>();
       const timer =
         config.mode === "SCROLL"
           ? setTimeout(() => {
@@ -118,12 +120,13 @@ export class ScrapingService {
           const tracked = Boolean(failLoad && ajax);
           if (tracked) pendingLoads++;
           try {
-            if (post && new URL(request.url()).origin !== new URL(url).origin)
-              throw new AppError(
-                400,
-                "Le bouton doit charger les articles depuis le même site.",
-                "UNSAFE_URL",
-              );
+            if (post && new URL(request.url()).origin !== new URL(page.url()).origin) {
+              // A click can also trigger analytics or other unrelated POSTs. Abort
+              // them without failing an article batch that loads successfully.
+              if (tracked) blockedPosts.add(request.url());
+              await route.abort().catch(() => {});
+              return;
+            }
             const headers = request.headers();
             const body = await this.fetchText(request.url(), {
               method: post ? "POST" : "GET",
@@ -143,6 +146,8 @@ export class ScrapingService {
                 } as Record<string, string>
               )[request.resourceType()] ?? "application/json";
             await route.fulfill({ body, contentType: `${contentType}; charset=utf-8` });
+            if (tracked && new URL(request.url()).origin === new URL(page.url()).origin)
+              completedLoads++;
           } catch (error) {
             if (
               (request.isNavigationRequest() && request.frame() === page.mainFrame()) ||
@@ -213,6 +218,8 @@ export class ScrapingService {
               );
             if (!(await buttons.isEnabled())) break;
             networkError = undefined;
+            blockedPosts.clear();
+            completedLoads = 0;
             const failure = new Promise<never>((_resolve, reject) => {
               failLoad = reject;
             });
@@ -295,6 +302,12 @@ export class ScrapingService {
             if (!entries) {
               // Check extraction again so an invalid selector cannot pass as an exhausted button.
               await extract(page, config);
+              if (blockedPosts.size && !completedLoads)
+                throw new AppError(
+                  400,
+                  `Aucun nouvel article après le clic. Requête(s) POST vers un autre site bloquée(s) : ${Array.from(blockedPosts).join(", ")}. Vérifiez l'adresse de chargement utilisée par le bouton.`,
+                  "UNSAFE_URL",
+                );
               warnings.push(
                 `Chargement arrêté après ${clicks} clic(s) : aucun nouvel article dans le délai de ${waitTimeoutMs} ms. Les articles déjà récupérés sont conservés.`,
               );

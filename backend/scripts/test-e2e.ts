@@ -54,7 +54,7 @@ const app = createApp(db, redis, config, {
       return JSON.stringify({
         html: '<article><h2>Article supplémentaire</h2><a href="/scraped-next">Lire</a></article>',
       });
-    return `<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article><button id="more" class="more">Plus</button><script>document.querySelector('#more').onclick=async()=>{const data=await(await fetch('/button-batch')).json();document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);document.querySelector('#more').remove();};</script>`;
+    return `<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article><button id="more" class="more">Plus</button><script>document.querySelector('#more').onclick=async()=>{fetch('https://metrics.example/event',{method:'POST',body:'click=more'}).catch(()=>{});const data=await(await fetch('/button-batch')).json();document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);document.querySelector('#more').remove();};</script>`;
   }),
   summary: {
     summarize: async (input) => {
