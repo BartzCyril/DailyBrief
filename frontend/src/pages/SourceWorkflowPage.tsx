@@ -139,6 +139,7 @@ export function SourceWorkflowPage() {
       </Card>
       {preview?.articles.map((article, index) => {
         const test = tests[index];
+        const articleUrl = test?.result?.url ?? article.url;
         return (
           <Card key={`${preview.id}-${index}`}>
             <CardHeader>
@@ -148,9 +149,9 @@ export function SourceWorkflowPage() {
               {article.description && <CardDescription>{article.description}</CardDescription>}
             </CardHeader>
             <CardContent className="space-y-4">
-              {article.url && validHttpUrl(article.url) && (
+              {articleUrl && validHttpUrl(articleUrl) && (
                 <a
-                  href={article.url}
+                  href={articleUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="block break-all text-sm text-primary underline"

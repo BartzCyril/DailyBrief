@@ -8,9 +8,11 @@ import { Feedback } from "@/components/Feedback";
 import { errorMessage } from "@/lib/api";
 import { sourcesApi, validHttpUrl } from "./api";
 import { ArticlePreview } from "./ArticlePreview";
+import { RssArticleLinkField, validArticleLinkSelector } from "./RssArticleLinkField";
 export function RssForm() {
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
+  const [articleLinkSelector, setArticleLinkSelector] = useState("");
   const [preview, setPreview] = useState<SourcePreview | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
@@ -23,9 +25,13 @@ export function RssForm() {
       setError("Saisissez une URL HTTP ou HTTPS valide.");
       return;
     }
+    if (!validArticleLinkSelector(articleLinkSelector)) {
+      setError("Saisissez un sélecteur CSS valide pour le lien vers l'article.");
+      return;
+    }
     setBusy("test");
     try {
-      setPreview(await sourcesApi.testRss(url));
+      setPreview(await sourcesApi.testRss(url, articleLinkSelector.trim() || undefined));
     } catch (error) {
       setError(errorMessage(error));
     } finally {
@@ -37,7 +43,7 @@ export function RssForm() {
     setBusy("save");
     setError("");
     try {
-      await sourcesApi.saveRss(url);
+      await sourcesApi.saveRss(url, articleLinkSelector.trim() || undefined);
       navigate("/dashboard", { state: { message: "Flux RSS ajouté." } });
     } catch (error) {
       setError(errorMessage(error));
@@ -60,6 +66,15 @@ export function RssForm() {
           }}
           placeholder="https://example.com/feed.xml"
           required
+        />
+        <RssArticleLinkField
+          value={articleLinkSelector}
+          disabled={!!busy}
+          onChange={(value) => {
+            setArticleLinkSelector(value);
+            setPreview(null);
+            setError("");
+          }}
         />
         <div className="flex flex-wrap gap-3">
           <Button type="submit" disabled={!!busy}>

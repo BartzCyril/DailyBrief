@@ -239,3 +239,164 @@ test("bounds redirect loops without following an uncontrolled native HTTP redire
   });
   expect(calls).toBe(8);
 }, 20000);
+
+test("follows the configured external document link instead of summarizing the RSS notice", async () => {
+  const notice = "https://bibliotheques.inp.fr/Default/doc/SYRACUSE/494490/notice";
+  const target = "https://www.lemonde.fr/culture/article/document.html";
+  const requests: string[] = [];
+  const service = new ArticleContentService(async (url) => {
+    requests.push(url);
+    return url === notice
+      ? `<article><p>${"Notice de bibliothèque à ne pas résumer. ".repeat(20)}</p><a target="_blank" class="accessToPrimaryDoc primarydoc" href="${target}"><span>Consulter le document</span></a></article>`
+      : page;
+  });
+  const messages: string[] = [];
+  const result = await service.fetchWithUrl(
+    notice,
+    (message) => messages.push(message),
+    "a.accessToPrimaryDoc.primarydoc",
+  );
+  expect(requests).toEqual([notice, target]);
+  expect(result.url).toBe(target);
+  expect(result.content).toContain(paragraphs[2]!);
+  expect(result.content).not.toContain("Notice de bibliothèque");
+  expect(messages.join(" ")).toContain(target);
+});
+
+test("resolves relative document links using the final notice URL and its base element", async () => {
+  const service = new ArticleContentService(async (url) =>
+    url.endsWith("/start")
+      ? {
+          url: "https://fixture.example/catalog/notice",
+          text: '<base href="https://publisher.example/articles/"><a class="primarydoc" href="document.html">Consulter le document</a>',
+          status: 200,
+          cookies: [],
+        }
+      : { url, text: page, status: 200, cookies: [] },
+  );
+  const result = await service.fetchWithUrl(
+    "https://fixture.example/start",
+    undefined,
+    ".primarydoc",
+  );
+  expect(result.url).toBe("https://publisher.example/articles/document.html");
+  expect(result.content).toContain(paragraphs[2]!);
+});
+
+test("finds a JavaScript-inserted document link even when the notice has less than 200 text characters", async () => {
+  const notice = "https://fixture.example/notice";
+  const target = "https://publisher.example/document";
+  const browser = new ArticleBrowser(async (url) => ({
+    url,
+    status: 200,
+    cookies: [],
+    text: `<main>Chargement</main><script>setTimeout(()=>document.querySelector('main').innerHTML='<a class="primarydoc" href="${target}">Consulter le document</a>',250);</script>`,
+  }));
+  const requests: string[] = [];
+  const service = new ArticleContentService(async (url) => {
+    requests.push(url);
+    return url === notice ? "<main>Chargement</main>" : page;
+  }, browser);
+  const result = await service.fetchWithUrl(notice, undefined, "a.primarydoc");
+  expect(result.url).toBe(target);
+  expect(result.content).toContain(paragraphs[2]!);
+  expect(requests).toEqual([notice, target]);
+}, 20000);
+
+test("renders the publisher article when JavaScript is required after following the notice link", async () => {
+  const target = "https://publisher.example/document";
+  const browserRequests: string[] = [];
+  const browser = new ArticleBrowser(async (url) => {
+    browserRequests.push(url);
+    return { url, status: 200, cookies: [], text: page };
+  });
+  const service = new ArticleContentService(
+    async (url) =>
+      url.endsWith("/notice") ? `<a class="primarydoc" href="${target}">Document</a>` : gate,
+    browser,
+  );
+  const result = await service.fetchWithUrl(
+    "https://fixture.example/notice",
+    undefined,
+    ".primarydoc",
+  );
+  expect(browserRequests).toEqual([target]);
+  expect(result.url).toBe(target);
+  expect(result.content).toContain(paragraphs[2]!);
+}, 20000);
+
+test("does not fall back to summarizing a notice when its configured link is missing", async () => {
+  class MissingLinkBrowser extends ArticleBrowser {
+    override async render(url: string) {
+      return { url, html: page };
+    }
+  }
+  const service = new ArticleContentService(async () => page, new MissingLinkBrowser());
+  await expect(
+    service.fetchWithUrl("https://fixture.example/notice", undefined, ".primarydoc"),
+  ).rejects.toMatchObject({ code: "ARTICLE_LINK_NOT_FOUND" });
+});
+
+test("rejects ambiguous, invalid and self-referencing document links before fetching their targets", async () => {
+  const notice = "https://fixture.example/notice";
+  for (const [html, code] of [
+    [
+      '<a class="primarydoc" href="/a">A</a><a class="primarydoc" href="/b">B</a>',
+      "ARTICLE_LINK_AMBIGUOUS",
+    ],
+    ['<span class="primarydoc">Document</span>', "ARTICLE_LINK_INVALID"],
+    ['<a class="primarydoc" href="javascript:alert(1)">Document</a>', "UNSAFE_URL"],
+    [
+      '<a class="primarydoc" href="https://user:password@publisher.example/document">Document</a>',
+      "UNSAFE_URL",
+    ],
+    ['<a class="primarydoc" href="/notice#document">Document</a>', "ARTICLE_LINK_LOOP"],
+  ]) {
+    const requests: string[] = [];
+    const service = new ArticleContentService(async (url) => {
+      requests.push(url);
+      return html!;
+    });
+    await expect(service.fetchWithUrl(notice, undefined, ".primarydoc")).rejects.toMatchObject({
+      code,
+    });
+    expect(requests).toEqual([notice]);
+  }
+});
+
+test("permits repeated links to the same document and guards private targets", async () => {
+  const target = "https://publisher.example/document";
+  const service = new ArticleContentService(async (url) =>
+    url.endsWith("/notice")
+      ? `<a class="primarydoc" href="${target}">A</a><a class="primarydoc" href="${target}">B</a>`
+      : page,
+  );
+  expect(
+    (await service.fetchWithUrl("https://fixture.example/notice", undefined, ".primarydoc")).url,
+  ).toBe(target);
+  const guarded = new ArticleContentService(async (url) =>
+    url.endsWith("/notice")
+      ? {
+          text: '<a class="primarydoc" href="http://127.0.0.1/private">Document</a>',
+          url,
+          status: 200,
+          cookies: [],
+        }
+      : fetchRemotePage(url),
+  );
+  await expect(
+    guarded.fetchWithUrl("https://fixture.example/notice", undefined, ".primarydoc"),
+  ).rejects.toMatchObject({ code: "UNSAFE_URL" });
+});
+
+test("validates document-link selector syntax before making a request", async () => {
+  let requests = 0;
+  const service = new ArticleContentService(async () => {
+    requests++;
+    return page;
+  });
+  await expect(
+    service.fetchWithUrl("https://fixture.example/notice", undefined, "a["),
+  ).rejects.toMatchObject({ code: "INVALID_ARTICLE_LINK_SELECTOR" });
+  expect(requests).toBe(0);
+});

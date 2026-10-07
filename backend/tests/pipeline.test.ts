@@ -119,6 +119,8 @@ describe("DailyBrief pipeline", () => {
   let waitForSummary: Promise<void> | undefined;
   let pageFetches: string[] = [];
   let failContent = false;
+  let followDocument = false;
+  let summaryUrls: Array<string | null | undefined> = [];
   let summaryInputs: string[] = [];
   class FixtureRss extends RssService {
     override async collect(): Promise<SourcePreview> {
@@ -140,6 +142,7 @@ describe("DailyBrief pipeline", () => {
       summarize: async (input) => {
         summaries++;
         summaryInputs.push(input.content);
+        summaryUrls.push(input.url);
         await waitForSummary;
         if (summaryError) throw summaryError;
         if (failSummary && input.title.includes("two")) throw new Error("AI offline");
@@ -155,6 +158,8 @@ describe("DailyBrief pipeline", () => {
     },
     new ArticleContentService(async (url) => {
       pageFetches.push(url);
+      if (followDocument && url === "https://example.com/one")
+        return '<article><p>Notice à ne pas résumer</p><a class="primarydoc" href="https://publisher.example/document">Consulter le document</a></article>';
       if (failContent && url.endsWith("one"))
         throw new AppError(502, "Page indisponible.", "NETWORK_ERROR");
       return `<html><body><article><h1>Texte complet</h1><p>${"Les détails du texte complet sont absents du flux. ".repeat(12)} Fin de l'article ${url}.</p></article></body></html>`;
@@ -202,9 +207,55 @@ describe("DailyBrief pipeline", () => {
     pageFetches = [];
     summaryInputs = [];
     failContent = false;
+    followDocument = false;
+    summaryUrls = [];
   });
   afterEach(async () => {
     await db.user.delete({ where: { id: userId } });
+  });
+
+  test("uses the RSS document link for AI and newsletter while retaining notice identity", async () => {
+    followDocument = true;
+    await db.source.update({
+      where: { id: sourceId },
+      data: { articleLinkSelector: "a.primarydoc" },
+    });
+    const result = await runner.run(userId);
+    expect(result.status).toBe("SENT");
+    const saved = await db.article.findFirstOrThrow({ where: { sourceId } });
+    expect(saved).toMatchObject({
+      url: "https://example.com/one",
+      canonicalUrl: "https://example.com/one",
+      contentUrl: "https://publisher.example/document",
+      contentLinkSelector: "a.primarydoc",
+    });
+    expect(saved.content).not.toContain("Notice à ne pas résumer");
+    expect(summaryUrls).toContain("https://publisher.example/document");
+    expect(sends[0]?.html).toContain('href="https://publisher.example/document"');
+  });
+  test("refetches and regenerates only pending RSS content when its document selector changes", async () => {
+    failEmail = true;
+    expect((await runner.run(userId)).status).toBe("FAILED");
+    const initial = await db.article.findFirstOrThrow({ where: { sourceId } });
+    expect(initial.contentFetchedAt).not.toBeNull();
+    expect(initial.contentLinkSelector).toBeNull();
+    expect(summaries).toBe(2);
+    followDocument = true;
+    failEmail = false;
+    await db.source.update({
+      where: { id: sourceId },
+      data: { articleLinkSelector: "a.primarydoc" },
+    });
+    pageFetches = [];
+    const result = await runner.run(userId);
+    expect(result.status).toBe("SENT");
+    expect(result.newArticles).toBe(0);
+    expect(result.articlesSummarized).toBe(1);
+    expect(pageFetches).toEqual(["https://example.com/one", "https://publisher.example/document"]);
+    expect(summaries).toBe(3);
+    expect((await db.article.findUniqueOrThrow({ where: { id: initial.id } })).contentUrl).toBe(
+      "https://publisher.example/document",
+    );
   });
   test("collects both providers, persists summaries, newsletter and run history", async () => {
     const result = await runner.run(userId);
@@ -305,6 +356,8 @@ describe("DailyBrief pipeline", () => {
       true,
     );
     failContent = false;
+    followDocument = false;
+    summaryUrls = [];
     expect(await runner.run(userId)).toMatchObject({
       status: "SENT",
       newArticles: 0,

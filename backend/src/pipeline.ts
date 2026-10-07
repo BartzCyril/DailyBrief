@@ -170,7 +170,9 @@ export class DailyBriefPipelineService implements CollectionRunner {
         let processed = 0;
         for (let article of pending) {
           stage = "content";
-          if (!article.contentFetchedAt) {
+          const articleLinkSelector =
+            article.source.type === "RSS" ? article.source.articleLinkSelector : null;
+          if (!article.contentFetchedAt || article.contentLinkSelector !== articleLinkSelector) {
             report({
               stage,
               status: "running",
@@ -179,14 +181,17 @@ export class DailyBriefPipelineService implements CollectionRunner {
               total: pending.length,
             });
             try {
-              const content = await this.articleContent.fetch(article.url, (message) =>
-                report({
-                  stage: "content",
-                  status: "running",
-                  message: `${article.title} : ${message}`,
-                  completed: processed,
-                  total: pending.length,
-                }),
+              const { content, url } = await this.articleContent.fetchWithUrl(
+                article.url,
+                (message) =>
+                  report({
+                    stage: "content",
+                    status: "running",
+                    message: `${article.title} : ${message}`,
+                    completed: processed,
+                    total: pending.length,
+                  }),
+                articleLinkSelector,
               );
               article = {
                 ...article,
@@ -195,6 +200,8 @@ export class DailyBriefPipelineService implements CollectionRunner {
                   data: {
                     content,
                     contentFetchedAt: new Date(),
+                    contentUrl: url,
+                    contentLinkSelector: articleLinkSelector,
                     contentError: null,
                     // Old summaries based on feed excerpts must be regenerated before delivery.
                     summaryTitle: null,
@@ -249,7 +256,11 @@ export class DailyBriefPipelineService implements CollectionRunner {
             });
             try {
               const summary = await this.summary.summarize(
-                { title: article.title, content: article.content!, url: article.url },
+                {
+                  title: article.title,
+                  content: article.content!,
+                  url: article.contentUrl ?? article.url,
+                },
                 (message) =>
                   report({
                     stage: "ai",
@@ -351,7 +362,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
             title: article.summaryTitle ?? article.title,
             summary: article.summary!,
             keyPoints: article.keyPoints,
-            url: article.url,
+            url: article.contentUrl ?? article.url,
             source: `${article.source.type} · ${new URL(article.source.url).hostname}`,
             publishedAt: article.publishedAt,
           })),

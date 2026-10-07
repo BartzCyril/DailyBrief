@@ -8,6 +8,7 @@ import { Feedback } from "@/components/Feedback";
 import { errorMessage } from "@/lib/api";
 import { sourcesApi, validHttpUrl } from "./api";
 import { ArticlePreview } from "./ArticlePreview";
+import { RssArticleLinkField, validArticleLinkSelector } from "./RssArticleLinkField";
 import {
   ScrapingFields,
   createScrapingDraft,
@@ -23,10 +24,15 @@ export function EditSourceForm({
 }: {
   source: Source;
   busy: boolean;
-  onSave: (url: string, config?: ScrapingConfig) => Promise<void>;
+  onSave: (
+    url: string,
+    config?: ScrapingConfig,
+    articleLinkSelector?: string | null,
+  ) => Promise<void>;
   onCancel: () => void;
 }) {
   const [url, setUrl] = useState(source.url);
+  const [articleLinkSelector, setArticleLinkSelector] = useState(source.articleLinkSelector ?? "");
   const [draft, setDraft] = useState(() => createScrapingDraft(source.scrapingConfig));
   const [templateEdited, setTemplateEdited] = useState(false);
   const [error, setError] = useState("");
@@ -35,8 +41,9 @@ export function EditSourceForm({
   const pending = busy || testing;
   const unchanged =
     url.trim() === source.url &&
-    (source.type === "RSS" ||
-      JSON.stringify(buildScrapingConfig(draft)) ===
+    (source.type === "RSS"
+      ? articleLinkSelector.trim() === (source.articleLinkSelector ?? "")
+      : JSON.stringify(buildScrapingConfig(draft)) ===
         JSON.stringify(buildScrapingConfig(createScrapingDraft(source.scrapingConfig))));
   function update(value: Partial<ScrapingDraft>) {
     if (value.urlTemplate !== undefined) setTemplateEdited(true);
@@ -59,13 +66,27 @@ export function EditSourceForm({
     setPreview(null);
     setError("");
   }
-  function validate(): { url: string; config?: ScrapingConfig } | null {
+  function validate(): {
+    url: string;
+    config?: ScrapingConfig;
+    articleLinkSelector?: string | null;
+  } | null {
     setError("");
     if (!validHttpUrl(url.trim())) {
       setError("Saisissez une URL HTTP ou HTTPS valide.");
       return null;
     }
-    if (source.type === "RSS") return { url: url.trim() };
+    if (source.type === "RSS") {
+      if (!validArticleLinkSelector(articleLinkSelector)) {
+        setError("Saisissez un sélecteur CSS valide pour le lien vers l'article.");
+        return null;
+      }
+      return {
+        url: url.trim(),
+        articleLinkSelector:
+          articleLinkSelector.trim() || (source.articleLinkSelector ? null : undefined),
+      };
+    }
     const validation = scrapingSchema.safeParse(buildScrapingConfig(draft));
     if (!validation.success) {
       setError(
@@ -95,7 +116,7 @@ export function EditSourceForm({
       setPreview(
         input.config
           ? await sourcesApi.testScraping(input.url, input.config)
-          : await sourcesApi.testRss(input.url),
+          : await sourcesApi.testRss(input.url, input.articleLinkSelector),
       );
     } catch (error) {
       setError(errorMessage(error));
@@ -107,7 +128,7 @@ export function EditSourceForm({
     event.preventDefault();
     if (pending || unchanged) return;
     const input = validate();
-    if (input) await onSave(input.url, input.config);
+    if (input) await onSave(input.url, input.config, input.articleLinkSelector);
   }
   return (
     <form
@@ -124,7 +145,18 @@ export function EditSourceForm({
           autoFocus
           onChange={(event) => changeUrl(event.target.value)}
         />
-        {source.type === "SCRAPING" && <ScrapingFields draft={draft} update={update} />}
+        {source.type === "SCRAPING" ? (
+          <ScrapingFields draft={draft} update={update} />
+        ) : (
+          <RssArticleLinkField
+            value={articleLinkSelector}
+            onChange={(value) => {
+              setArticleLinkSelector(value);
+              setPreview(null);
+              setError("");
+            }}
+          />
+        )}
       </fieldset>
       <Feedback message={error} error />
       <Feedback message={preview?.warnings?.join(" ") ?? ""} />

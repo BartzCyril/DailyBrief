@@ -65,6 +65,9 @@ const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
             ...item,
             url: body.url ?? item.url,
             ...(body.scrapingConfig ? { scrapingConfig: body.scrapingConfig } : {}),
+            ...(body.articleLinkSelector !== undefined
+              ? { articleLinkSelector: body.articleLinkSelector }
+              : {}),
           },
     );
     if (pauseSave)
@@ -364,4 +367,32 @@ test("blocks competing changes while a deletion is pending", async () => {
   pending!(new Response(null, { status: 204 }));
   await screen.findByText("Source supprimée.");
   expect(screen.getByRole("button", { name: `Supprimer ${rss.url}` })).toBeEnabled();
+});
+
+test("prefills, updates and clears the RSS document selector while keeping the URL", async () => {
+  stored = [{ ...rss, articleLinkSelector: "a.primarydoc" }, scraping];
+  render(<Harness />);
+  const ui = userEvent.setup();
+  await ui.click(screen.getByRole("button", { name: `Modifier ${rss.url}` }));
+  const field = screen.getByLabelText("Sélecteur du lien vers l'article (facultatif)");
+  expect(field).toHaveValue("a.primarydoc");
+  expect(screen.getByRole("button", { name: "Enregistrer les modifications" })).toBeDisabled();
+  await ui.clear(field);
+  await ui.type(field, "a.document");
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Article de test");
+  expect(stored[0]?.articleLinkSelector).toBe("a.primarydoc");
+  await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+  await screen.findByText("Source modifiée.");
+  expect(stored[0]?.articleLinkSelector).toBe("a.document");
+  await ui.click(screen.getByRole("button", { name: `Modifier ${rss.url}` }));
+  await ui.clear(screen.getByLabelText("Sélecteur du lien vers l'article (facultatif)"));
+  await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+  await screen.findByText("Source modifiée.");
+  expect(stored[0]?.articleLinkSelector).toBeNull();
+  const edits = fetcher.mock.calls.filter((call) => call[1]?.method === "PATCH");
+  expect(JSON.parse(String(edits.at(-1)?.[1]?.body))).toEqual({
+    url: rss.url,
+    articleLinkSelector: null,
+  });
 });

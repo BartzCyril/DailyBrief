@@ -6,13 +6,19 @@ import { RssService } from "./rss";
 import { ScrapingService } from "./scraping";
 import { scrapingSchema } from "../../shared/src/scraping";
 import { AppError } from "./errors";
+import { articleLinkSelectorSchema } from "../../shared/src/rss";
+import { validateArticleLinkSelector } from "./article-content";
 
 export const urlSchema = z.url({ protocol: /^https?$/ });
 export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService) {
   const router = Router();
   router.use(requireAuth);
   router.post("/rss/test", async (req, res) => {
-    const { url } = z.object({ url: urlSchema }).strict().parse(req.body);
+    const { url, articleLinkSelector } = z
+      .object({ url: urlSchema, articleLinkSelector: articleLinkSelectorSchema })
+      .strict()
+      .parse(req.body);
+    validateArticleLinkSelector(articleLinkSelector);
     const result = await rss.collect(url);
     res.json({ ...result, articles: result.articles.slice(0, 20) });
   });
@@ -42,6 +48,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
         enabled: z.boolean().optional(),
         url: urlSchema.optional(),
         scrapingConfig: scrapingSchema.optional(),
+        articleLinkSelector: articleLinkSelectorSchema,
         urlTemplate: z.string().trim().min(1).max(2000).optional(),
       })
       .strict()
@@ -49,7 +56,8 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
         (value) =>
           value.url !== undefined ||
           value.enabled !== undefined ||
-          value.scrapingConfig !== undefined,
+          value.scrapingConfig !== undefined ||
+          value.articleLinkSelector !== undefined,
       )
       .refine((value) => value.urlTemplate === undefined || value.url !== undefined)
       .refine((value) => value.urlTemplate === undefined || value.scrapingConfig === undefined)
@@ -62,8 +70,19 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
       enabled?: boolean;
       url?: string;
       scrapingConfig?: z.infer<typeof scrapingSchema>;
+      articleLinkSelector?: string | null;
     } = {};
     if (input.enabled !== undefined) data.enabled = input.enabled;
+    if (input.articleLinkSelector !== undefined) {
+      if (source.type !== "RSS")
+        throw new AppError(
+          400,
+          "Le sélecteur de lien intermédiaire est réservé aux flux RSS.",
+          "VALIDATION_ERROR",
+        );
+      validateArticleLinkSelector(input.articleLinkSelector);
+      data.articleLinkSelector = input.articleLinkSelector;
+    }
     if (input.url !== undefined || input.scrapingConfig !== undefined) {
       const url = input.url === undefined ? source.url : new URL(input.url).href;
       if (input.url !== undefined) data.url = url;
@@ -127,21 +146,31 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
   router.post("/", async (req, res) => {
     const input = z
       .discriminatedUnion("type", [
-        z.object({ url: urlSchema, type: z.literal("RSS") }).strict(),
+        z
+          .object({
+            url: urlSchema,
+            type: z.literal("RSS"),
+            articleLinkSelector: articleLinkSelectorSchema,
+          })
+          .strict(),
         z
           .object({ url: urlSchema, type: z.literal("SCRAPING"), scrapingConfig: scrapingSchema })
           .strict(),
       ])
       .parse(req.body);
-    if (input.type === "RSS") await rss.collect(input.url);
-    else await scraping.validateFirstPage(input.url, input.scrapingConfig);
+    if (input.type === "RSS") {
+      validateArticleLinkSelector(input.articleLinkSelector);
+      await rss.collect(input.url);
+    } else await scraping.validateFirstPage(input.url, input.scrapingConfig);
     res.status(201).json(
       await db.source.create({
         data: {
           userId: req.session.userId!,
           url: new URL(input.url).href,
           type: input.type,
-          ...(input.type === "SCRAPING" ? { scrapingConfig: input.scrapingConfig } : {}),
+          ...(input.type === "SCRAPING"
+            ? { scrapingConfig: input.scrapingConfig }
+            : { articleLinkSelector: input.articleLinkSelector ?? null }),
         },
       }),
     );

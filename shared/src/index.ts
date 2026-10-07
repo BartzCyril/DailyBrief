@@ -13,6 +13,7 @@ export type Source = {
   type: "RSS" | "SCRAPING";
   enabled: boolean;
   scrapingConfig: ScrapingConfig | null;
+  articleLinkSelector?: string | null;
 };
 export type ScrapingConfig = {
   articleSelector: string;
@@ -90,6 +91,7 @@ export type WorkflowPreview = {
 };
 export type WorkflowSummary = {
   content: string;
+  url?: string;
   summary: { title: string; summary: string; keyPoints: string[] };
 };
 export type WorkflowSummaryEvent =

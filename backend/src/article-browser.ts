@@ -9,7 +9,7 @@ const limiter = new ConcurrencyLimiter(2);
 
 export class ArticleBrowser {
   constructor(private fetchPage: FetchPage = fetchRemotePage) {}
-  async render(url: string): Promise<{ html: string; url: string }> {
+  async render(url: string, linkSelector?: string): Promise<{ html: string; url: string }> {
     return limiter.run(async () => {
       let browser;
       try {
@@ -118,6 +118,14 @@ export class ArticleBrowser {
         await Promise.race([
           (async () => {
             await page.goto(url, { waitUntil: "networkidle" });
+            if (linkSelector) {
+              await page.waitForFunction(
+                (selector) =>
+                  Boolean(document.querySelector(selector)?.getAttribute("href")?.trim()),
+                linkSelector,
+              );
+              return;
+            }
             await page.waitForFunction(() => (document.body?.innerText.trim().length ?? 0) >= 200);
             // Network inactivity does not imply that timers, hydration or lazy sections
             // have finished. Scroll through the page and wait for the article text to settle.

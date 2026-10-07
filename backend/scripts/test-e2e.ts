@@ -29,6 +29,7 @@ const redis = createRedis(config.REDIS_URL);
 await redis.connect();
 const messages: NewsletterMessage[] = [];
 const scrapingRequests: string[] = [];
+const articleRequests: string[] = [];
 let releaseSummary = () => {};
 const summaryGate = new Promise<void>((resolve) => {
   releaseSummary = resolve;
@@ -38,10 +39,12 @@ const sender = new NewsletterEmailService(
   nodemailer.createTransport({ jsonTransport: true }),
 );
 const app = createApp(db, redis, config, {
-  articleContent: new ArticleContentService(
-    async () =>
-      `<article><h1>Article complet</h1><p>${"Ces informations complètes viennent de la page liée et complètent le flux RSS. ".repeat(12)} Information finale conservée.</p></article>`,
-  ),
+  articleContent: new ArticleContentService(async (url) => {
+    articleRequests.push(url);
+    if (url === "https://fixture.example/rss-article")
+      return '<article><p>Notice de bibliothèque à ne pas résumer.</p><a class="accessToPrimaryDoc primarydoc" target="_blank" href="https://publisher.example/full-article">Consulter le document</a></article>';
+    return `<article><h1>Article complet</h1><p>${"Ces informations complètes viennent de la page liée et complètent le flux RSS. ".repeat(12)} Information finale conservée.</p></article>`;
+  }),
   rss: new RssService(
     async () =>
       "<rss><channel><title>Flux de test</title><item><title>Article RSS</title><link>https://fixture.example/rss-article</link><description>Informations RSS contrôlées.</description></item></channel></rss>",
@@ -129,6 +132,7 @@ try {
   await page.waitForURL("**/dashboard");
   await page.getByRole("link", { name: "Ajouter un flux RSS" }).click();
   await page.getByLabel("URL du flux RSS").fill("https://fixture.example/feed");
+  await page.getByLabel("Sélecteur du lien vers l'article (facultatif)").fill("a.primarydoc");
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article RSS", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Enregistrer le flux" }).click();
@@ -136,7 +140,14 @@ try {
   await page
     .getByRole("button", { name: "Modifier https://fixture.example/feed", exact: true })
     .click();
+  assert.equal(
+    await page.getByLabel("Sélecteur du lien vers l'article (facultatif)").inputValue(),
+    "a.primarydoc",
+  );
   await page.getByLabel("URL du flux RSS").fill("https://fixture.example/updated-feed");
+  await page
+    .getByLabel("Sélecteur du lien vers l'article (facultatif)")
+    .fill("a.accessToPrimaryDoc.primarydoc");
   await page.getByRole("button", { name: "Enregistrer les modifications" }).click();
   await page.getByText("https://fixture.example/updated-feed", { exact: true }).waitFor();
   await page.getByRole("link", { name: "Ajouter une source de scraping" }).click();
@@ -278,6 +289,14 @@ try {
   assert.equal(messages[0]?.to, email);
   assert(messages[0]?.text.includes("Information finale conservée."));
   assert(messages[0]?.text.includes("Article RSS"));
+  assert(messages[0]?.html.includes('href="https://publisher.example/full-article"'));
+  assert(!messages[0]?.text.includes("Notice de bibliothèque à ne pas résumer"));
+  assert(articleRequests.includes("https://publisher.example/full-article"));
+  assert.equal(
+    (await db.source.findFirstOrThrow({ where: { user: { email }, type: "RSS" } }))
+      .articleLinkSelector,
+    "a.accessToPrimaryDoc.primarydoc",
+  );
   assert(messages[0]?.text.includes("Article scraping"));
   await page.setViewportSize({ width: 390, height: 844 });
   assert(
@@ -299,6 +318,15 @@ try {
   await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).waitFor();
   await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).click();
   await page.getByRole("region", { name: "Résumé IA de Article RSS" }).waitFor();
+  assert.equal(
+    await page.getByRole("link", { name: "Lire l'article original" }).getAttribute("href"),
+    "https://publisher.example/full-article",
+  );
+  await page
+    .getByText("Lien vers le document trouvé : https://publisher.example/full-article", {
+      exact: true,
+    })
+    .waitFor();
   assert.equal(messages.length, 1, "Testing a delivered article must not send another email");
   assert.deepEqual(
     await db.article.findMany({ where: { userId: user.id }, orderBy: { id: "asc" } }),
@@ -363,7 +391,7 @@ try {
   await page.waitForURL("**/login");
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, RSS URL editing, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: register, login, RSS notice-link creation and editing, publisher article extraction and links, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();

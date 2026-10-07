@@ -149,3 +149,46 @@ test("disables incompatible actions while testing", async () => {
   resolve(new Response(JSON.stringify(preview)));
   await screen.findByText("Un article");
 });
+
+test("saves the optional RSS document selector and invalidates the preview when it changes", async () => {
+  const mock = mockApi();
+  mount();
+  await userEvent.type(await screen.findByLabelText("URL du flux RSS"), source.url);
+  const field = screen.getByLabelText("Sélecteur du lien vers l'article (facultatif)");
+  await userEvent.type(field, "a.accessToPrimaryDoc.primarydoc");
+  await userEvent.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Un article");
+  const tested = mock.mock.calls.find((call) => call[0].endsWith("/rss/test"));
+  expect(JSON.parse(String(tested?.[1]?.body))).toEqual({
+    url: source.url,
+    articleLinkSelector: "a.accessToPrimaryDoc.primarydoc",
+  });
+  await userEvent.type(field, ".changed");
+  expect(screen.queryByText("Un article")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Enregistrer le flux" })).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Un article");
+  await userEvent.click(screen.getByRole("button", { name: "Enregistrer le flux" }));
+  await screen.findByText(source.url);
+  const saved = mock.mock.calls.find(
+    (call) => call[0] === "/api/sources" && call[1]?.method === "POST",
+  );
+  expect(JSON.parse(String(saved?.[1]?.body))).toEqual({
+    url: source.url,
+    type: "RSS",
+    articleLinkSelector: "a.accessToPrimaryDoc.primarydoc.changed",
+  });
+});
+
+test("rejects invalid RSS document selector syntax before testing the feed", async () => {
+  const mock = mockApi();
+  mount();
+  await userEvent.type(await screen.findByLabelText("URL du flux RSS"), source.url);
+  await userEvent.type(
+    screen.getByLabelText("Sélecteur du lien vers l'article (facultatif)"),
+    "a[[",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Tester" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("sélecteur CSS valide");
+  expect(mock.mock.calls.some((call) => call[0].endsWith("/rss/test"))).toBe(false);
+});

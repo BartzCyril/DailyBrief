@@ -12,19 +12,39 @@ import { readEventStream } from "@/lib/event-stream";
 export const sourcesApi = {
   list: () => api<Source[]>("/sources"),
   remove: (id: string) => api<void>(`/sources/${id}`, { method: "DELETE" }),
-  testRss: (url: string) =>
-    api<SourcePreview>("/sources/rss/test", { method: "POST", body: { url } }),
-  saveRss: (url: string) => api<Source>("/sources", { method: "POST", body: { url, type: "RSS" } }),
+  testRss: (url: string, articleLinkSelector?: string | null) =>
+    api<SourcePreview>("/sources/rss/test", {
+      method: "POST",
+      body: { url, ...(articleLinkSelector !== undefined ? { articleLinkSelector } : {}) },
+    }),
+  saveRss: (url: string, articleLinkSelector?: string | null) =>
+    api<Source>("/sources", {
+      method: "POST",
+      body: {
+        url,
+        type: "RSS",
+        ...(articleLinkSelector !== undefined ? { articleLinkSelector } : {}),
+      },
+    }),
   testScraping: (url: string, config: ScrapingConfig) =>
     api<SourcePreview>("/sources/scraping/test", { method: "POST", body: { url, config } }),
   saveScraping: (url: string, scrapingConfig: ScrapingConfig) =>
     api<Source>("/sources", { method: "POST", body: { url, type: "SCRAPING", scrapingConfig } }),
   setEnabled: (id: string, enabled: boolean) =>
     api<void>(`/sources/${id}`, { method: "PATCH", body: { enabled } }),
-  update: (id: string, url: string, scrapingConfig?: ScrapingConfig) =>
+  update: (
+    id: string,
+    url: string,
+    scrapingConfig?: ScrapingConfig,
+    articleLinkSelector?: string | null,
+  ) =>
     api<void>(`/sources/${id}`, {
       method: "PATCH",
-      body: { url, ...(scrapingConfig !== undefined ? { scrapingConfig } : {}) },
+      body: {
+        url,
+        ...(scrapingConfig !== undefined ? { scrapingConfig } : {}),
+        ...(articleLinkSelector !== undefined ? { articleLinkSelector } : {}),
+      },
     }),
   workflow: (sourceId: string, signal?: AbortSignal) =>
     api<WorkflowPreview>(`/sources/${sourceId}/workflow`, { method: "POST", body: {}, signal }),
