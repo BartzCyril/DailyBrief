@@ -4,7 +4,7 @@ Veille quotidienne personnelle, en TypeScript strict. Bun 1.4.2, Express 5,
 React 19.3, Vite 8, Prisma 6 et PostgreSQL 17. Docker avec Compose est requis.
 
 ```sh
-git clone -b version/1.0.0 https://github.com/BartzCyril/DailyBrief.git
+git clone -b main https://github.com/BartzCyril/DailyBrief.git
 cd DailyBrief
 cp .env.example .env
 bun install --frozen-lockfile
