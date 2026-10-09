@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { beforeEach, expect, test, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { Source } from "@dailybrief/shared";
@@ -145,7 +145,7 @@ test("keeps the edited value and old source on a save error, allowing retry", as
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("déjà cette URL");
   expect(screen.getByLabelText("URL du flux RSS")).toHaveValue("https://example.com/taken");
-  expect(screen.getByText(rss.url)).toBeInTheDocument();
+  expect(screen.getByRole("dialog")).toHaveTextContent(rss.url);
   serverError = "";
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   expect(await screen.findByText("Source modifiée.")).toBeInTheDocument();
@@ -196,8 +196,11 @@ test("disables competing edits and activation while the URL is being verified", 
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   expect(screen.getByLabelText("URL du flux RSS")).toBeDisabled();
   expect(screen.getByRole("button", { name: "Annuler" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: `Modifier ${scraping.url}` })).toBeDisabled();
-  for (const control of screen.getAllByRole("switch")) expect(control).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: `Modifier ${scraping.url}`, hidden: true }),
+  ).toBeDisabled();
+  for (const control of screen.getAllByRole("switch", { hidden: true }))
+    expect(control).toBeDisabled();
   pending!(new Response(null, { status: 204 }));
   await screen.findByText("Source modifiée.");
 });
@@ -321,17 +324,24 @@ test("prefills and edits load-more fields, then drops them when changing modes",
   expect(stored[0]?.scrapingConfig?.mode).toBe("PAGINATE");
   expect(stored[0]?.scrapingConfig?.loadMore).toBeUndefined();
 });
-test("confirms deletion, allows cancellation and refreshes the list after deleting the edited source", async () => {
+test("confirms RSS deletion, permits cancellation and refreshes the list after deletion", async () => {
   render(<Harness />);
   const ui = userEvent.setup();
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  await ui.click(screen.getByRole("button", { name: `Supprimer ${rss.url}` }));
-  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("articles et résumés associés"));
+  const remove = screen.getByRole("button", { name: `Supprimer ${rss.url}` });
+  await ui.click(remove);
+  const dialog = screen.getByRole("alertdialog");
+  expect(dialog).toHaveTextContent("Êtes-vous sûr de vouloir supprimer ce flux RSS ?");
+  expect(dialog).toHaveTextContent("articles et résumés associés");
   expect(fetcher.mock.calls).toHaveLength(0);
+  await ui.click(within(dialog).getByRole("button", { name: "Annuler" }));
+  expect(remove).toHaveFocus();
   expect(screen.getByText(rss.url)).toBeInTheDocument();
-  confirm.mockReturnValue(true);
   await ui.click(screen.getByRole("button", { name: `Modifier ${rss.url}` }));
-  await ui.click(screen.getByRole("button", { name: `Supprimer ${rss.url}` }));
+  await ui.click(screen.getByRole("button", { name: "Annuler" }));
+  await ui.click(remove);
+  await ui.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }),
+  );
   await screen.findByText("Source supprimée.");
   expect(fetcher.mock.calls[0]?.[0]).toBe("/api/sources/s1");
   expect(fetcher.mock.calls[0]?.[1]?.method).toBe("DELETE");
@@ -339,31 +349,43 @@ test("confirms deletion, allows cancellation and refreshes the list after deleti
   expect(screen.queryByLabelText("URL du flux RSS")).not.toBeInTheDocument();
   expect(screen.getByText(scraping.url)).toBeInTheDocument();
 });
-test("keeps a source on deletion failure, supports retry and shows the empty list after the last deletion", async () => {
+test("keeps a source on deletion failure and permits retry in the scraping confirmation dialog", async () => {
   stored = [scraping];
   serverError = "Suppression impossible.";
-  vi.spyOn(window, "confirm").mockReturnValue(true);
   render(<Harness />);
   const ui = userEvent.setup();
   await ui.click(screen.getByRole("button", { name: `Supprimer ${scraping.url}` }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Suppression impossible.");
-  expect(screen.getByText(scraping.url)).toBeInTheDocument();
+  const dialog = screen.getByRole("alertdialog");
+  expect(dialog).toHaveTextContent("Êtes-vous sûr de vouloir supprimer cette source de scraping ?");
+  await ui.click(within(dialog).getByRole("button", { name: "Supprimer" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Suppression impossible.");
+  expect(stored).toEqual([scraping]);
   serverError = "";
-  await ui.click(screen.getByRole("button", { name: `Supprimer ${scraping.url}` }));
+  await ui.click(within(dialog).getByRole("button", { name: "Supprimer" }));
   await screen.findByText("Source supprimée.");
   expect(screen.getByText(/Aucune source configurée/)).toBeInTheDocument();
 });
-test("blocks competing changes while a deletion is pending", async () => {
+test("blocks competing changes and closing the dialog while deletion is pending", async () => {
   pauseSave = true;
-  vi.spyOn(window, "confirm").mockReturnValue(true);
   render(<Harness />);
   const ui = userEvent.setup();
   await ui.click(screen.getByRole("button", { name: `Supprimer ${scraping.url}` }));
+  const dialog = screen.getByRole("alertdialog");
+  await ui.click(within(dialog).getByRole("button", { name: "Supprimer" }));
+  expect(within(dialog).getByRole("button", { name: "Annuler" })).toBeDisabled();
+  expect(within(dialog).getByRole("button", { name: "Suppression en cours…" })).toBeDisabled();
   for (const source of [rss, scraping]) {
-    expect(screen.getByRole("button", { name: `Modifier ${source.url}` })).toBeDisabled();
-    expect(screen.getByRole("button", { name: `Supprimer ${source.url}` })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: `Modifier ${source.url}`, hidden: true }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: `Supprimer ${source.url}`, hidden: true }),
+    ).toBeDisabled();
   }
-  for (const control of screen.getAllByRole("switch")) expect(control).toBeDisabled();
+  for (const control of screen.getAllByRole("switch", { hidden: true }))
+    expect(control).toBeDisabled();
+  await ui.keyboard("{Escape}");
+  expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   pending!(new Response(null, { status: 204 }));
   await screen.findByText("Source supprimée.");
   expect(screen.getByRole("button", { name: `Supprimer ${rss.url}` })).toBeEnabled();

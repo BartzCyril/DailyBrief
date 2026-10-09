@@ -93,12 +93,14 @@ export function SourceWorkflowPage() {
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 px-5 py-8">
-      <Link to="/dashboard" className="text-sm text-primary underline">
+      <Link to="/sources" className="text-sm text-primary underline">
         ← Retour aux sources
       </Link>
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl">Tester le workflow de A à Z</CardTitle>
+          <h1 tabIndex={-1} className="text-2xl font-semibold">
+            Tester le workflow de A à Z
+          </h1>
           <CardDescription>
             Récupérez les articles et testez leur résumé à partir de leur page complète. Les
             articles déjà traités restent disponibles ici. Aucun mail n'est envoyé et les données de

@@ -88,8 +88,8 @@ beforeEach(() => {
   warnings = [];
   mockApi();
 });
-test("opens scraping from dashboard and validates URL and selectors", async () => {
-  mount("/dashboard");
+test("opens scraping from the sources page and validates URL and selectors", async () => {
+  mount("/sources");
   await userEvent.click(
     await screen.findByRole("link", { name: "Ajouter une source de scraping" }),
   );

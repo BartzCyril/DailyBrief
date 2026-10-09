@@ -241,7 +241,11 @@ restent enregistrés dans l'historique serveur.
 
 ### Modifier une source
 
-Dans « Vos sources », le bouton « Modifier » reprend les mêmes champs que la création,
+La navigation commune propose « Tableau de bord », « Sources » (`/sources`) et
+« Journaux » (`/journals`). Le tableau de bord conserve les statistiques et les
+réglages de collecte ; chaque page de configuration se charge indépendamment.
+
+Dans « Sources », le bouton « Modifier » ouvre une modale avec les mêmes champs que la création,
 préremplis avec les valeurs enregistrées : URL pour un flux RSS ; URL, sélecteurs
 d'articles, de titre, de lien, de description et de date, mode de récupération,
 paramètres de scroll, de pagination ou du bouton de chargement pour une source de scraping.
@@ -262,8 +266,9 @@ si le modèle utilise cette adresse et n'a pas été modifié manuellement.
 Seul le propriétaire de la source peut la modifier.
 
 Les actions « Modifier » (crayon) et « Supprimer » (corbeille) sont des icônes avec
-un libellé accessible et une infobulle. La corbeille demande confirmation avant
-de supprimer la source ainsi que ses articles et résumés associés. Les autres
+un libellé accessible et une infobulle. La corbeille ouvre une fenêtre de confirmation
+qui nomme le type : « Êtes-vous sûr de vouloir supprimer ce flux RSS ? » ou
+« cette source de scraping ? ». La suppression efface aussi ses articles et résumés associés. Les autres
 sources et les newsletters restent conservées. L'interrupteur d'activation affiche
 un curseur pointeur lorsqu'il est disponible.
 
@@ -393,15 +398,21 @@ La collecte manuelle et programmée applique les mêmes règles. Le recensement 
 workflow n'écrit ni articles, ni résumés, ni newsletters et n'envoie aucun email.
 Les RSS directs et le scraping ne passent pas par ces réglages.
 
-Le tableau de bord affiche également **« Vos journaux »**, avec ajout, activation,
-configuration de l'accès, modification du domaine et suppression. `GET /journals`
+La page **« Journaux »** affiche **« Vos journaux »**, avec ajout, activation,
+configuration de l'accès, modification du domaine et suppression. L'ajout, la
+modification du domaine et la configuration de l'accès s'ouvrent dans des modales,
+y compris pour l'accès depuis le workflow. Échap ou « Annuler » ferme sans enregistrer,
+puis le focus revient au bouton d'ouverture. Les champs et les actions sont espacés,
+et les longues modales défilent sur mobile. Chaque suppression (journal, formulaire
+de connexion ou identifiants) demande une confirmation précisant le type et le domaine.
+Une erreur reste visible dans la fenêtre de confirmation et permet de réessayer. `GET /journals`
 retourne uniquement les réglages du propriétaire et leurs comptes. Ces comptes
 additionnent le dernier recensement enregistré de chaque RSS avec sélecteur, issu
 du workflow ou d'une collecte. Chaque recensement remplace le précédent pour sa
 source ; les données sont conservées dans `Source.journalInventory`, séparément
 des articles et résumés. Les sources supprimées ou dont l'URL ou le sélecteur a
 changé sont exclues des comptes jusqu'à un nouveau recensement. Les notices non
-résolues sont signalées séparément. Charger le tableau de bord ne récupère pas de
+résolues sont signalées séparément. Charger la page des journaux ne récupère pas de
 flux, ne lance pas d'IA et n'envoie pas d'email.
 
 `POST /journals` accepte `{ "domain": "www.lemonde.fr" }` et crée une configuration

@@ -10,6 +10,8 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Pencil, Trash2 } from "lucide-react";
 import { EditSourceForm } from "./EditSourceForm";
+import { Modal } from "@/components/Modal";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
 export function SourceList({
   sources,
   onChanged,
@@ -22,13 +24,7 @@ export function SourceList({
   const [editingId, setEditingId] = useState("");
   const [message, setMessage] = useState("");
   async function remove(source: Source) {
-    if (
-      busy ||
-      !window.confirm(
-        `Supprimer la source ${source.url} ?\n\nLes articles et résumés associés seront également supprimés.`,
-      )
-    )
-      return;
+    if (busy) return;
     setBusy(source.id);
     setError("");
     setMessage("");
@@ -37,8 +33,6 @@ export function SourceList({
       await onChanged?.();
       setEditingId((previous) => (previous === source.id ? "" : previous));
       setMessage("Source supprimée.");
-    } catch (error) {
-      setError(errorMessage(error));
     } finally {
       setBusy("");
     }
@@ -79,16 +73,16 @@ export function SourceList({
     }
   }
   return (
-    <div className="space-y-3">
-      <Feedback message={error} error />
+    <div className="space-y-5">
+      <Feedback message={editingId ? "" : error} error />
       <Feedback message={message} />
       {sources.length ? (
         sources.map((source) => (
           <Card className="shadow-none" key={source.id}>
-            <CardContent className="flex flex-wrap items-center gap-3 py-4">
+            <CardContent className="flex flex-wrap items-center gap-4 py-5">
               <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
                 <p className="text-sm break-all">{source.url}</p>
-                <div className="mt-2 flex gap-2">
+                <div className="mt-3 flex flex-wrap items-center gap-3">
                   <Badge variant="secondary">{source.type}</Badge>
                   {source.scrapingConfig?.mode && (
                     <Badge variant="outline">
@@ -106,35 +100,69 @@ export function SourceList({
                 <Link to={`/sources/${source.id}/workflow`}>Tester le workflow de A à Z</Link>
               </Button>
               {onChanged && (
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon-sm"
-                    className="cursor-pointer"
-                    disabled={!!busy}
-                    onClick={() => {
-                      setEditingId(source.id);
+                <div className="flex items-center gap-3">
+                  <Modal
+                    open={editingId === source.id}
+                    onOpenChange={(open) => {
+                      setEditingId(open ? source.id : "");
                       setError("");
                       setMessage("");
                     }}
-                    aria-label={`Modifier ${source.url}`}
-                    title="Modifier la source"
+                    busy={!!busy}
+                    title={
+                      source.type === "RSS"
+                        ? "Modifier le flux RSS"
+                        : "Modifier la source de scraping"
+                    }
+                    description={source.url}
+                    trigger={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        className="cursor-pointer"
+                        disabled={!!busy}
+                        aria-label={`Modifier ${source.url}`}
+                        title="Modifier la source"
+                      >
+                        <Pencil aria-hidden="true" />
+                      </Button>
+                    }
                   >
-                    <Pencil aria-hidden="true" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon-sm"
-                    className="cursor-pointer text-destructive hover:text-destructive"
-                    disabled={!!busy}
-                    aria-label={`Supprimer ${source.url}`}
-                    title="Supprimer la source"
-                    onClick={() => void remove(source)}
-                  >
-                    <Trash2 aria-hidden="true" />
-                  </Button>
+                    <EditSourceForm
+                      key={source.id}
+                      source={source}
+                      busy={!!busy}
+                      onSave={(url, config, articleLinkSelector) =>
+                        updateSource(source, url, config, articleLinkSelector)
+                      }
+                      onCancel={() => {
+                        setEditingId("");
+                        setError("");
+                      }}
+                    />
+                    <div className="mt-4">
+                      <Feedback message={error} error />
+                    </div>
+                  </Modal>
+                  <ConfirmDelete
+                    itemType={source.type === "RSS" ? "ce flux RSS" : "cette source de scraping"}
+                    description={`${source.url} — Les articles et résumés associés seront également supprimés.`}
+                    onConfirm={() => remove(source)}
+                    trigger={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        className="cursor-pointer text-destructive hover:text-destructive"
+                        disabled={!!busy}
+                        aria-label={`Supprimer ${source.url}`}
+                        title="Supprimer la source"
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </Button>
+                    }
+                  />
                   <Switch
                     className="cursor-pointer"
                     title={source.enabled ? "Désactiver la source" : "Activer la source"}
@@ -144,20 +172,6 @@ export function SourceList({
                     onCheckedChange={(enabled) => void toggle(source, enabled)}
                   />
                 </div>
-              )}
-              {editingId === source.id && (
-                <EditSourceForm
-                  key={source.id}
-                  source={source}
-                  busy={!!busy}
-                  onSave={(url, config, articleLinkSelector) =>
-                    updateSource(source, url, config, articleLinkSelector)
-                  }
-                  onCancel={() => {
-                    setEditingId("");
-                    setError("");
-                  }}
-                />
               )}
             </CardContent>
           </Card>

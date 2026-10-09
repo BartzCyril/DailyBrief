@@ -3,6 +3,13 @@ import { lazy, Suspense } from "react";
 import { AuthProvider } from "./auth/AuthProvider";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { AuthPage } from "./pages/AuthPage";
+import { AppLayout } from "./components/AppLayout";
+const SourcesPage = lazy(() =>
+  import("./pages/SourcesPage").then((module) => ({ default: module.SourcesPage })),
+);
+const JournalsPage = lazy(() =>
+  import("./pages/JournalsPage").then((module) => ({ default: module.JournalsPage })),
+);
 const DashboardPage = lazy(() =>
   import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })),
 );
@@ -26,10 +33,14 @@ export function App() {
           <Route path="/login" element={<AuthPage />} />
           <Route path="/register" element={<AuthPage register />} />
           <Route element={<ProtectedRoute />}>
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/sources/new/rss" element={<NewSourcePage />} />
-            <Route path="/sources/new/scraping" element={<NewSourcePage scraping />} />
-            <Route path="/sources/:sourceId/workflow" element={<SourceWorkflowPage />} />
+            <Route element={<AppLayout />}>
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/sources" element={<SourcesPage />} />
+              <Route path="/journals" element={<JournalsPage />} />
+              <Route path="/sources/new/rss" element={<NewSourcePage />} />
+              <Route path="/sources/new/scraping" element={<NewSourcePage scraping />} />
+              <Route path="/sources/:sourceId/workflow" element={<SourceWorkflowPage />} />
+            </Route>
           </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

@@ -3,6 +3,8 @@ import type { JournalPreview, JournalLoginConfig } from "@dailybrief/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Feedback } from "@/components/Feedback";
+import { Modal } from "@/components/Modal";
+import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { sourcesApi } from "./api";
 import { errorMessage } from "@/lib/api";
 
@@ -47,40 +49,39 @@ function JournalRow({
   const [connectionResult, setConnectionResult] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [domain, setDomain] = useState(journal.domain);
-  async function changeStructure(remove = false) {
-    if (
-      remove &&
-      !window.confirm(
-        `Supprimer ${journal.domain} et ses réglages d'accès ? Les articles existants sont conservés. Si ce domaine réapparaît dans un flux RSS, il sera recréé désactivé.`,
-      )
-    )
-      return;
+  async function changeDomain() {
+    if (busy) return;
     setBusy(true);
     setError("");
     setConnectionResult("");
     setPassword("");
     try {
-      if (remove) await sourcesApi.removeJournal(journal.domain);
-      else await sourcesApi.updateJournal(journal.domain, { domain });
-      setRenaming(false);
+      await sourcesApi.updateJournal(journal.domain, { domain });
       await onStructureChange?.();
+      setRenaming(false);
     } catch (error) {
       setError(errorMessage(error));
     } finally {
       setBusy(false);
     }
   }
+  async function saveAccess(body: Parameters<typeof sourcesApi.updateJournal>[1]) {
+    setError("");
+    setConnectionResult("");
+    const saved = await sourcesApi.updateJournal(journal.domain, body);
+    onChange({ ...saved, count: journal.count });
+    setEmail(saved.email ?? "");
+    setPassword("");
+    setEditing(false);
+    setForm(formDefaults({ ...saved, count: journal.count }));
+  }
   async function update(body: Parameters<typeof sourcesApi.updateJournal>[1]) {
+    if (busy) return;
     setBusy(true);
     setError("");
     setConnectionResult("");
     try {
-      const saved = await sourcesApi.updateJournal(journal.domain, body);
-      onChange({ ...saved, count: journal.count });
-      setEmail(saved.email ?? "");
-      setPassword("");
-      setEditing(false);
-      setForm(formDefaults({ ...saved, count: journal.count }));
+      await saveAccess(body);
     } catch (error) {
       setError(errorMessage(error));
       setPassword("");
@@ -126,7 +127,7 @@ function JournalRow({
         </Button>
       </td>
       <td className="p-3 break-all">{journal.email ?? "—"}</td>
-      <td className="min-w-64 p-3 space-y-2">
+      <td className="min-w-64 p-3 space-y-3">
         <p>
           {journal.hasCredentials
             ? journal.authenticationSupported
@@ -134,192 +135,234 @@ function JournalRow({
               : "Identifiants enregistrés · formulaire à configurer"
             : "Non configuré"}
         </p>
-        <Button
-          variant="outline"
-          disabled={!journal.enabled || busy}
-          onClick={() => {
-            setRenaming(false);
-            setPassword("");
-            setEmail(journal.email ?? "");
-            setForm(formDefaults(journal));
-            setEditing(!editing);
-          }}
-        >
-          Configurer l'accès
-        </Button>
-        {journal.loginConfig && (
-          <>
-            <Button
-              variant="outline"
-              disabled={busy || editing || !journal.enabled || !journal.hasCredentials}
-              onClick={() => void testConnection()}
-            >
-              {busy ? "Connexion en cours…" : "Tester la connexion"}
-            </Button>
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => void update({ loginConfig: null })}
-            >
-              Supprimer le formulaire
-            </Button>
-          </>
-        )}
-        {journal.hasCredentials && (
-          <Button
-            variant="outline"
-            disabled={busy}
-            onClick={() => void update({ clearCredentials: true })}
-          >
-            Supprimer les identifiants
-          </Button>
-        )}
-        {renaming && (
-          <form
-            className="space-y-2 rounded-md border p-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void changeStructure();
+        <div className="flex flex-col items-start gap-3">
+          <Modal
+            open={editing}
+            onOpenChange={(open) => {
+              setEditing(open);
+              setPassword("");
+              setError("");
+              if (open) {
+                setEmail(journal.email ?? "");
+                setForm(formDefaults(journal));
+              }
             }}
+            busy={busy}
+            title={`Configurer l'accès à ${journal.domain}`}
+            description="Enregistrez les identifiants et, si nécessaire, les paramètres du formulaire de connexion."
+            trigger={
+              <Button variant="outline" disabled={!journal.enabled || busy}>
+                Configurer l'accès
+              </Button>
+            }
           >
-            <label className="block">
-              Nouveau domaine pour {journal.domain}
-              <Input
-                required
-                value={domain}
-                maxLength={2048}
-                autoComplete="off"
-                onChange={(event) => setDomain(event.target.value)}
-              />
-            </label>
-            <p className="text-sm text-muted-foreground">
-              Changer de domaine désactive le journal et efface ses identifiants et son formulaire
-              de connexion. Les hôtes avec et sans www sont distincts.
-            </p>
-            <Button type="submit" disabled={busy}>
-              Enregistrer le domaine
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy}
-              onClick={() => setRenaming(false)}
-            >
-              Annuler
-            </Button>
-          </form>
-        )}
-        {editing && (
-          <form
-            className="space-y-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void update({
-                email,
-                password,
-                ...(form.loginUrl.trim()
-                  ? {
-                      loginConfig: {
-                        ...form,
-                        articleContentSelector: form.articleContentSelector?.trim() || null,
-                      },
-                    }
-                  : {}),
-              });
-            }}
-          >
-            <label className="block">
-              Email pour {journal.domain}
-              <Input
-                type="email"
-                required
-                value={email}
-                autoComplete="off"
-                onChange={(event) => setEmail(event.target.value)}
-              />
-            </label>
-            <fieldset className="space-y-2 rounded-md border p-2">
-              <legend className="px-1 font-medium">Connexion automatique</legend>
-              <p className="text-sm text-muted-foreground">
-                Renseignez une URL HTTPS et des sélecteurs CSS. Les identifiants seront envoyés au
-                site indiqué par cette URL. L'élément de réussite doit être absent avant connexion
-                et visible après, par exemple le menu du compte. CAPTCHA et double authentification
-                ne sont pas automatisés.
-              </p>
-              {formFields.map(([key, label, placeholder]) => (
-                <label key={key} className="block">
-                  {label}
-                  <Input
-                    type={key === "loginUrl" ? "url" : "text"}
-                    placeholder={placeholder}
-                    value={form[key] ?? ""}
-                    required={
-                      key !== "articleContentSelector" &&
-                      Boolean(form.loginUrl || journal.loginConfig)
-                    }
-                    autoComplete="off"
-                    onChange={(event) =>
-                      setForm((previous) => ({ ...previous, [key]: event.target.value }))
-                    }
-                  />
-                </label>
-              ))}
-              <p className="text-sm text-muted-foreground">
-                Pour un article réservé aux abonnés, indiquez la zone du contenu intégral afin
-                d'éviter de résumer un extrait public. Enregistrez avant de tester la connexion.
-              </p>
-            </fieldset>
-            <label className="block">
-              {journal.hasCredentials ? "Nouveau mot de passe (vide : conserver)" : "Mot de passe"}
-              <Input
-                type="password"
-                required={!journal.hasCredentials}
-                value={password}
-                autoComplete="new-password"
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </label>
-            <Button type="submit" disabled={busy}>
-              Enregistrer les identifiants
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setPassword("");
-                setEditing(false);
+            <form
+              className="space-y-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void update({
+                  email,
+                  password,
+                  ...(form.loginUrl.trim()
+                    ? {
+                        loginConfig: {
+                          ...form,
+                          articleContentSelector: form.articleContentSelector?.trim() || null,
+                        },
+                      }
+                    : {}),
+                });
               }}
             >
-              Annuler
-            </Button>
-          </form>
-        )}
-        <Feedback message={error} error />
+              <fieldset disabled={busy} className="min-w-0 space-y-5">
+                <label className="flex flex-col gap-2 text-sm">
+                  Email pour {journal.domain}
+                  <Input
+                    type="email"
+                    required
+                    value={email}
+                    autoComplete="off"
+                    onChange={(event) => setEmail(event.target.value)}
+                  />
+                </label>
+                <fieldset className="min-w-0 space-y-4 rounded-lg border p-4">
+                  <legend className="px-1 font-medium">Connexion automatique</legend>
+                  <p className="text-sm text-muted-foreground">
+                    Renseignez une URL HTTPS et des sélecteurs CSS. Les identifiants seront envoyés
+                    au site indiqué par cette URL. L'élément de réussite doit être absent avant
+                    connexion et visible après, par exemple le menu du compte. CAPTCHA et double
+                    authentification ne sont pas automatisés.
+                  </p>
+                  {formFields.map(([key, label, placeholder]) => (
+                    <label key={key} className="flex flex-col gap-2 text-sm">
+                      {label}
+                      <Input
+                        type={key === "loginUrl" ? "url" : "text"}
+                        placeholder={placeholder}
+                        value={form[key] ?? ""}
+                        required={
+                          key !== "articleContentSelector" &&
+                          Boolean(form.loginUrl || journal.loginConfig)
+                        }
+                        autoComplete="off"
+                        onChange={(event) =>
+                          setForm((previous) => ({ ...previous, [key]: event.target.value }))
+                        }
+                      />
+                    </label>
+                  ))}
+                  <p className="text-sm text-muted-foreground">
+                    Pour un article réservé aux abonnés, indiquez la zone du contenu intégral afin
+                    d'éviter de résumer un extrait public. Enregistrez avant de tester la connexion.
+                  </p>
+                </fieldset>
+                <label className="flex flex-col gap-2 text-sm">
+                  {journal.hasCredentials
+                    ? "Nouveau mot de passe (vide : conserver)"
+                    : "Mot de passe"}
+                  <Input
+                    type="password"
+                    required={!journal.hasCredentials}
+                    value={password}
+                    autoComplete="new-password"
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                </label>
+                <div className="flex flex-wrap gap-3">
+                  <Button type="submit" disabled={busy}>
+                    Enregistrer les identifiants
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setPassword("");
+                      setEditing(false);
+                    }}
+                  >
+                    Annuler
+                  </Button>
+                </div>
+              </fieldset>
+              <Feedback message={error} error />
+            </form>
+          </Modal>
+          {journal.loginConfig && (
+            <>
+              <Button
+                variant="outline"
+                disabled={busy || !journal.enabled || !journal.hasCredentials}
+                onClick={() => void testConnection()}
+              >
+                {busy ? "Connexion en cours…" : "Tester la connexion"}
+              </Button>
+              <ConfirmDelete
+                itemType="ce formulaire de connexion"
+                description={`${journal.domain} — Les identifiants enregistrés seront conservés.`}
+                onConfirm={() => saveAccess({ loginConfig: null })}
+                trigger={
+                  <Button variant="outline" disabled={busy}>
+                    Supprimer le formulaire
+                  </Button>
+                }
+              />
+            </>
+          )}
+          {journal.hasCredentials && (
+            <ConfirmDelete
+              itemType="ces identifiants de connexion"
+              description={`${journal.domain} — L'email, le mot de passe et la session de connexion seront supprimés.`}
+              onConfirm={() => saveAccess({ clearCredentials: true })}
+              trigger={
+                <Button variant="outline" disabled={busy}>
+                  Supprimer les identifiants
+                </Button>
+              }
+            />
+          )}
+        </div>
+        <Feedback message={editing || renaming ? "" : error} error />
         <Feedback message={connectionResult} />
       </td>
       {management && (
-        <td className="p-3 space-y-2">
-          <Button
-            variant="outline"
-            disabled={busy}
-            aria-label={`Modifier le domaine ${journal.domain}`}
-            onClick={() => {
-              setEditing(false);
-              setPassword("");
-              setRenaming(!renaming);
-              setDomain(journal.domain);
-            }}
-          >
-            Modifier le domaine
-          </Button>
-          <Button
-            variant="outline"
-            disabled={busy}
-            aria-label={`Supprimer le journal ${journal.domain}`}
-            onClick={() => void changeStructure(true)}
-          >
-            Supprimer
-          </Button>
+        <td className="p-3">
+          <div className="flex flex-col items-start gap-3">
+            <Modal
+              open={renaming}
+              onOpenChange={(open) => {
+                setRenaming(open);
+                setDomain(journal.domain);
+                setError("");
+              }}
+              busy={busy}
+              title="Modifier le domaine du journal"
+              description={journal.domain}
+              trigger={
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  aria-label={`Modifier le domaine ${journal.domain}`}
+                >
+                  Modifier le domaine
+                </Button>
+              }
+            >
+              <form
+                className="space-y-5"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void changeDomain();
+                }}
+              >
+                <label className="flex flex-col gap-2 text-sm">
+                  Nouveau domaine pour {journal.domain}
+                  <Input
+                    required
+                    disabled={busy}
+                    value={domain}
+                    maxLength={2048}
+                    autoComplete="off"
+                    onChange={(event) => setDomain(event.target.value)}
+                  />
+                </label>
+                <p className="text-sm text-muted-foreground">
+                  Changer de domaine désactive le journal et efface ses identifiants et son
+                  formulaire de connexion. Les hôtes avec et sans www sont distincts.
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  <Button type="submit" disabled={busy}>
+                    Enregistrer le domaine
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => setRenaming(false)}
+                  >
+                    Annuler
+                  </Button>
+                </div>
+                <Feedback message={error} error />
+              </form>
+            </Modal>
+            <ConfirmDelete
+              itemType="ce journal"
+              description={`${journal.domain} — Les réglages d'accès seront supprimés et les articles existants conservés. Si ce domaine réapparaît dans un flux RSS, il sera recréé désactivé.`}
+              onConfirm={async () => {
+                await sourcesApi.removeJournal(journal.domain);
+                await onStructureChange?.();
+              }}
+              trigger={
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  aria-label={`Supprimer le journal ${journal.domain}`}
+                >
+                  Supprimer
+                </Button>
+              }
+            />
+          </div>
         </td>
       )}
     </tr>
@@ -343,7 +386,7 @@ export function JournalTable({
 }) {
   const title = management ? "Vos journaux" : "Journaux de cet aperçu";
   return (
-    <section aria-label={title} className="space-y-3">
+    <section aria-label={title} className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold">{title}</h2>
         {headerActions}

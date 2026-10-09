@@ -116,10 +116,17 @@ test("saves form selectors, tests the saved login and distinguishes configuratio
     "https://secure.lemonde.fr/login",
   );
   expect(screen.getByLabelText("Sélecteur visible après connexion")).toHaveValue(".account");
-  expect(screen.getByRole("button", { name: "Tester la connexion" })).toBeDisabled();
+  expect(screen.getByRole("dialog")).toHaveAccessibleName("Configurer l'accès à www.lemonde.fr");
+  expect(screen.queryByRole("button", { name: "Tester la connexion" })).not.toBeInTheDocument();
   expect(screen.getByLabelText(/Nouveau mot de passe/)).toHaveValue("");
   await user.click(screen.getByRole("button", { name: "Annuler" }));
   await user.click(screen.getByRole("button", { name: "Supprimer le formulaire" }));
+  expect(screen.getByRole("alertdialog")).toHaveTextContent(
+    "Êtes-vous sûr de vouloir supprimer ce formulaire de connexion ?",
+  );
+  await user.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }),
+  );
   await waitFor(() => expect(bodies.at(-1)).toEqual({ loginConfig: null }));
   expect(screen.queryByRole("button", { name: "Tester la connexion" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Supprimer les identifiants" })).toBeInTheDocument();
@@ -163,6 +170,32 @@ test("renders counts, keyboard activation and credential editing with no passwor
   await user.click(screen.getByRole("button", { name: "Enregistrer les identifiants" }));
   await waitFor(() => expect(bodies.at(-1)).toMatchObject({ password: "" }));
   await user.click(screen.getByRole("button", { name: "Supprimer les identifiants" }));
+  expect(screen.getByRole("alertdialog")).toHaveTextContent(
+    "Êtes-vous sûr de vouloir supprimer ces identifiants de connexion ?",
+  );
+  const before = bodies.length;
+  await user.click(screen.getByRole("button", { name: "Annuler" }));
+  expect(bodies).toHaveLength(before);
+  await user.click(screen.getByRole("button", { name: "Supprimer les identifiants" }));
+  await user.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }),
+  );
   await waitFor(() => expect(bodies.at(-1)).toEqual({ clearCredentials: true }));
   expect(screen.queryByText(/formulaire à configurer/)).not.toBeInTheDocument();
+});
+
+test("clears an unsaved password when closing the access modal with Escape", async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  await user.click(screen.getByRole("button", { name: "Activer www.lemonde.fr" }));
+  const trigger = screen.getAllByRole("button", { name: "Configurer l'accès" })[0]!;
+  await user.click(trigger);
+  expect(screen.getByLabelText("Email pour www.lemonde.fr")).toHaveFocus();
+  await user.type(screen.getByLabelText("Mot de passe", { exact: true }), "unsaved-secret");
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+  expect(bodies).toEqual([{ enabled: true }]);
+  await user.click(trigger);
+  expect(screen.getByLabelText("Mot de passe", { exact: true })).toHaveValue("");
 });

@@ -44,7 +44,7 @@ export function RssForm() {
     setError("");
     try {
       await sourcesApi.saveRss(url, articleLinkSelector.trim() || undefined);
-      navigate("/dashboard", { state: { message: "Flux RSS ajouté." } });
+      navigate("/sources", { state: { message: "Flux RSS ajouté." } });
     } catch (error) {
       setError(errorMessage(error));
     } finally {

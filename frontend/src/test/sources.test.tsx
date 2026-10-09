@@ -69,8 +69,8 @@ beforeEach(() => {
   warnings = [];
   mockApi();
 });
-test("opens the RSS form from the authenticated dashboard", async () => {
-  mount("/dashboard");
+test("opens the RSS form from the authenticated sources page", async () => {
+  mount("/sources");
   await userEvent.click(await screen.findByRole("link", { name: "Ajouter un flux RSS" }));
   expect(await screen.findByLabelText("URL du flux RSS")).toBeInTheDocument();
 });

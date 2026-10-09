@@ -1,18 +1,18 @@
 import { Link } from "react-router-dom";
-import { Card, CardHeader, CardContent, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardHeader, CardContent, CardDescription } from "@/components/ui/card";
 import { RssForm } from "@/sources/RssForm";
 import { ScrapingForm } from "@/sources/ScrapingForm";
 export function NewSourcePage({ scraping = false }: { scraping?: boolean }) {
   return (
     <main className="max-w-3xl mx-auto px-5 py-8 space-y-6">
-      <Link to="/dashboard" className="text-sm text-primary underline">
-        ← Retour au dashboard
+      <Link to="/sources" className="text-sm text-primary underline">
+        ← Retour aux sources
       </Link>
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl">
+          <h1 tabIndex={-1} className="text-2xl font-semibold">
             {scraping ? "Ajouter une source de scraping" : "Ajouter un flux RSS"}
-          </CardTitle>
+          </h1>
           <CardDescription>
             {scraping
               ? "Choisissez les éléments à extraire, puis vérifiez le résultat."

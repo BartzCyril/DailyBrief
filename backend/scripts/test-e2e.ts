@@ -136,10 +136,35 @@ try {
   await page.getByLabel("Mot de passe", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Se connecter", exact: true }).click();
   await page.waitForURL("**/dashboard");
-  // Manage journals directly on the dashboard, including on a mobile viewport.
+  // Navigate to the dedicated journal page and manage journals on mobile.
+  await page.getByRole("link", { name: "Journaux", exact: true }).click();
+  await page.waitForURL("**/journals");
   await page.setViewportSize({ width: 390, height: 844 });
   const addJournal = page.getByRole("button", { name: "Ajouter un journal", exact: true });
   await addJournal.focus();
+  await page.keyboard.press("Enter");
+  const addModal = page.getByRole("dialog", { name: "Ajouter un journal", exact: true });
+  await addModal.waitFor();
+  assert(
+    await page
+      .getByLabel("Domaine du nouveau journal")
+      .evaluate((element) => element === document.activeElement),
+  );
+  assert(
+    await addModal.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return (
+        rect.left >= 0 &&
+        rect.right <= window.innerWidth &&
+        rect.top >= 0 &&
+        rect.bottom <= window.innerHeight
+      );
+    }),
+    "The modal must stay inside the mobile viewport",
+  );
+  await page.keyboard.press("Escape");
+  await addModal.waitFor({ state: "hidden" });
+  assert(await addJournal.evaluate((element) => element === document.activeElement));
   await page.keyboard.press("Enter");
   await page.getByLabel("Domaine du nouveau journal").fill("MANUAL-JOURNAL.EXAMPLE");
   await page.getByRole("button", { name: "Enregistrer le journal", exact: true }).click();
@@ -150,6 +175,7 @@ try {
   await page
     .getByLabel("Nouveau domaine pour manual-journal.example")
     .fill("corrected-journal.example");
+  await page.getByRole("dialog").screenshot({ path: "/tmp/dailybrief-domain-modal-mobile.png" });
   await page.getByRole("button", { name: "Enregistrer le domaine", exact: true }).click();
   await page
     .getByRole("button", { name: "Activer corrected-journal.example", exact: true })
@@ -159,26 +185,37 @@ try {
     "Journal management must fit the mobile viewport",
   );
   await page.screenshot({ path: "/tmp/dailybrief-journal-management-mobile.png", fullPage: true });
-  page.once("dialog", (dialog) => void dialog.dismiss());
   await page
     .getByRole("button", { name: "Supprimer le journal corrected-journal.example", exact: true })
     .click();
+  const journalConfirmation = page.getByRole("alertdialog");
+  assert(
+    (await journalConfirmation.innerText()).includes(
+      "Êtes-vous sûr de vouloir supprimer ce journal ?",
+    ),
+  );
+  await journalConfirmation.getByRole("button", { name: "Annuler", exact: true }).click();
   await page.getByRole("link", { name: "corrected-journal.example", exact: true }).waitFor();
-  page.once("dialog", (dialog) => void dialog.accept());
   await page
     .getByRole("button", { name: "Supprimer le journal corrected-journal.example", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Supprimer", exact: true })
     .click();
   await page
     .getByRole("link", { name: "corrected-journal.example", exact: true })
     .waitFor({ state: "hidden" });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("link", { name: "Sources", exact: true }).click();
+  await page.waitForURL("**/sources");
   await page.getByRole("link", { name: "Ajouter un flux RSS" }).click();
   await page.getByLabel("URL du flux RSS").fill("https://fixture.example/feed");
   await page.getByLabel("Sélecteur du lien vers l'article (facultatif)").fill("a.primarydoc");
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article RSS", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Enregistrer le flux" }).click();
-  await page.waitForURL("**/dashboard");
+  await page.waitForURL("**/sources");
   await page
     .getByRole("button", { name: "Modifier https://fixture.example/feed", exact: true })
     .click();
@@ -206,7 +243,7 @@ try {
   await page.getByText("Dernier article chargé", { exact: true }).waitFor();
   scrapingRequests.length = 0;
   await page.getByRole("button", { name: "Enregistrer la source" }).click();
-  await page.waitForURL("**/dashboard");
+  await page.waitForURL("**/sources");
   assert.deepEqual(
     scrapingRequests,
     ["https://fixture.example/news"],
@@ -304,6 +341,7 @@ try {
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   // Inventory and configuration happen before any content extraction or AI.
+  await page.getByRole("link", { name: "Sources", exact: true }).click();
   await page.getByRole("link", { name: "Tester le workflow de A à Z" }).last().click();
   await page
     .getByRole("table")
@@ -363,7 +401,21 @@ try {
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     "Journal login settings must fit the mobile viewport",
   );
-  await page.screenshot({ path: "/tmp/dailybrief-journal-login-mobile.png", fullPage: true });
+  assert(
+    await page.getByRole("dialog").evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const label = element.querySelector("label");
+      return (
+        rect.left >= 0 &&
+        rect.right <= window.innerWidth &&
+        rect.top >= 0 &&
+        rect.bottom <= window.innerHeight &&
+        Number.parseFloat(getComputedStyle(label!).rowGap) >= 8
+      );
+    }),
+    "The scrollable access modal must fit mobile with gaps between labels and inputs",
+  );
+  await page.getByRole("dialog").screenshot({ path: "/tmp/dailybrief-journal-login-mobile.png" });
   await page.getByRole("button", { name: "Enregistrer les identifiants" }).click();
   await page.getByText("Formulaire configuré · connexion à vérifier", { exact: true }).waitFor();
   const testConnection = page.getByRole("button", { name: "Tester la connexion" });
@@ -373,10 +425,20 @@ try {
   assert.equal(messages.length, 0, "A connection test must not send email");
   assert.equal(await page.locator('input[type="password"]').count(), 0);
   await page.getByRole("button", { name: "Supprimer les identifiants" }).click();
+  assert(
+    (await page.getByRole("alertdialog").innerText()).includes(
+      "Êtes-vous sûr de vouloir supprimer ces identifiants de connexion ?",
+    ),
+  );
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Supprimer", exact: true })
+    .click();
   await page.getByText("Non configuré", { exact: true }).waitFor();
   await page.screenshot({ path: "/tmp/dailybrief-journals-mobile.png", fullPage: true });
   await page.getByRole("link", { name: "Retour aux sources" }).click();
-  await page.waitForURL("**/dashboard");
+  await page.waitForURL("**/sources");
+  await page.getByRole("link", { name: "Journaux", exact: true }).click();
   const savedJournalRow = page
     .getByRole("region", { name: "Vos journaux", exact: true })
     .getByRole("row")
@@ -385,10 +447,12 @@ try {
   assert.equal(await savedJournalRow.getByRole("cell").first().textContent(), "1");
   await savedJournalRow.getByRole("button", { name: "Configurer l'accès", exact: true }).click();
   assert.equal(
-    await savedJournalRow.getByLabel("URL du formulaire de connexion").inputValue(),
+    await page.getByRole("dialog").getByLabel("URL du formulaire de connexion").inputValue(),
     loginConfig.loginUrl,
   );
-  await savedJournalRow.getByRole("button", { name: "Annuler", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Annuler", exact: true }).click();
+  await page.getByRole("link", { name: "Tableau de bord", exact: true }).click();
+  await page.waitForURL("**/dashboard");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("switch", { name: "Récupération automatique", exact: true }).click();
   await page.getByLabel("Heure quotidienne").fill("08:45");
@@ -443,6 +507,7 @@ try {
     where: { userId: user.id },
     orderBy: { id: "asc" },
   });
+  await page.getByRole("link", { name: "Sources", exact: true }).click();
   await page.getByRole("link", { name: "Tester le workflow de A à Z" }).last().click();
   await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).waitFor();
   await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).click();
@@ -500,11 +565,11 @@ try {
   );
   await page.screenshot({ path: "/tmp/dailybrief-workflow-mobile.png", fullPage: true });
   await page.getByRole("link", { name: "Retour aux sources" }).click();
-  await page.waitForURL("**/dashboard");
+  await page.waitForURL("**/sources");
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.screenshot({ path: "/tmp/dailybrief-dashboard-desktop.png", fullPage: true });
+  await page.screenshot({ path: "/tmp/dailybrief-sources-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: "/tmp/dailybrief-dashboard-mobile.png", fullPage: true });
+  await page.screenshot({ path: "/tmp/dailybrief-sources-mobile.png", fullPage: true });
   assert(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     "Mobile layout should not overflow horizontally",
@@ -528,21 +593,44 @@ try {
   await activation.and(page.locator('[aria-checked="false"]')).waitFor();
   assert.equal(await activation.evaluate((element) => getComputedStyle(element).cursor), "pointer");
   await page.screenshot({ path: "/tmp/dailybrief-source-actions-mobile.png", fullPage: true });
-  page.once("dialog", (dialog) => void dialog.dismiss());
+  const rssEditTrigger = page.getByRole("button", { name: `Modifier ${rssUrl}`, exact: true });
+  await rssEditTrigger.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("dialog", { name: "Modifier le flux RSS", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  assert(await rssEditTrigger.evaluate((element) => element === document.activeElement));
   await page.getByRole("button", { name: `Supprimer ${scrapingUrl}`, exact: true }).click();
+  assert(
+    (await page.getByRole("alertdialog").innerText()).includes(
+      "Êtes-vous sûr de vouloir supprimer cette source de scraping ?",
+    ),
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "Annuler", exact: true }).click();
   assert.equal(
     await db.source.count({ where: { userId: user.id } }),
     2,
     "Cancelling deletion must keep sources",
   );
-  page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: `Supprimer ${scrapingUrl}`, exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Supprimer", exact: true })
+    .click();
   await page.getByText("Source supprimée.", { exact: true }).waitFor();
   assert.equal(await db.source.count({ where: { userId: user.id } }), 1);
   assert.equal(await db.article.count({ where: { userId: user.id } }), 1);
   assert.equal(await db.newsletter.count({ where: { userId: user.id, status: "SENT" } }), 1);
-  page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: `Supprimer ${rssUrl}`, exact: true }).click();
+  assert(
+    (await page.getByRole("alertdialog").innerText()).includes(
+      "Êtes-vous sûr de vouloir supprimer ce flux RSS ?",
+    ),
+  );
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Supprimer", exact: true })
+    .click();
   await page.getByText(/Aucune source configurée/).waitFor();
   assert.equal(await db.source.count({ where: { userId: user.id } }), 0);
   assert.equal(await db.article.count({ where: { userId: user.id } }), 0);
@@ -550,7 +638,7 @@ try {
   await page.waitForURL("**/login");
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, dashboard journal addition, domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: register, login, separate sources and journals navigation, modal journal addition and domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();

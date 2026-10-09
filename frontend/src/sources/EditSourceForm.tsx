@@ -134,7 +134,7 @@ export function EditSourceForm({
     <form
       onSubmit={(event) => void submit(event)}
       noValidate
-      className="w-full space-y-4 border-t pt-4"
+      className="w-full space-y-5"
       aria-label={`Modifier ${source.url}`}
     >
       <fieldset disabled={pending} className="space-y-5 min-w-0">
@@ -160,7 +160,7 @@ export function EditSourceForm({
       </fieldset>
       <Feedback message={error} error />
       <Feedback message={preview?.warnings?.join(" ") ?? ""} />
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-3">
         <Button type="button" variant="outline" disabled={pending} onClick={() => void test()}>
           {testing && <LoaderCircle className="animate-spin" />}
           {testing ? "Test en cours…" : "Tester"}

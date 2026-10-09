@@ -54,7 +54,7 @@ beforeEach(() => {
   failRun = false;
   mockApi();
 });
-test("shows source statistics and an empty state with both add actions", async () => {
+test("shows statistics and links to separate sources and journals pages", async () => {
   data.sources = { total: 6, rss: 4, scraping: 2, enabled: 5 };
   mount();
   await screen.findByText("Sources totales");
@@ -65,17 +65,20 @@ test("shows source statistics and an empty state with both add actions", async (
     ["Sources actives", "5"],
   ])
     expect(screen.getByText(label!).closest('[data-slot="card"]')).toHaveTextContent(count!);
-  expect(screen.getByText(/Aucune source configurée/)).toBeInTheDocument();
-  expect(await screen.findByRole("heading", { name: "Vos journaux" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Ajouter un journal" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Ajouter un flux RSS" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Gérer les sources" })).toHaveAttribute(
     "href",
-    "/sources/new/rss",
+    "/sources",
   );
-  expect(screen.getByRole("link", { name: "Ajouter une source de scraping" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Gérer les journaux" })).toHaveAttribute(
     "href",
-    "/sources/new/scraping",
+    "/journals",
   );
+  expect(screen.getByRole("link", { name: "Tableau de bord" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  expect(screen.queryByRole("heading", { name: "Vos journaux" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Ajouter un journal" })).not.toBeInTheDocument();
 });
 test("saves activation, time and timezone in one explicit action", async () => {
   const mock = mockApi();
@@ -234,4 +237,28 @@ test("validates unknown timezones before saving", async () => {
   await ui.click(screen.getByRole("button", { name: "Enregistrer les réglages" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("fuseau horaire");
   expect(mock.mock.calls.some((call) => call[0].endsWith("/settings/dailybrief"))).toBe(false);
+});
+
+test("navigates between sources and journals without loading unrelated features", async () => {
+  const mock = mockApi();
+  const user = userEvent.setup();
+  mount();
+  await screen.findByText("Sources totales");
+  expect(
+    mock.mock.calls.some(([url]) => url.endsWith("/sources") || url.endsWith("/journals")),
+  ).toBe(false);
+  await user.click(screen.getByRole("link", { name: "Sources" }));
+  expect(await screen.findByText(/Aucune source configurée/)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Sources", level: 1 })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Sources" })).toHaveAttribute("aria-current", "page");
+  expect(screen.getByRole("link", { name: "Ajouter un flux RSS" })).toHaveAttribute(
+    "href",
+    "/sources/new/rss",
+  );
+  expect(mock.mock.calls.some(([url]) => url.endsWith("/journals"))).toBe(false);
+  await user.click(screen.getByRole("link", { name: "Journaux" }));
+  expect(await screen.findByRole("heading", { name: "Vos journaux" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Ajouter un journal" })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Ajouter un flux RSS" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Journaux" })).toHaveAttribute("aria-current", "page");
 });
