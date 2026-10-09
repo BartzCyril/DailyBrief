@@ -99,6 +99,15 @@ export type JournalAccess = {
   email: string | null;
   hasCredentials: boolean;
   authenticationSupported: boolean;
+  loginConfig?: JournalLoginConfig | null;
+};
+export type JournalLoginConfig = {
+  loginUrl: string;
+  emailSelector: string;
+  passwordSelector: string;
+  submitSelector: string;
+  successSelector: string;
+  articleContentSelector?: string | null;
 };
 export type JournalPreview = JournalAccess & { count: number };
 export type WorkflowSummary = {

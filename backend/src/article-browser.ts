@@ -5,7 +5,7 @@ import { fetchRemotePage, type FetchPage } from "./network";
 import { MAX_REMOTE_BYTES } from "./remote-response";
 
 // Shared across accounts: browser fallback must remain bounded.
-const limiter = new ConcurrencyLimiter(2);
+export const articleBrowserLimiter = new ConcurrencyLimiter(2);
 
 export class ArticleBrowser {
   constructor(private fetchPage: FetchPage = fetchRemotePage) {}
@@ -14,7 +14,7 @@ export class ArticleBrowser {
     linkSelector?: string,
     allowedHostname?: string,
   ): Promise<{ html: string; url: string }> {
-    return limiter.run(async () => {
+    return articleBrowserLimiter.run(async () => {
       let browser;
       try {
         browser = await chromium.launch({

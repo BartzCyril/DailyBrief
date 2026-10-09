@@ -56,6 +56,7 @@ export type RemotePageOptions = {
   body?: string;
   contentType?: string;
   requestedWith?: string;
+  referer?: string;
   userAgent?: string;
   cookie?: string;
   accept?: string;
@@ -98,6 +99,9 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
             "User-Agent": options.userAgent ?? "DailyBrief/1.0",
             "Accept-Encoding": "identity",
             ...(options.accept ? { Accept: options.accept } : {}),
+            ...(options.referer && new URL(options.referer).origin === target.url.origin
+              ? { Referer: options.referer }
+              : {}),
             ...(method === "POST" ? { Origin: originalOrigin } : {}),
             ...(method === "POST" && options.contentType
               ? { "Content-Type": options.contentType }

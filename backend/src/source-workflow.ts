@@ -13,7 +13,7 @@ import { AppError } from "./errors";
 import { scrapingSchema } from "../../shared/src/scraping";
 import { startEventStream } from "./event-stream";
 import { reportProgress } from "./progress";
-import { JournalAccessService, journalDomain } from "./journal-access";
+import { JournalAccessService, journalAccessVersion } from "./journal-access";
 
 const PREVIEW_TTL_SECONDS = 1800;
 const previewKey = (userId: string, sourceId: string, id: string) =>
@@ -26,9 +26,9 @@ export function sourceWorkflowRouter(
   scraping: ScrapingService,
   articleContent: ArticleContentService,
   summary: SummaryProvider,
+  journals = new JournalAccessService(db, articleContent),
 ) {
   const router = Router();
-  const journals = new JournalAccessService(db, articleContent);
   router.use(requireAuth);
   async function ownedSource(userId: string, id: string) {
     const source = await db.source.findFirst({ where: { id, userId } });
@@ -104,14 +104,26 @@ export function sourceWorkflowRouter(
         await journals.assertAccessible(userId, article.externalUrl);
       }
       report(stage, "running", `Téléchargement de la page complète : ${article.title}`);
-      const { content, url } = await articleContent.fetchWithUrl(
-        preview.journals ? article.externalUrl! : article.url,
-        (message) => report("content", "running", message),
-        preview.journals ? null : source.type === "RSS" ? source.articleLinkSelector : null,
-        preview.journals ? journalDomain(article.externalUrl!) : undefined,
-      );
+      const fetched = preview.journals
+        ? await journals.fetchArticle(userId, article.externalUrl!, (message) =>
+            report("content", "running", message),
+          )
+        : await articleContent.fetchWithUrl(
+            article.url,
+            (message) => report("content", "running", message),
+            source.type === "RSS" ? source.articleLinkSelector : null,
+          );
+      const { content, url } = fetched;
       report(stage, "completed", `Texte de l'article extrait (${content.length} caractères).`);
-      if (preview.journals) await journals.assertAccessible(userId, article.externalUrl!);
+      if (preview.journals) {
+        const access = await journals.assertAccessible(userId, article.externalUrl!);
+        if ("accessVersion" in fetched && journalAccessVersion(access) !== fetched.accessVersion)
+          throw new AppError(
+            409,
+            "L'accès au journal a changé. Relancez la récupération.",
+            "JOURNAL_ACCESS_CHANGED",
+          );
+      }
       stage = "ai";
       report(stage, "running", `Envoi à l'IA : ${article.title}`);
       const result = await summary.summarize({ title: article.title, content, url }, (message) =>

@@ -27,6 +27,12 @@ model JournalAccess {
   enabled Boolean @default(false)
   email String?
   encryptedPassword String?
+  loginUrl String?
+  emailSelector String?
+  passwordSelector String?
+  submitSelector String?
+  successSelector String?
+  articleContentSelector String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@unique([userId, domain])
@@ -76,6 +82,7 @@ model Article {
   contentFetchedAt DateTime?
   contentUrl String?
   contentLinkSelector String?
+  contentAccessVersion String?
   contentError String?
   description String?
   publishedAt DateTime?

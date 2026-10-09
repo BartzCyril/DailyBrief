@@ -24,12 +24,30 @@ const initial: JournalPreview[] = [
   },
 ];
 let bodies: Record<string, unknown>[];
+let testCalls = 0;
+let failConnection = false;
 beforeEach(() => {
   bodies = [];
+  testCalls = 0;
+  failConnection = false;
   let current = { ...initial[0]! };
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_url: string, options: RequestInit) => {
+    vi.fn(async (url: string, options: RequestInit) => {
+      if (url.endsWith("/test")) {
+        testCalls++;
+        return new Response(
+          JSON.stringify(
+            failConnection
+              ? { message: "Connexion refusée", code: "JOURNAL_LOGIN_FAILED" }
+              : {
+                  authenticated: true,
+                  message: "Connexion vérifiée. La session de test a été fermée.",
+                },
+          ),
+          { status: failConnection ? 422 : 200 },
+        );
+      }
       const body = JSON.parse(options.body as string);
       bodies.push(body);
       current = {
@@ -38,10 +56,73 @@ beforeEach(() => {
         ...(body.email ? { email: body.email } : {}),
         ...(body.password ? { hasCredentials: true } : {}),
         ...(body.clearCredentials ? { email: null, hasCredentials: false } : {}),
+        ...(body.loginConfig !== undefined
+          ? {
+              loginConfig: body.loginConfig as JournalPreview["loginConfig"],
+              authenticationSupported: Boolean(body.loginConfig),
+            }
+          : {}),
       };
       return new Response(JSON.stringify(current));
     }),
   );
+});
+test("saves form selectors, tests the saved login and distinguishes configuration from successful authentication", async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  await user.click(screen.getByRole("button", { name: "Activer www.lemonde.fr" }));
+  await user.click(screen.getAllByRole("button", { name: "Configurer l'accès" })[0]!);
+  await user.type(screen.getByLabelText("Email pour www.lemonde.fr"), "reader@example.com");
+  await user.type(screen.getByLabelText("Mot de passe", { exact: true }), "secret-for-test");
+  await user.type(
+    screen.getByLabelText("URL du formulaire de connexion"),
+    "https://secure.lemonde.fr/login",
+  );
+  for (const [label, value] of [
+    ["Sélecteur du champ email", "#email"],
+    ["Sélecteur du champ mot de passe", "#password"],
+    ["Sélecteur du bouton de connexion", "#submit"],
+    ["Sélecteur visible après connexion", ".account"],
+    ["Sélecteur du contenu intégral (facultatif)", ".full-article"],
+  ]) {
+    const field = screen.getByLabelText(label!);
+    await user.clear(field);
+    await user.type(field, value!);
+  }
+  await user.click(screen.getByRole("button", { name: "Enregistrer les identifiants" }));
+  expect(
+    await screen.findByText(/Formulaire configuré · connexion à vérifier/),
+  ).toBeInTheDocument();
+  expect(bodies.at(-1)?.loginConfig).toEqual({
+    loginUrl: "https://secure.lemonde.fr/login",
+    emailSelector: "#email",
+    passwordSelector: "#password",
+    submitSelector: "#submit",
+    successSelector: ".account",
+    articleContentSelector: ".full-article",
+  });
+  expect(screen.queryByDisplayValue("secret-for-test")).not.toBeInTheDocument();
+  const testButton = screen.getByRole("button", { name: "Tester la connexion" });
+  testButton.focus();
+  await user.keyboard("{Enter}");
+  expect(await screen.findByText(/Connexion vérifiée/)).toBeInTheDocument();
+  expect(testCalls).toBe(1);
+  failConnection = true;
+  await user.click(screen.getByRole("button", { name: "Tester la connexion" }));
+  expect(await screen.findByText("Connexion refusée")).toBeInTheDocument();
+  expect(screen.queryByText(/Connexion vérifiée/)).not.toBeInTheDocument();
+  await user.click(screen.getAllByRole("button", { name: "Configurer l'accès" })[0]!);
+  expect(screen.getByLabelText("URL du formulaire de connexion")).toHaveValue(
+    "https://secure.lemonde.fr/login",
+  );
+  expect(screen.getByLabelText("Sélecteur visible après connexion")).toHaveValue(".account");
+  expect(screen.getByRole("button", { name: "Tester la connexion" })).toBeDisabled();
+  expect(screen.getByLabelText(/Nouveau mot de passe/)).toHaveValue("");
+  await user.click(screen.getByRole("button", { name: "Annuler" }));
+  await user.click(screen.getByRole("button", { name: "Supprimer le formulaire" }));
+  await waitFor(() => expect(bodies.at(-1)).toEqual({ loginConfig: null }));
+  expect(screen.queryByRole("button", { name: "Tester la connexion" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Supprimer les identifiants" })).toBeInTheDocument();
 });
 function Harness() {
   const [journals, setJournals] = useState(initial);
@@ -74,7 +155,7 @@ test("renders counts, keyboard activation and credential editing with no passwor
   await user.type(screen.getByLabelText("Email pour www.lemonde.fr"), "reader@example.com");
   await user.type(screen.getByLabelText("Mot de passe"), "secret-for-test");
   await user.click(screen.getByRole("button", { name: "Enregistrer les identifiants" }));
-  expect(await screen.findByText(/connexion non prise en charge/)).toBeInTheDocument();
+  expect(await screen.findByText(/formulaire à configurer/)).toBeInTheDocument();
   expect(bodies.at(-1)).toMatchObject({ email: "reader@example.com", password: "secret-for-test" });
   expect(screen.queryByDisplayValue("secret-for-test")).not.toBeInTheDocument();
   await user.click(within(rows[1]!).getByRole("button", { name: "Configurer l'accès" }));
@@ -83,5 +164,5 @@ test("renders counts, keyboard activation and credential editing with no passwor
   await waitFor(() => expect(bodies.at(-1)).toMatchObject({ password: "" }));
   await user.click(screen.getByRole("button", { name: "Supprimer les identifiants" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({ clearCredentials: true }));
-  expect(screen.queryByText(/connexion non prise en charge/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/formulaire à configurer/)).not.toBeInTheDocument();
 });

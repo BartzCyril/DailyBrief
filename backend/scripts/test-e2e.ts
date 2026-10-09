@@ -6,6 +6,8 @@ import nodemailer from "nodemailer";
 import { chromium } from "playwright";
 import { createApp } from "../src/app";
 import { ArticleContentService } from "../src/article-content";
+import { JournalLoginBrowser } from "../src/journal-login";
+import { journalFixture, loginConfig, fullText } from "../tests/fixtures/journal-login";
 import { createDb } from "../src/db";
 import { createRedis } from "../src/redis";
 import { readConfig } from "../src/config";
@@ -38,7 +40,11 @@ const sender = new NewsletterEmailService(
   config,
   nodemailer.createTransport({ jsonTransport: true }),
 );
+const loginFixture = journalFixture();
 const app = createApp(db, redis, config, {
+  journalLogin: new JournalLoginBrowser((url, options) =>
+    loginFixture.fetch(url.replace("/full-article", "/article"), options),
+  ),
   articleContent: new ArticleContentService(async (url) => {
     articleRequests.push(url);
     if (url === "https://fixture.example/rss-article")
@@ -293,14 +299,43 @@ try {
   await page.getByLabel("Email pour publisher.example").fill("subscriber@example.test");
   await page.getByLabel("Mot de passe", { exact: true }).fill("test-only-journal-password");
   await page.getByRole("button", { name: "Enregistrer les identifiants" }).click();
-  await page.getByText(/connexion non prise en charge/).waitFor();
+  await page.getByText(/formulaire à configurer/).waitFor();
   assert.equal(await page.locator('input[type="password"]').count(), 0);
   await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).click();
   await page
-    .getByText(/La connexion automatique à ce journal n'est pas encore prise en charge/)
+    .getByText(/Configurez le formulaire et les sélecteurs de connexion/)
     .first()
     .waitFor();
   assert.equal(messages.length, 0);
+  await page.getByRole("button", { name: "Configurer l'accès" }).click();
+  await page.getByLabel("URL du formulaire de connexion").fill(loginConfig.loginUrl);
+  await page
+    .getByLabel("Sélecteur du champ email", { exact: true })
+    .fill(loginConfig.emailSelector);
+  await page
+    .getByLabel("Sélecteur du champ mot de passe", { exact: true })
+    .fill(loginConfig.passwordSelector);
+  await page
+    .getByLabel("Sélecteur du bouton de connexion", { exact: true })
+    .fill(loginConfig.submitSelector);
+  await page.getByLabel("Sélecteur visible après connexion").fill(loginConfig.successSelector);
+  await page
+    .getByLabel("Sélecteur du contenu intégral (facultatif)")
+    .fill(loginConfig.articleContentSelector!);
+  assert.equal(await page.getByLabel("Nouveau mot de passe (vide : conserver)").inputValue(), "");
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "Journal login settings must fit the mobile viewport",
+  );
+  await page.screenshot({ path: "/tmp/dailybrief-journal-login-mobile.png", fullPage: true });
+  await page.getByRole("button", { name: "Enregistrer les identifiants" }).click();
+  await page.getByText("Formulaire configuré · connexion à vérifier", { exact: true }).waitFor();
+  const testConnection = page.getByRole("button", { name: "Tester la connexion" });
+  await testConnection.focus();
+  await page.keyboard.press("Enter");
+  await page.getByText(/Connexion vérifiée. La session de test a été fermée/).waitFor();
+  assert.equal(messages.length, 0, "A connection test must not send email");
+  assert.equal(await page.locator('input[type="password"]').count(), 0);
   await page.getByRole("button", { name: "Supprimer les identifiants" }).click();
   await page.getByText("Non configuré", { exact: true }).waitFor();
   await page.screenshot({ path: "/tmp/dailybrief-journals-mobile.png", fullPage: true });
@@ -377,8 +412,39 @@ try {
     await db.article.findMany({ where: { userId: user.id }, orderBy: { id: "asc" } }),
     articlesBeforeTest,
   );
+  await page.getByRole("button", { name: "Configurer l'accès" }).click();
+  await page.getByLabel("Email pour publisher.example").fill("subscriber@example.test");
+  await page.getByLabel("Mot de passe", { exact: true }).fill("test-only-journal-password");
+  assert.equal(
+    await page.getByLabel("URL du formulaire de connexion").inputValue(),
+    loginConfig.loginUrl,
+  );
+  await page.getByRole("button", { name: "Enregistrer les identifiants" }).click();
+  await page.getByText("Formulaire configuré · connexion à vérifier", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Refaire le résumé avec l'IA" }).click();
   await page.getByRole("button", { name: "Refaire le résumé avec l'IA" }).waitFor();
+  assert(
+    (await page.getByRole("region", { name: "Résumé IA de Article RSS" }).innerText()).includes(
+      fullText.trim(),
+    ),
+  );
+  assert(
+    loginFixture.requests
+      .find((request) => request.url.endsWith("/article"))
+      ?.options?.cookie?.includes("sid=own-session"),
+  );
+  assert(
+    !(await page
+      .locator("main")
+      .innerText()
+      .then((text) => text.includes("test-only-journal-password"))),
+  );
+  assert.equal(messages.length, 1, "Authenticated workflow testing must not send email");
+  assert.deepEqual(
+    await db.article.findMany({ where: { userId: user.id }, orderBy: { id: "asc" } }),
+    articlesBeforeTest,
+  );
+
   await page.setViewportSize({ width: 390, height: 844 });
   assert(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -436,7 +502,7 @@ try {
   await page.waitForURL("**/login");
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, RSS notice-link creation and editing, publisher article extraction and links, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: register, login, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();

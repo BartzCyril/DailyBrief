@@ -1,11 +1,24 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import type { ArticlePreview, JournalAccess, JournalPreview } from "@dailybrief/shared";
+import type {
+  ArticlePreview,
+  JournalAccess,
+  JournalPreview,
+  JournalLoginConfig,
+} from "@dailybrief/shared";
 import type { JournalAccess as StoredAccess } from "@prisma/client";
 import { Prisma } from "@prisma/client";
 import type { Db } from "./db";
-import type { ArticleContentService } from "./article-content";
+import {
+  type ArticleContentService,
+  validateArticleLinkSelector,
+  extractArticleContent,
+  hasSubscriptionMetadata,
+} from "./article-content";
+import { JournalLoginBrowser } from "./journal-login";
+import { isIP } from "node:net";
+import { isPublicAddress } from "./network";
 import { requireAuth } from "./auth";
 import { AppError } from "./errors";
 
@@ -62,13 +75,37 @@ export class JournalSecretCipher {
   }
 }
 
+export function journalLoginConfig(row: StoredAccess): JournalLoginConfig | null {
+  if (
+    !row.loginUrl ||
+    !row.emailSelector ||
+    !row.passwordSelector ||
+    !row.submitSelector ||
+    !row.successSelector
+  )
+    return null;
+  return {
+    loginUrl: row.loginUrl,
+    emailSelector: row.emailSelector,
+    passwordSelector: row.passwordSelector,
+    submitSelector: row.submitSelector,
+    successSelector: row.successSelector,
+    articleContentSelector: row.articleContentSelector,
+  };
+}
+export function journalAccessVersion(row: StoredAccess): string {
+  return createHash("sha256")
+    .update(JSON.stringify([row.domain, row.email, row.encryptedPassword, journalLoginConfig(row)]))
+    .digest("hex");
+}
 export function publicJournal(row: StoredAccess): JournalAccess {
   return {
     domain: row.domain,
     enabled: row.enabled,
     email: row.email,
     hasCredentials: Boolean(row.email && row.encryptedPassword),
-    authenticationSupported: false,
+    authenticationSupported: Boolean(journalLoginConfig(row)),
+    loginConfig: journalLoginConfig(row),
   };
 }
 
@@ -76,6 +113,8 @@ export class JournalAccessService {
   constructor(
     private db: Db,
     private content: ArticleContentService,
+    private cipher = new JournalSecretCipher(process.env.JOURNAL_ENCRYPTION_KEY),
+    private browser = new JournalLoginBrowser(),
   ) {}
   async ensure(userId: string, domain: string) {
     const where = { userId_domain: { userId, domain } };
@@ -131,13 +170,120 @@ export class JournalAccessService {
     const access = await this.ensure(userId, journalDomain(url));
     if (!access.enabled)
       throw new AppError(409, "Article ignoré : ce journal est désactivé.", "JOURNAL_DISABLED");
-    if (access.encryptedPassword)
+    if (access.encryptedPassword && !journalLoginConfig(access))
       throw new AppError(
         422,
-        "La connexion automatique à ce journal n'est pas encore prise en charge. Aucun contenu abonné ne sera résumé.",
+        "Configurez le formulaire et les sélecteurs de connexion de ce journal avant de récupérer un article avec ces identifiants.",
         "JOURNAL_AUTH_UNSUPPORTED",
       );
     return access;
+  }
+  private login(access: StoredAccess) {
+    const config = journalLoginConfig(access);
+    if (!config || !access.email || !access.encryptedPassword)
+      throw new AppError(
+        422,
+        "Configurez le formulaire, l'email et le mot de passe avant de tester la connexion.",
+        "JOURNAL_LOGIN_INCOMPLETE",
+      );
+    return {
+      config,
+      email: access.email,
+      password: this.cipher.decrypt(access.encryptedPassword, access.userId, access.domain),
+    };
+  }
+  async testConnection(userId: string, domain: string) {
+    const access = await this.assertAccessible(userId, `https://${domain}`);
+    await this.browser.run(domain, this.login(access));
+    await this.checkUnchanged(userId, `https://${domain}`, access);
+    return {
+      authenticated: true,
+      message:
+        "Connexion vérifiée. La session de test a été fermée ; les prochaines lectures se connecteront à nouveau.",
+    };
+  }
+  private async checkUnchanged(userId: string, url: string, before: StoredAccess) {
+    const after = await this.assertAccessible(userId, url);
+    if (journalAccessVersion(before) !== journalAccessVersion(after))
+      throw new AppError(
+        409,
+        "L'accès au journal a changé pendant la récupération. Relancez le test.",
+        "JOURNAL_ACCESS_CHANGED",
+      );
+  }
+  async fetchArticle(userId: string, url: string, observer?: (message: string) => void) {
+    const access = await this.assertAccessible(userId, url);
+    let result: { content: string; url: string };
+    if (access.encryptedPassword) {
+      const login = this.login(access);
+      const rendered = await this.browser.run(access.domain, login, url, observer);
+      if (hasSubscriptionMetadata(rendered.html) && !login.config.articleContentSelector)
+        throw new AppError(
+          422,
+          "Cet article est réservé aux abonnés. Configurez le sélecteur du contenu intégral pour vérifier la zone à lire après connexion.",
+          "JOURNAL_FULL_CONTENT_UNVERIFIED",
+        );
+      const content = extractArticleContent(rendered.contentHtml ?? rendered.html, rendered.url);
+      if (content.includes(login.password))
+        throw new AppError(
+          422,
+          "La réponse du journal ne peut pas être utilisée comme contenu d'article.",
+          "JOURNAL_CONTENT_INVALID",
+        );
+      result = { content, url: rendered.url };
+    } else result = await this.content.fetchWithUrl(url, observer, null, access.domain);
+    await this.checkUnchanged(userId, url, access);
+    return { ...result, accessVersion: journalAccessVersion(access) };
+  }
+}
+
+const selector = z.string().trim().min(1).max(200);
+const loginConfigSchema = z
+  .object({
+    loginUrl: z.url().max(2048),
+    emailSelector: selector,
+    passwordSelector: selector,
+    submitSelector: selector,
+    successSelector: selector,
+    articleContentSelector: selector.nullish(),
+  })
+  .strict();
+function validateLoginConfig(config: JournalLoginConfig) {
+  const url = new URL(config.loginUrl);
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.port ||
+    host === "localhost" ||
+    host.endsWith(".local") ||
+    (isIP(host) && !isPublicAddress(host)) ||
+    [...url.searchParams.keys()].some((name) =>
+      /^(password|passwd|access_token|id_token|refresh_token|client_secret|code)$/i.test(name),
+    )
+  )
+    throw new AppError(
+      400,
+      "Utilisez une URL de formulaire HTTPS publique, sans identifiants ni jeton de session.",
+      "JOURNAL_LOGIN_URL_INVALID",
+    );
+  for (const value of [
+    config.emailSelector,
+    config.passwordSelector,
+    config.submitSelector,
+    config.successSelector,
+    config.articleContentSelector,
+  ]) {
+    try {
+      validateArticleLinkSelector(value);
+    } catch {
+      throw new AppError(
+        400,
+        "Un sélecteur de connexion est invalide. Utilisez des sélecteurs CSS.",
+        "JOURNAL_LOGIN_SELECTOR_INVALID",
+      );
+    }
   }
 }
 
@@ -147,17 +293,23 @@ const patchSchema = z
     email: z.email().max(320).optional(),
     password: z.string().max(4096).optional(),
     clearCredentials: z.boolean().optional(),
+    loginConfig: loginConfigSchema.nullable().optional(),
   })
   .strict()
   .refine(
     (body) => !(body.clearCredentials && (body.email !== undefined || body.password !== undefined)),
   );
 
-export function journalAccessRouter(db: Db, cipher: JournalSecretCipher) {
+export function journalAccessRouter(
+  db: Db,
+  cipher: JournalSecretCipher,
+  service?: JournalAccessService,
+) {
   const router = Router();
   router.use(requireAuth);
   router.patch("/:domain", async (req, res) => {
     const body = patchSchema.parse(req.body);
+    if (body.loginConfig) validateLoginConfig(body.loginConfig);
     const userId = req.session.userId!;
     const domain = String(req.params.domain);
     if (!/^[a-z0-9.-]+$/.test(domain) || journalDomain(`https://${domain}`) !== domain)
@@ -165,7 +317,10 @@ export function journalAccessRouter(db: Db, cipher: JournalSecretCipher) {
     const where = { userId_domain: { userId, domain } };
     const existing = await db.journalAccess.findUnique({ where });
     if (!existing) throw new AppError(404, "Journal introuvable.", "JOURNAL_NOT_FOUND");
-    if ((body.email !== undefined || body.password) && !(body.enabled ?? existing.enabled))
+    if (
+      (body.email !== undefined || body.password || body.loginConfig) &&
+      !(body.enabled ?? existing.enabled)
+    )
       throw new AppError(
         409,
         "Activez le journal avant de configurer ses identifiants.",
@@ -192,6 +347,21 @@ export function journalAccessRouter(db: Db, cipher: JournalSecretCipher) {
       where,
       data: {
         ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+        ...(body.loginConfig !== undefined
+          ? body.loginConfig
+            ? {
+                ...body.loginConfig,
+                articleContentSelector: body.loginConfig.articleContentSelector ?? null,
+              }
+            : {
+                loginUrl: null,
+                emailSelector: null,
+                passwordSelector: null,
+                submitSelector: null,
+                successSelector: null,
+                articleContentSelector: null,
+              }
+          : {}),
         ...(body.clearCredentials
           ? { email: null, encryptedPassword: null }
           : {
@@ -203,6 +373,23 @@ export function journalAccessRouter(db: Db, cipher: JournalSecretCipher) {
       },
     });
     res.json(publicJournal(row));
+  });
+  router.post("/:domain/test", async (req, res) => {
+    z.object({})
+      .strict()
+      .parse(req.body ?? {});
+    const domain = String(req.params.domain);
+    const access = await db.journalAccess.findUnique({
+      where: { userId_domain: { userId: req.session.userId!, domain } },
+    });
+    if (!access) throw new AppError(404, "Journal introuvable.", "JOURNAL_NOT_FOUND");
+    if (!service)
+      throw new AppError(
+        503,
+        "Le test de connexion n'est pas disponible.",
+        "JOURNAL_LOGIN_UNAVAILABLE",
+      );
+    res.json(await service.testConnection(req.session.userId!, domain));
   });
   return router;
 }

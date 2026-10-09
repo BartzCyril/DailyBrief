@@ -17,7 +17,7 @@ import { AppError } from "./errors";
 import type { CollectionFailure, CollectionStage, RunResult } from "@dailybrief/shared";
 import { reportProgress, type ProgressObserver } from "./progress";
 import { ArticleContentService } from "./article-content";
-import { JournalAccessService, journalDomain } from "./journal-access";
+import { JournalAccessService, journalAccessVersion } from "./journal-access";
 export type DailyBriefRunResult = RunResult;
 
 function failureFor(error: unknown, stage: CollectionStage): CollectionFailure {
@@ -43,6 +43,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
     private summary: SummaryProvider,
     private email: NewsletterSender,
     private articleContent = new ArticleContentService(),
+    private journals = new JournalAccessService(db, articleContent),
   ) {}
   private async persist(userId: string, article: CollectedArticle): Promise<boolean> {
     const identity = articleIdentity(article);
@@ -181,6 +182,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
           const articleLinkSelector =
             article.source.type === "RSS" ? article.source.articleLinkSelector : null;
           let externalUrl: string | undefined;
+          let accessVersion: string | null = null;
           if (articleLinkSelector) {
             try {
               const collected = articles.find(
@@ -193,9 +195,8 @@ export class DailyBriefPipelineService implements CollectionRunner {
               externalUrl =
                 collected?.externalUrl ??
                 (await this.articleContent.resolveLink(article.url, articleLinkSelector));
-              await new JournalAccessService(this.db, this.articleContent).assertAccessible(
-                userId,
-                externalUrl,
+              accessVersion = journalAccessVersion(
+                await this.journals.assertAccessible(userId, externalUrl),
               );
             } catch (error) {
               processed++;
@@ -213,6 +214,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
           if (
             !article.contentFetchedAt ||
             article.contentLinkSelector !== articleLinkSelector ||
+            (externalUrl && article.contentAccessVersion !== accessVersion) ||
             (externalUrl && article.contentUrl !== externalUrl)
           ) {
             report({
@@ -223,19 +225,22 @@ export class DailyBriefPipelineService implements CollectionRunner {
               total: pending.length,
             });
             try {
-              const { content, url } = await this.articleContent.fetchWithUrl(
-                externalUrl ?? article.url,
-                (message) =>
-                  report({
-                    stage: "content",
-                    status: "running",
-                    message: `${article.title} : ${message}`,
-                    completed: processed,
-                    total: pending.length,
-                  }),
-                externalUrl ? null : articleLinkSelector,
-                externalUrl ? journalDomain(externalUrl) : undefined,
-              );
+              const contentProgress = (message: string) =>
+                report({
+                  stage: "content",
+                  status: "running",
+                  message: `${article.title} : ${message}`,
+                  completed: processed,
+                  total: pending.length,
+                });
+              const fetched = externalUrl
+                ? await this.journals.fetchArticle(userId, externalUrl, contentProgress)
+                : await this.articleContent.fetchWithUrl(
+                    article.url,
+                    contentProgress,
+                    articleLinkSelector,
+                  );
+              const { content, url } = fetched;
               article = {
                 ...article,
                 ...(await this.db.article.update({
@@ -245,6 +250,8 @@ export class DailyBriefPipelineService implements CollectionRunner {
                     contentFetchedAt: new Date(),
                     contentUrl: url,
                     contentLinkSelector: articleLinkSelector,
+                    contentAccessVersion:
+                      "accessVersion" in fetched ? (fetched.accessVersion as string) : null,
                     contentError: null,
                     // Old summaries based on feed excerpts must be regenerated before delivery.
                     summaryTitle: null,
@@ -290,10 +297,13 @@ export class DailyBriefPipelineService implements CollectionRunner {
           }
           if (externalUrl) {
             try {
-              await new JournalAccessService(this.db, this.articleContent).assertAccessible(
-                userId,
-                externalUrl,
-              );
+              const currentAccess = await this.journals.assertAccessible(userId, externalUrl);
+              if (journalAccessVersion(currentAccess) !== article.contentAccessVersion)
+                throw new AppError(
+                  409,
+                  "L'accès au journal a changé. Relancez la récupération.",
+                  "JOURNAL_ACCESS_CHANGED",
+                );
             } catch (error) {
               processed++;
               const failure = failureFor(error, "content");
@@ -404,10 +414,13 @@ export class DailyBriefPipelineService implements CollectionRunner {
           )
             continue;
           try {
-            await new JournalAccessService(this.db, this.articleContent).assertAccessible(
-              userId,
-              article.contentUrl,
-            );
+            const currentAccess = await this.journals.assertAccessible(userId, article.contentUrl);
+            if (journalAccessVersion(currentAccess) !== article.contentAccessVersion)
+              throw new AppError(
+                409,
+                "L'accès au journal a changé. Relancez la récupération.",
+                "JOURNAL_ACCESS_CHANGED",
+              );
           } catch (error) {
             included.splice(index, 1);
             const failure = failureFor(error, "content");

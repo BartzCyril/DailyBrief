@@ -250,6 +250,7 @@ describe("journal inventory and credentials", () => {
       email: "reader@example.com",
       hasCredentials: true,
       authenticationSupported: false,
+      loginConfig: null,
     });
     expect(response.text).not.toContain("private-password");
     const where = { userId_domain: { userId, domain: "www.lemonde.fr" } };

@@ -7,14 +7,26 @@ import type {
   WorkflowSummaryEvent,
   CollectionProgress,
   JournalAccess,
+  JournalLoginConfig,
 } from "@dailybrief/shared";
 import { api, apiResponse, ApiError } from "@/lib/api";
 import { readEventStream } from "@/lib/event-stream";
 export const sourcesApi = {
   updateJournal: (
     domain: string,
-    body: { enabled?: boolean; email?: string; password?: string; clearCredentials?: boolean },
+    body: {
+      enabled?: boolean;
+      email?: string;
+      password?: string;
+      clearCredentials?: boolean;
+      loginConfig?: JournalLoginConfig | null;
+    },
   ) => api<JournalAccess>(`/journals/${encodeURIComponent(domain)}`, { method: "PATCH", body }),
+  testJournalConnection: (domain: string) =>
+    api<{ authenticated: boolean; message: string }>(
+      `/journals/${encodeURIComponent(domain)}/test`,
+      { method: "POST", body: {} },
+    ),
   list: () => api<Source[]>("/sources"),
   remove: (id: string) => api<void>(`/sources/${id}`, { method: "DELETE" }),
   testRss: (url: string, articleLinkSelector?: string | null) =>

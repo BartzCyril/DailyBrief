@@ -1,10 +1,31 @@
 import { useState } from "react";
-import type { JournalPreview } from "@dailybrief/shared";
+import type { JournalPreview, JournalLoginConfig } from "@dailybrief/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Feedback } from "@/components/Feedback";
 import { sourcesApi } from "./api";
 import { errorMessage } from "@/lib/api";
+
+function formDefaults(journal: JournalPreview): JournalLoginConfig {
+  return (
+    journal.loginConfig ?? {
+      loginUrl: "",
+      emailSelector: "input[type='email']",
+      passwordSelector: "input[type='password']",
+      submitSelector: "button[type='submit']",
+      successSelector: "",
+      articleContentSelector: "",
+    }
+  );
+}
+const formFields = [
+  ["loginUrl", "URL du formulaire de connexion", "https://journal.fr/connexion"],
+  ["emailSelector", "Sélecteur du champ email", "input[type='email']"],
+  ["passwordSelector", "Sélecteur du champ mot de passe", "input[type='password']"],
+  ["submitSelector", "Sélecteur du bouton de connexion", "button[type='submit']"],
+  ["successSelector", "Sélecteur visible après connexion", ".mon-compte"],
+  ["articleContentSelector", "Sélecteur du contenu intégral (facultatif)", ".article-body"],
+] as const;
 
 function JournalRow({
   journal,
@@ -18,18 +39,35 @@ function JournalRow({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [form, setForm] = useState<JournalLoginConfig>(() => formDefaults(journal));
+  const [connectionResult, setConnectionResult] = useState("");
   async function update(body: Parameters<typeof sourcesApi.updateJournal>[1]) {
     setBusy(true);
     setError("");
+    setConnectionResult("");
     try {
       const saved = await sourcesApi.updateJournal(journal.domain, body);
       onChange({ ...saved, count: journal.count });
       setEmail(saved.email ?? "");
       setPassword("");
       setEditing(false);
+      setForm(formDefaults({ ...saved, count: journal.count }));
     } catch (error) {
       setError(errorMessage(error));
       setPassword("");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function testConnection() {
+    setBusy(true);
+    setError("");
+    setConnectionResult("");
+    try {
+      const result = await sourcesApi.testJournalConnection(journal.domain);
+      if (result.authenticated) setConnectionResult(result.message);
+    } catch (error) {
+      setError(errorMessage(error));
     } finally {
       setBusy(false);
     }
@@ -63,8 +101,8 @@ function JournalRow({
         <p>
           {journal.hasCredentials
             ? journal.authenticationSupported
-              ? "Identifiants enregistrés"
-              : "Identifiants enregistrés · connexion non prise en charge"
+              ? "Formulaire configuré · connexion à vérifier"
+              : "Identifiants enregistrés · formulaire à configurer"
             : "Non configuré"}
         </p>
         <Button
@@ -73,11 +111,30 @@ function JournalRow({
           onClick={() => {
             setPassword("");
             setEmail(journal.email ?? "");
+            setForm(formDefaults(journal));
             setEditing(!editing);
           }}
         >
           Configurer l'accès
         </Button>
+        {journal.loginConfig && (
+          <>
+            <Button
+              variant="outline"
+              disabled={busy || editing || !journal.enabled || !journal.hasCredentials}
+              onClick={() => void testConnection()}
+            >
+              {busy ? "Connexion en cours…" : "Tester la connexion"}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void update({ loginConfig: null })}
+            >
+              Supprimer le formulaire
+            </Button>
+          </>
+        )}
         {journal.hasCredentials && (
           <Button
             variant="outline"
@@ -92,7 +149,18 @@ function JournalRow({
             className="space-y-2"
             onSubmit={(event) => {
               event.preventDefault();
-              void update({ email, password });
+              void update({
+                email,
+                password,
+                ...(form.loginUrl.trim()
+                  ? {
+                      loginConfig: {
+                        ...form,
+                        articleContentSelector: form.articleContentSelector?.trim() || null,
+                      },
+                    }
+                  : {}),
+              });
             }}
           >
             <label className="block">
@@ -105,6 +173,37 @@ function JournalRow({
                 onChange={(event) => setEmail(event.target.value)}
               />
             </label>
+            <fieldset className="space-y-2 rounded-md border p-2">
+              <legend className="px-1 font-medium">Connexion automatique</legend>
+              <p className="text-sm text-muted-foreground">
+                Renseignez une URL HTTPS et des sélecteurs CSS. Les identifiants seront envoyés au
+                site indiqué par cette URL. L'élément de réussite doit être absent avant connexion
+                et visible après, par exemple le menu du compte. CAPTCHA et double authentification
+                ne sont pas automatisés.
+              </p>
+              {formFields.map(([key, label, placeholder]) => (
+                <label key={key} className="block">
+                  {label}
+                  <Input
+                    type={key === "loginUrl" ? "url" : "text"}
+                    placeholder={placeholder}
+                    value={form[key] ?? ""}
+                    required={
+                      key !== "articleContentSelector" &&
+                      Boolean(form.loginUrl || journal.loginConfig)
+                    }
+                    autoComplete="off"
+                    onChange={(event) =>
+                      setForm((previous) => ({ ...previous, [key]: event.target.value }))
+                    }
+                  />
+                </label>
+              ))}
+              <p className="text-sm text-muted-foreground">
+                Pour un article réservé aux abonnés, indiquez la zone du contenu intégral afin
+                d'éviter de résumer un extrait public. Enregistrez avant de tester la connexion.
+              </p>
+            </fieldset>
             <label className="block">
               {journal.hasCredentials ? "Nouveau mot de passe (vide : conserver)" : "Mot de passe"}
               <Input
@@ -131,6 +230,7 @@ function JournalRow({
           </form>
         )}
         <Feedback message={error} error />
+        <Feedback message={connectionResult} />
       </td>
     </tr>
   );

@@ -20,7 +20,8 @@ import { DailyBriefPipelineService } from "./pipeline";
 import { NewsletterEmailService, type NewsletterSender } from "./email";
 import { ArticleContentService } from "./article-content";
 import { sourceWorkflowRouter } from "./source-workflow";
-import { journalAccessRouter, JournalSecretCipher } from "./journal-access";
+import { journalAccessRouter, JournalSecretCipher, JournalAccessService } from "./journal-access";
+import type { JournalLoginBrowser } from "./journal-login";
 export function createApp(
   db: Db,
   redis: Redis,
@@ -32,12 +33,18 @@ export function createApp(
     summary?: SummaryProvider;
     email?: NewsletterSender;
     articleContent?: ArticleContentService;
+    journalLogin?: JournalLoginBrowser;
+    journalAccess?: JournalAccessService;
   } = {},
 ) {
   const rss = services.rss ?? new RssService();
   const scraping = services.scraping ?? new ScrapingService();
   const summary = services.summary ?? new OllamaSummaryProvider(config);
   const articleContent = services.articleContent ?? new ArticleContentService();
+  const cipher = new JournalSecretCipher(config.JOURNAL_ENCRYPTION_KEY);
+  const journals =
+    services.journalAccess ??
+    new JournalAccessService(db, articleContent, cipher, services.journalLogin);
   const runner =
     services.runner ??
     new DailyBriefPipelineService(
@@ -47,6 +54,7 @@ export function createApp(
       summary,
       services.email ?? new NewsletterEmailService(config),
       articleContent,
+      journals,
     );
   const app = express();
   app.disable("x-powered-by");
@@ -84,11 +92,11 @@ export function createApp(
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
   app.use("/auth", authRouter(db, config));
   app.use("/sources", sourcesRouter(db, rss, scraping));
-  app.use("/sources", sourceWorkflowRouter(db, redis, rss, scraping, articleContent, summary));
   app.use(
-    "/journals",
-    journalAccessRouter(db, new JournalSecretCipher(config.JOURNAL_ENCRYPTION_KEY)),
+    "/sources",
+    sourceWorkflowRouter(db, redis, rss, scraping, articleContent, summary, journals),
   );
+  app.use("/journals", journalAccessRouter(db, cipher, journals));
   app.use(settingsRouter(db, runner));
   const aiClient = new OllamaClient(config);
   app.use("/ai", aiRouter(summary, aiClient));

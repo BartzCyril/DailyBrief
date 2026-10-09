@@ -8,10 +8,9 @@ import { ArticleBrowser } from "./article-browser";
 
 export const MAX_ARTICLE_CHARS = 200000;
 
-export function assertPublicArticle(html: string): void {
+export function hasSubscriptionMetadata(html: string): boolean {
   const $ = load(html);
-  let restricted =
-    $(".paywall, #paywall, [data-paywall], .article__restricted, .article--premium").length > 0;
+  let restricted = false;
   function check(value: unknown): boolean {
     if (Array.isArray(value)) return value.some(check);
     if (!value || typeof value !== "object") return false;
@@ -30,6 +29,13 @@ export function assertPublicArticle(html: string): void {
       /* Optional metadata. */
     }
   });
+  return restricted;
+}
+export function assertPublicArticle(html: string): void {
+  const $ = load(html);
+  const restricted =
+    hasSubscriptionMetadata(html) ||
+    $(".paywall, #paywall, [data-paywall], .article__restricted, .article--premium").length > 0;
   if (restricted)
     throw new AppError(
       422,

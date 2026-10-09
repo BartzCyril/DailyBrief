@@ -394,12 +394,14 @@ workflow n'écrit ni articles, ni résumés, ni newsletters et n'envoie aucun em
 Les RSS directs et le scraping ne passent pas par ces réglages.
 
 `PATCH /journals/:domain` nécessite la session du propriétaire et un domaine déjà
-recensé. Il accepte `enabled`, `email`, `password` ou `clearCredentials: true`.
+recensé. Il accepte `enabled`, `email`, `password`, `clearCredentials: true` et
+`loginConfig` (ou `null` pour supprimer seulement le formulaire).
 L'email et le mot de passe peuvent être configurés seulement après activation.
 Un mot de passe vide conserve le secret ; changer l'email d'un accès existant exige
 un nouveau mot de passe. La suppression explicite efface email et secret, même si
 le journal est désactivé. L'API ne retourne que le domaine, son statut, l'email,
-`hasCredentials` et `authenticationSupported`, jamais le secret chiffré ou en clair.
+`hasCredentials`, `authenticationSupported` et la configuration du formulaire,
+jamais le secret chiffré ou en clair. La configuration ne prouve pas une connexion réussie.
 
 Le chiffrement serveur utilise AES-256-GCM, un nonce aléatoire et des données
 authentifiées liées à l'utilisateur et au domaine. Configurez une clé stable de
@@ -411,11 +413,42 @@ le recensement et l'accès public restent utilisables. Conservez la clé avec un
 sauvegarde protégée : la remplacer sans migration rend les secrets existants illisibles.
 Les mots de passe ne sont placés ni dans les logs, ni dans Redis, ni dans les prompts.
 
-**La connexion automatique n'est pas implémentée dans cette version.** Les
-identifiants sont enregistrés pour une évolution ultérieure ; aucun journal n'est
-présenté comme connecté. Un accès contenant un mot de passe retourne une erreur
-`JOURNAL_AUTH_UNSUPPORTED` avant l'extraction et l'IA. Pour lire les articles publics,
-activez le journal sans identifiants. Les pages déclarant un accès abonné via JSON-LD
-ou des marqueurs de paywall sont refusées ; cette détection ne garantit pas
-l'identification de toutes les protections propres aux sites. Aucune session de
-journal ni cookie authentifié persistant n'est créé.
+Le formulaire « Configurer l'accès » accepte une **URL HTTPS** de connexion et les
+sélecteurs CSS des champs email et mot de passe, du bouton de connexion et d'un
+élément visible après connexion (par exemple le menu du compte). Ce dernier doit
+être absent ou masqué avant connexion. Les sélecteurs doivent désigner un seul
+élément visible. Le champ de mot de passe doit être de type `password` ; les
+formulaires GET sont refusés afin de ne pas mettre le secret dans une URL.
+
+Un sélecteur facultatif désigne la zone du contenu intégral de l'article. Il est
+nécessaire pour les pages dont les métadonnées indiquent un accès réservé : la
+connexion au compte ne garantit pas que l'abonnement autorise la lecture. Un paywall
+visible, une session expirée ou une zone absente empêche l'extraction et l'IA.
+La détection générique ne garantit pas la reconnaissance de toutes les protections
+propres aux journaux ; choisissez précisément la zone du texte complet.
+
+« Tester la connexion » appelle `POST /journals/:domain/test` avec `{}`. L'endpoint
+est réservé au propriétaire, vérifie le marqueur de réussite et ferme la session de
+test sans lire d'article, modifier la collecte ou envoyer d'email. Son résultat est
+temporaire. Le workflow et le pipeline ouvrent chacun un nouveau contexte Chromium,
+se connectent puis lisent l'article **dans le même contexte et avec ses cookies**.
+Les cookies ne sont jamais enregistrés en base, dans Redis ou sur disque ; le
+contexte est fermé après chaque opération et isolé entre utilisateurs et journaux.
+
+Les identifiants sont envoyés uniquement par POST à l'origine HTTPS de l'URL de
+connexion configurée. Les navigations sont limitées à cette origine et à l'origine
+HTTPS du journal ; les autres redirections sont refusées. Un formulaire hébergé sur
+un sous-domaine ou un fournisseur externe peut donc être déclaré explicitement.
+Les requêtes gardent la validation des adresses publiques, l'épinglage DNS, les
+limites de taille et la vérification TLS. Les destinations supplémentaires, les
+CAPTCHA, la double authentification et les formulaires à plusieurs étapes ne sont
+pas automatisés. Aucun contournement de protection n'est tenté.
+
+Un accès ayant des identifiants mais aucun formulaire configuré reste refusé avec
+`JOURNAL_AUTH_UNSUPPORTED`. Un journal public activé sans identifiants conserve la
+lecture publique habituelle. Toute modification des identifiants ou du formulaire
+invalide le contenu et le résumé réutilisables des articles encore en attente, via
+`Article.contentAccessVersion`, sans modifier les newsletters déjà envoyées.
+Après mise à jour, exécutez `bun run db:generate`, `bun run db:migrate` puis
+redémarrez le backend. Aucune nouvelle variable d'environnement n'est nécessaire :
+conservez `JOURNAL_ENCRYPTION_KEY` et assurez-vous que Chromium est installé.
