@@ -62,6 +62,8 @@ describe("source workflow tests", () => {
         if (url.startsWith("http://127.")) return new ArticleContentService().fetch(url);
         if (followDocument && url === "https://example.com/one")
           return '<article><p>Notice intermédiaire</p><a class="primarydoc" href="https://publisher.example/document">Consulter le document</a></article>';
+        if (followDocument && url === "https://example.com/two")
+          return '<a class="primarydoc" href="mailto:invalid@example.com">Lien invalide</a>';
         if (needsBrowser)
           return "<script>window.location.href='/rendered';</script><noscript>JS required</noscript>";
         return `<article><h1>Article</h1><p>${fullText}</p></article>`;
@@ -370,6 +372,11 @@ describe("source workflow tests", () => {
     });
     const before = await db.article.findMany({ where: { userId } });
     const preview = await collect();
+    expect(preview.journals).toEqual([
+      expect.objectContaining({ domain: "publisher.example", count: 1, enabled: false }),
+    ]);
+    expect(events(await summarize(preview)).at(-1)).toMatchObject({ code: "JOURNAL_DISABLED" });
+    await agent.patch("/journals/publisher.example").send({ enabled: true }).expect(200);
     const received = events(await summarize(preview));
     expect(received.at(-1)).toMatchObject({
       type: "result",
@@ -378,10 +385,11 @@ describe("source workflow tests", () => {
         content: expect.stringContaining(fullText.trim()),
       },
     });
-    expect(
-      received.some((event) => event.progress?.message.includes("Lien vers le document trouvé")),
-    ).toBe(true);
-    expect(pageRequests).toEqual(["https://example.com/one", "https://publisher.example/document"]);
+    expect(pageRequests).toEqual([
+      "https://example.com/one",
+      "https://example.com/two",
+      "https://publisher.example/document",
+    ]);
     expect(summaryUrls).toEqual(["https://publisher.example/document"]);
     expect(await db.article.findMany({ where: { userId } })).toEqual(before);
     expect(emails).toBe(0);

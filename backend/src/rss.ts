@@ -35,7 +35,7 @@ export function articleDate(value: string): string | null {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
-export function parseRss(xml: string, url: string): SourcePreview {
+export function parseRss(xml: string, url: string, allItems = false): SourcePreview {
   const prepared = prepareFeedXml(xml);
   const root = record(
     new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false }).parse(
@@ -47,7 +47,7 @@ export function parseRss(xml: string, url: string): SourcePreview {
   if (!rss.channel && !root.feed)
     throw new AppError(422, "Ce document n'est pas un flux RSS ou Atom.", "INVALID_FEED");
   const articles: ArticlePreview[] = list(feed.item ?? feed.entry)
-    .slice(0, 500)
+    .slice(0, allItems ? undefined : 500)
     .map((item) => {
       const entry = record(item);
       const atomLinks = list(entry.link).map(record);
@@ -88,7 +88,7 @@ export function parseRss(xml: string, url: string): SourcePreview {
 }
 export class RssService {
   constructor(private fetchText: FetchText = fetchRemoteText) {}
-  async collect(url: string): Promise<SourcePreview> {
-    return parseRss(await this.fetchText(url), url);
+  async collect(url: string, allItems = false): Promise<SourcePreview> {
+    return parseRss(await this.fetchText(url), url, allItems);
   }
 }

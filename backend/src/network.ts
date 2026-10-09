@@ -60,6 +60,7 @@ export type RemotePageOptions = {
   cookie?: string;
   accept?: string;
   followRedirects?: boolean;
+  allowedHostname?: string;
 };
 export type FetchPage = (url: string, options?: RemotePageOptions) => Promise<RemotePage>;
 export const fetchRemotePage: FetchPage = async (value, options = {}) => {
@@ -68,6 +69,15 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
   let method = options.method ?? "GET";
   for (let redirect = 0; redirect <= 4; redirect++) {
     const target = await validateRemoteUrl(value);
+    if (
+      options.allowedHostname &&
+      target.url.hostname.toLowerCase().replace(/\.$/, "") !== options.allowedHostname
+    )
+      throw new AppError(
+        422,
+        "L'article redirige vers un autre journal. Relancez le recensement avant de configurer cet accès.",
+        "JOURNAL_REDIRECT_BLOCKED",
+      );
     originalOrigin ??= target.url.origin;
     if (method === "POST" && target.url.origin !== originalOrigin)
       throw new AppError(

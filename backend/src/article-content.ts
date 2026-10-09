@@ -8,6 +8,36 @@ import { ArticleBrowser } from "./article-browser";
 
 export const MAX_ARTICLE_CHARS = 200000;
 
+export function assertPublicArticle(html: string): void {
+  const $ = load(html);
+  let restricted =
+    $(".paywall, #paywall, [data-paywall], .article__restricted, .article--premium").length > 0;
+  function check(value: unknown): boolean {
+    if (Array.isArray(value)) return value.some(check);
+    if (!value || typeof value !== "object") return false;
+    const row = value as Record<string, unknown>;
+    return (
+      row.isAccessibleForFree === false ||
+      row.isAccessibleForFree === "False" ||
+      row.isAccessibleForFree === "false" ||
+      Object.values(row).some(check)
+    );
+  }
+  $('script[type="application/ld+json"]').each((_index, node) => {
+    try {
+      restricted ||= check(JSON.parse($(node).text()));
+    } catch {
+      /* Optional metadata. */
+    }
+  });
+  if (restricted)
+    throw new AppError(
+      422,
+      "Cet article est réservé aux abonnés. Une connexion prise en charge est nécessaire ; l'extrait public ne sera pas résumé.",
+      "JOURNAL_SUBSCRIPTION_REQUIRED",
+    );
+}
+
 // Drupal's paragraph-based articles split the introduction and body across fields.
 const PARAGRAPH_FIELDS =
   ".field--name-field-chapo, .field--name-field-intro-historique, .field--name-field-where-we-are-, .field--name-field-bloc-paragraphe, .field--name-field-corps-de-texte";
@@ -245,16 +275,30 @@ export class ArticleContentService {
   async fetch(url: string | null, observer?: (message: string) => void): Promise<string> {
     return (await this.fetchWithUrl(url, observer)).content;
   }
-  private async download(url: string) {
-    const page = await this.fetchPage(url);
+  private async download(url: string, allowedHostname?: string) {
+    const page = await this.fetchPage(url, allowedHostname ? { allowedHostname } : undefined);
     return typeof page === "string"
       ? { html: page, url }
       : { html: page.text, url: page.url ?? url };
+  }
+  async resolveLink(url: string | null, selector: string): Promise<string> {
+    if (!url)
+      throw new AppError(422, "Cet article n'a pas de lien de notice.", "ARTICLE_URL_MISSING");
+    validateArticleLinkSelector(selector);
+    let page = await this.download(url);
+    try {
+      return extractArticleLink(page.html, page.url, selector);
+    } catch (error) {
+      if (!(error instanceof AppError) || error.code !== "ARTICLE_LINK_NOT_FOUND") throw error;
+      page = await this.browser.render(page.url, selector);
+      return extractArticleLink(page.html, page.url, selector);
+    }
   }
   async fetchWithUrl(
     url: string | null,
     observer?: (message: string) => void,
     articleLinkSelector?: string | null,
+    allowedHostname?: string,
   ): Promise<{ content: string; url: string }> {
     if (!url)
       throw new AppError(
@@ -263,7 +307,7 @@ export class ArticleContentService {
         "ARTICLE_URL_MISSING",
       );
     validateArticleLinkSelector(articleLinkSelector);
-    let page = await this.download(url);
+    let page = await this.download(url, allowedHostname);
     if (articleLinkSelector) {
       observer?.(`Recherche du lien vers l'article sur la page intermédiaire : ${page.url}`);
       let target: string;
@@ -290,6 +334,7 @@ export class ArticleContentService {
       page = await this.download(target);
     }
     try {
+      if (allowedHostname) assertPublicArticle(page.html);
       return { content: extractArticleContent(page.html, page.url, observer), url: page.url };
     } catch (error) {
       if (
@@ -305,8 +350,9 @@ export class ArticleContentService {
         "Chargement de la page dans Chromium pour exécuter JavaScript et conserver les cookies du site.",
       );
       observer?.("Attente du chargement et de la stabilisation des sections de l'article.");
-      const rendered = await this.browser.render(page.url);
+      const rendered = await this.browser.render(page.url, undefined, allowedHostname);
       try {
+        if (allowedHostname) assertPublicArticle(rendered.html);
         return {
           content: extractArticleContent(rendered.html, rendered.url, observer),
           url: rendered.url,

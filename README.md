@@ -272,7 +272,7 @@ un curseur pointeur lorsqu'il est disponible.
 Dans la liste des sources, « Tester le workflow de A à Z » ouvre une liste
 fraîche des articles RSS ou scraping, y compris ceux déjà résumés ou livrés.
 Les sources désactivées peuvent aussi être testées. Tous les résultats du
-collecteur sont affichés : le RSS conserve sa limite de 500 entrées, tandis que
+collecteur sont affichés : le RSS direct conserve sa limite de 500 entrées, tandis que
 le scraping paginé parcourt la source jusqu'à une page vide ou répétée.
 « Faire le résumé avec l'IA » télécharge à nouveau la page
 de l'article, affiche les étapes en direct, puis son titre IA, son résumé,
@@ -353,7 +353,8 @@ un lien configuré et les destinations gardent la validation des adresses publiq
 Le champ `articleLinkSelector` est facultatif sur `POST /sources/rss/test`,
 `POST /sources` pour le type `RSS` et `PATCH /sources/:id`. Une valeur `null` le
 désactive. Tester ou enregistrer le flux vérifie le RSS et la syntaxe du sélecteur ;
-les pages des articles sont chargées lors du résumé dans le workflow ou la collecte.
+les notices sont chargées dès la récupération du workflow ou de la collecte pour
+recenser leurs liens externes ; les pages des journaux ne sont chargées qu'après activation.
 
 L'URL de la notice et le GUID restent utilisés pour identifier les doublons.
 L'URL réellement résumée est sauvegardée dans `Article.contentUrl` et utilisée
@@ -370,3 +371,51 @@ bun run db:generate
 bun run db:migrate
 bun run dev:backend
 ```
+
+### Journaux des RSS avec sélecteur
+
+« Tester le workflow de A à Z » résout les notices de tous les items du flux,
+y compris ceux déjà enregistrés ou livrés, avant tout appel à l'IA. Les items
+répétés (GUID, sinon URL de notice) sont comptés une seule fois. Le tableau affiche
+les hôtes externes et leurs comptes pour cet aperçu, par nombre décroissant puis
+par ordre alphabétique. Les notices en erreur restent affichées séparément ; elles
+ne suppriment pas les autres résultats. Le lien de lecture pointe vers le journal,
+et l'URL de notice reste conservée pour l'identité de l'article.
+
+La table `JournalAccess` conserve les réglages par utilisateur, avec une unicité
+`(userId, domain)`. Les nouveaux journaux sont désactivés. Leur activation et leurs
+identifiants persistent entre sources et aperçus. Un hôte est normalisé en minuscules,
+sans point terminal. **`lemonde.fr` et `www.lemonde.fr` restent distincts**, sans
+partage de statut ou de secret. Les redirections vers un autre hôte lors de la lecture
+sont refusées. Les journaux désactivés sont recensés mais exclus de l'extraction,
+de l'IA et de la newsletter, y compris pour les articles en attente déjà résumés.
+La collecte manuelle et programmée applique les mêmes règles. Le recensement du
+workflow n'écrit ni articles, ni résumés, ni newsletters et n'envoie aucun email.
+Les RSS directs et le scraping ne passent pas par ces réglages.
+
+`PATCH /journals/:domain` nécessite la session du propriétaire et un domaine déjà
+recensé. Il accepte `enabled`, `email`, `password` ou `clearCredentials: true`.
+L'email et le mot de passe peuvent être configurés seulement après activation.
+Un mot de passe vide conserve le secret ; changer l'email d'un accès existant exige
+un nouveau mot de passe. La suppression explicite efface email et secret, même si
+le journal est désactivé. L'API ne retourne que le domaine, son statut, l'email,
+`hasCredentials` et `authenticationSupported`, jamais le secret chiffré ou en clair.
+
+Le chiffrement serveur utilise AES-256-GCM, un nonce aléatoire et des données
+authentifiées liées à l'utilisateur et au domaine. Configurez une clé stable de
+32 octets en hexadécimal via **`JOURNAL_ENCRYPTION_KEY`**, hors de la base, dans le
+gestionnaire de secrets du déploiement. `bun run env:prepare` génère une clé pour
+le développement local et préserve une clé existante dans le fichier `.env` ignoré,
+avec permissions 0600. Sans clé, l'enregistrement des mots de passe est refusé ;
+le recensement et l'accès public restent utilisables. Conservez la clé avec une
+sauvegarde protégée : la remplacer sans migration rend les secrets existants illisibles.
+Les mots de passe ne sont placés ni dans les logs, ni dans Redis, ni dans les prompts.
+
+**La connexion automatique n'est pas implémentée dans cette version.** Les
+identifiants sont enregistrés pour une évolution ultérieure ; aucun journal n'est
+présenté comme connecté. Un accès contenant un mot de passe retourne une erreur
+`JOURNAL_AUTH_UNSUPPORTED` avant l'extraction et l'IA. Pour lire les articles publics,
+activez le journal sans identifiants. Les pages déclarant un accès abonné via JSON-LD
+ou des marqueurs de paywall sont refusées ; cette détection ne garantit pas
+l'identification de toutes les protections propres aux sites. Aucune session de
+journal ni cookie authentifié persistant n'est créé.

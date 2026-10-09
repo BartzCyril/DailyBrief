@@ -17,6 +17,7 @@ import { AppError } from "./errors";
 import type { CollectionFailure, CollectionStage, RunResult } from "@dailybrief/shared";
 import { reportProgress, type ProgressObserver } from "./progress";
 import { ArticleContentService } from "./article-content";
+import { JournalAccessService, journalDomain } from "./journal-access";
 export type DailyBriefRunResult = RunResult;
 
 function failureFor(error: unknown, stage: CollectionStage): CollectionFailure {
@@ -64,6 +65,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
           url: article.url,
           content: article.content,
           description: article.description,
+          contentUrl: article.externalUrl ?? null,
           publishedAt: article.publishedAt ? new Date(article.publishedAt) : null,
           ...identity,
         },
@@ -163,16 +165,56 @@ export class DailyBriefPipelineService implements CollectionRunner {
           },
           include: { source: true },
           orderBy: { createdAt: "asc" },
-          take: 100,
+          // Disabled selector journals must not fill the delivery batch and starve active ones.
+          take: (await this.db.source.count({
+            where: { userId, enabled: true, type: "RSS", articleLinkSelector: { not: null } },
+          }))
+            ? undefined
+            : 100,
         });
         const included: typeof pending = [];
         let summaryFailure: CollectionFailure | undefined;
         let processed = 0;
+        let eligible = 0;
         for (let article of pending) {
           stage = "content";
           const articleLinkSelector =
             article.source.type === "RSS" ? article.source.articleLinkSelector : null;
-          if (!article.contentFetchedAt || article.contentLinkSelector !== articleLinkSelector) {
+          let externalUrl: string | undefined;
+          if (articleLinkSelector) {
+            try {
+              const collected = articles.find(
+                (item) =>
+                  item.sourceId === article.sourceId &&
+                  (article.guid ? item.guid === article.guid : item.url === article.url),
+              );
+              if (collected?.resolutionError)
+                throw new AppError(422, collected.resolutionError, "ARTICLE_LINK_UNRESOLVED");
+              externalUrl =
+                collected?.externalUrl ??
+                (await this.articleContent.resolveLink(article.url, articleLinkSelector));
+              await new JournalAccessService(this.db, this.articleContent).assertAccessible(
+                userId,
+                externalUrl,
+              );
+            } catch (error) {
+              processed++;
+              const failure = failureFor(error, "content");
+              if (failure.code !== "JOURNAL_DISABLED") summaryFailure ??= failure;
+              report({
+                stage: "content",
+                status: failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed",
+                message: `${article.title} : ${failure.message}`,
+              });
+              continue;
+            }
+          }
+          if (++eligible > 100) break;
+          if (
+            !article.contentFetchedAt ||
+            article.contentLinkSelector !== articleLinkSelector ||
+            (externalUrl && article.contentUrl !== externalUrl)
+          ) {
             report({
               stage,
               status: "running",
@@ -182,7 +224,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
             });
             try {
               const { content, url } = await this.articleContent.fetchWithUrl(
-                article.url,
+                externalUrl ?? article.url,
                 (message) =>
                   report({
                     stage: "content",
@@ -191,7 +233,8 @@ export class DailyBriefPipelineService implements CollectionRunner {
                     completed: processed,
                     total: pending.length,
                   }),
-                articleLinkSelector,
+                externalUrl ? null : articleLinkSelector,
+                externalUrl ? journalDomain(externalUrl) : undefined,
               );
               article = {
                 ...article,
@@ -244,6 +287,24 @@ export class DailyBriefPipelineService implements CollectionRunner {
               completed: processed,
               total: pending.length,
             });
+          }
+          if (externalUrl) {
+            try {
+              await new JournalAccessService(this.db, this.articleContent).assertAccessible(
+                userId,
+                externalUrl,
+              );
+            } catch (error) {
+              processed++;
+              const failure = failureFor(error, "content");
+              if (failure.code !== "JOURNAL_DISABLED") summaryFailure ??= failure;
+              report({
+                stage: "content",
+                status: failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed",
+                message: `${article.title} : ${failure.message}`,
+              });
+              continue;
+            }
           }
           stage = "ai";
           if (!article.summary || !article.summarizedAt) {
@@ -333,8 +394,33 @@ export class DailyBriefPipelineService implements CollectionRunner {
           processed++;
           included.push(article);
         }
+        // Recheck persisted settings after potentially long downloads/AI calls.
+        for (let index = included.length - 1; index >= 0; index--) {
+          const article = included[index]!;
+          if (
+            article.source.type !== "RSS" ||
+            !article.source.articleLinkSelector ||
+            !article.contentUrl
+          )
+            continue;
+          try {
+            await new JournalAccessService(this.db, this.articleContent).assertAccessible(
+              userId,
+              article.contentUrl,
+            );
+          } catch (error) {
+            included.splice(index, 1);
+            const failure = failureFor(error, "content");
+            if (failure.code !== "JOURNAL_DISABLED") summaryFailure ??= failure;
+            report({
+              stage: "newsletter",
+              status: "skipped",
+              message: `${article.title} : ${failure.message}`,
+            });
+          }
+        }
         if (!included.length) {
-          result.status = pending.length || result.sourcesFailed ? "FAILED" : "NO_NEW_ARTICLES";
+          result.status = summaryFailure || result.sourcesFailed ? "FAILED" : "NO_NEW_ARTICLES";
           if (result.status === "FAILED") {
             result.failure = summaryFailure ?? {
               stage: "source",

@@ -13,6 +13,7 @@ import { AppError } from "./errors";
 import { scrapingSchema } from "../../shared/src/scraping";
 import { startEventStream } from "./event-stream";
 import { reportProgress } from "./progress";
+import { JournalAccessService, journalDomain } from "./journal-access";
 
 const PREVIEW_TTL_SECONDS = 1800;
 const previewKey = (userId: string, sourceId: string, id: string) =>
@@ -27,6 +28,7 @@ export function sourceWorkflowRouter(
   summary: SummaryProvider,
 ) {
   const router = Router();
+  const journals = new JournalAccessService(db, articleContent);
   router.use(requireAuth);
   async function ownedSource(userId: string, id: string) {
     const source = await db.source.findFirst({ where: { id, userId } });
@@ -41,12 +43,17 @@ export function sourceWorkflowRouter(
     const source = await ownedSource(userId, String(req.params.sourceId));
     const collected =
       source.type === "RSS"
-        ? await rss.collect(source.url)
+        ? await rss.collect(source.url, Boolean(source.articleLinkSelector))
         : await scraping.collect(source.url, scrapingSchema.parse(source.scrapingConfig));
+    const inventory =
+      source.type === "RSS" && source.articleLinkSelector
+        ? await journals.inventory(userId, collected.articles, source.articleLinkSelector)
+        : null;
     const preview: WorkflowPreview = {
       id: randomUUID(),
       source: { id: source.id, url: source.url, type: source.type },
-      articles: collected.articles,
+      articles: inventory?.articles ?? collected.articles,
+      ...(inventory ? { journals: inventory.journals } : {}),
       warnings: collected.warnings,
       expiresAt: new Date(Date.now() + PREVIEW_TTL_SECONDS * 1000).toISOString(),
     };
@@ -87,13 +94,24 @@ export function sourceWorkflowRouter(
       });
     let stage: "content" | "ai" = "content";
     try {
+      if (preview.journals) {
+        if (!article.externalUrl)
+          throw new AppError(
+            422,
+            article.resolutionError ?? "Lien non résolu.",
+            "ARTICLE_LINK_UNRESOLVED",
+          );
+        await journals.assertAccessible(userId, article.externalUrl);
+      }
       report(stage, "running", `Téléchargement de la page complète : ${article.title}`);
       const { content, url } = await articleContent.fetchWithUrl(
-        article.url,
+        preview.journals ? article.externalUrl! : article.url,
         (message) => report("content", "running", message),
-        source.type === "RSS" ? source.articleLinkSelector : null,
+        preview.journals ? null : source.type === "RSS" ? source.articleLinkSelector : null,
+        preview.journals ? journalDomain(article.externalUrl!) : undefined,
       );
       report(stage, "completed", `Texte de l'article extrait (${content.length} caractères).`);
+      if (preview.journals) await journals.assertAccessible(userId, article.externalUrl!);
       stage = "ai";
       report(stage, "running", `Envoi à l'IA : ${article.title}`);
       const result = await summary.summarize({ title: article.title, content, url }, (message) =>

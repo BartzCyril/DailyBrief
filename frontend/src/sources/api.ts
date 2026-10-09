@@ -6,10 +6,15 @@ import type {
   WorkflowSummary,
   WorkflowSummaryEvent,
   CollectionProgress,
+  JournalAccess,
 } from "@dailybrief/shared";
 import { api, apiResponse, ApiError } from "@/lib/api";
 import { readEventStream } from "@/lib/event-stream";
 export const sourcesApi = {
+  updateJournal: (
+    domain: string,
+    body: { enabled?: boolean; email?: string; password?: string; clearCredentials?: boolean },
+  ) => api<JournalAccess>(`/journals/${encodeURIComponent(domain)}`, { method: "PATCH", body }),
   list: () => api<Source[]>("/sources"),
   remove: (id: string) => api<void>(`/sources/${id}`, { method: "DELETE" }),
   testRss: (url: string, articleLinkSelector?: string | null) =>

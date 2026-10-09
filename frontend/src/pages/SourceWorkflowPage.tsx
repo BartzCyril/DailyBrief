@@ -7,6 +7,7 @@ import { Feedback } from "@/components/Feedback";
 import { CollectionProgress as ProgressLog } from "@/dashboard/CollectionProgress";
 import { sourcesApi, summarizeWorkflowArticle, validHttpUrl } from "@/sources/api";
 import { errorMessage } from "@/lib/api";
+import { JournalTable } from "@/sources/JournalTable";
 
 type ArticleTest = {
   busy: boolean;
@@ -137,9 +138,43 @@ export function SourceWorkflowPage() {
           {preview && !preview.articles.length && <p>Aucun article trouvé dans cette source.</p>}
         </CardContent>
       </Card>
+      {preview?.journals && (
+        <JournalTable
+          journals={preview.journals}
+          onChange={(journal) =>
+            setPreview((previous) =>
+              previous
+                ? {
+                    ...previous,
+                    journals: previous.journals?.map((item) =>
+                      item.domain === journal.domain ? journal : item,
+                    ),
+                  }
+                : previous,
+            )
+          }
+        />
+      )}
+      {preview?.articles.some((article) => article.resolutionError) && (
+        <section aria-label="Erreurs de résolution" className="rounded-md border p-4">
+          <h2 className="font-semibold">Notices non résolues</h2>
+          <ul className="list-disc pl-5">
+            {preview.articles
+              .filter((article) => article.resolutionError)
+              .map((article, index) => (
+                <li key={index}>
+                  {article.title} : {article.resolutionError}
+                </li>
+              ))}
+          </ul>
+        </section>
+      )}
       {preview?.articles.map((article, index) => {
         const test = tests[index];
-        const articleUrl = test?.result?.url ?? article.url;
+        const articleUrl =
+          test?.result?.url ?? (preview.journals ? article.externalUrl : article.url);
+        const journal = preview.journals?.find((item) => item.domain === article.journalDomain);
+        const ignored = Boolean(preview.journals && (!article.externalUrl || !journal?.enabled));
         return (
           <Card key={`${preview.id}-${index}`}>
             <CardHeader>
@@ -159,7 +194,16 @@ export function SourceWorkflowPage() {
                   Lire l'article original
                 </a>
               )}
-              <Button disabled={test?.busy || !article.url} onClick={() => void summarize(index)}>
+              {ignored && (
+                <p className="text-sm">
+                  Article ignoré :{" "}
+                  {article.resolutionError ? "lien non résolu" : "journal désactivé"}.
+                </p>
+              )}
+              <Button
+                disabled={test?.busy || !article.url || ignored}
+                onClick={() => void summarize(index)}
+              >
                 {test?.busy
                   ? "Résumé en cours…"
                   : test?.result

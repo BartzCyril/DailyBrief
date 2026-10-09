@@ -5,6 +5,8 @@ import { ScrapingService } from "./scraping";
 import { scrapingSchema } from "../../shared/src/scraping";
 import { AppError } from "./errors";
 import { reportProgress, type ProgressObserver } from "./progress";
+import { ArticleContentService } from "./article-content";
+import { JournalAccessService } from "./journal-access";
 
 export type CollectedArticle = ArticlePreview & { sourceId: string };
 export type SourceResult = {
@@ -20,6 +22,7 @@ export class SourceCollector {
     private db: Db,
     private rss: RssService,
     private scraping: ScrapingService,
+    private articleContent = new ArticleContentService(),
   ) {}
   async collect(userId: string, observer?: ProgressObserver): Promise<SourceResult[]> {
     const sources = await this.db.source.findMany({
@@ -40,8 +43,28 @@ export class SourceCollector {
       try {
         const preview =
           source.type === "RSS"
-            ? await this.rss.collect(source.url)
+            ? await this.rss.collect(source.url, Boolean(source.articleLinkSelector))
             : await this.scraping.collect(source.url, scrapingSchema.parse(source.scrapingConfig));
+        if (source.type === "RSS" && source.articleLinkSelector) {
+          const inventory = await new JournalAccessService(this.db, this.articleContent).inventory(
+            userId,
+            preview.articles,
+            source.articleLinkSelector,
+          );
+          preview.articles = inventory.articles;
+          for (const journal of inventory.journals)
+            reportProgress(observer, {
+              stage: "source",
+              status: "completed",
+              message: `${journal.domain} : ${journal.count} articles (${journal.enabled ? "activé" : "désactivé"}).`,
+            });
+          for (const article of inventory.articles.filter((item) => item.resolutionError))
+            reportProgress(observer, {
+              stage: "source",
+              status: "failed",
+              message: `${article.title} : ${article.resolutionError}`,
+            });
+        }
         results.push({
           sourceId: source.id,
           success: true,

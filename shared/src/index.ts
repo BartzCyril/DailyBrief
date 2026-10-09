@@ -6,6 +6,9 @@ export type ArticlePreview = {
   description: string | null;
   content?: string | null;
   guid?: string | null;
+  externalUrl?: string | null;
+  journalDomain?: string;
+  resolutionError?: string;
 };
 export type Source = {
   id: string;
@@ -88,7 +91,16 @@ export type WorkflowPreview = {
   articles: ArticlePreview[];
   warnings?: string[];
   expiresAt: string;
+  journals?: JournalPreview[];
 };
+export type JournalAccess = {
+  domain: string;
+  enabled: boolean;
+  email: string | null;
+  hasCredentials: boolean;
+  authenticationSupported: boolean;
+};
+export type JournalPreview = JournalAccess & { count: number };
 export type WorkflowSummary = {
   content: string;
   url?: string;

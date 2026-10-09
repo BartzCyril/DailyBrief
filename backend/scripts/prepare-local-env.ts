@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 const path = new URL("../../.env", import.meta.url);
 let content = await readFile(path, "utf8").catch(async (error: NodeJS.ErrnoException) => {
@@ -20,6 +20,8 @@ function addDefault(name: string, value: string) {
   content = pattern.test(content) ? content.replace(pattern, line) : `${content}\n${line}\n`;
 }
 addDefault("SESSION_SECRET", randomBytes(32).toString("hex"));
+addDefault("JOURNAL_ENCRYPTION_KEY", randomBytes(32).toString("hex"));
 if (process.argv[2]) addDefault("CHROMIUM_EXECUTABLE_PATH", process.argv[2]);
 await writeFile(path, content, { mode: 0o600 });
+await chmod(path, 0o600);
 console.info("Local environment prepared; existing values preserved.");

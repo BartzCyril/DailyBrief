@@ -9,7 +9,11 @@ const limiter = new ConcurrencyLimiter(2);
 
 export class ArticleBrowser {
   constructor(private fetchPage: FetchPage = fetchRemotePage) {}
-  async render(url: string, linkSelector?: string): Promise<{ html: string; url: string }> {
+  async render(
+    url: string,
+    linkSelector?: string,
+    allowedHostname?: string,
+  ): Promise<{ html: string; url: string }> {
     return limiter.run(async () => {
       let browser;
       try {
@@ -49,6 +53,16 @@ export class ArticleBrowser {
             return;
           }
           try {
+            if (
+              request.isNavigationRequest() &&
+              allowedHostname &&
+              new URL(request.url()).hostname.toLowerCase().replace(/\.$/, "") !== allowedHostname
+            )
+              throw new AppError(
+                422,
+                "L'article redirige vers un autre journal.",
+                "JOURNAL_REDIRECT_BLOCKED",
+              );
             if (request.isNavigationRequest() && ++navigations > 8)
               throw new AppError(
                 502,
@@ -63,6 +77,7 @@ export class ArticleBrowser {
               // Documents redirect through a fresh browser navigation; subresources
               // follow redirects inside the same DNS-pinned HTTP transport.
               followRedirects: !request.isNavigationRequest(),
+              ...(request.isNavigationRequest() && allowedHostname ? { allowedHostname } : {}),
             });
             const contentType =
               response.contentType ??

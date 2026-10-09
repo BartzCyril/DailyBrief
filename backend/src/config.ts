@@ -5,6 +5,10 @@ const envSchema = z.object({
   DATABASE_URL: z.url(),
   REDIS_URL: z.url().default("redis://127.0.0.1:6379"),
   SESSION_SECRET: z.string().min(32),
+  JOURNAL_ENCRYPTION_KEY: z
+    .string()
+    .regex(/^[a-fA-F0-9]{64}$/)
+    .optional(),
   SESSION_COOKIE_NAME: z.string().default("dailybrief.sid"),
   SESSION_MAX_AGE: z.coerce.number().int().positive().default(604800000),
   FRONTEND_ORIGIN: z.url().default("http://localhost:5173"),

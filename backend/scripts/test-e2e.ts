@@ -261,6 +261,52 @@ try {
     pagination: { strategy: "QUERY_PARAM", queryParam: "offset", startPage: 0 },
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  // Inventory and configuration happen before any content extraction or AI.
+  await page.getByRole("link", { name: "Tester le workflow de A à Z" }).last().click();
+  await page
+    .getByRole("table")
+    .waitFor()
+    .catch(async (error) => {
+      console.info("Journal workflow diagnostic:", await page.locator("main").innerText());
+      throw error;
+    });
+  assert(await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).isDisabled());
+  assert.equal(
+    articleRequests.filter((url) => url === "https://publisher.example/full-article").length,
+    0,
+  );
+  const journalRow = page.getByRole("row").filter({ hasText: "publisher.example" });
+  assert.equal(await journalRow.getByRole("cell").first().textContent(), "1");
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "Journal table must fit the mobile viewport with internal scrolling",
+  );
+  const activateJournal = page.getByRole("button", {
+    name: "Activer publisher.example",
+    exact: true,
+  });
+  await activateJournal.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Désactiver publisher.example", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Configurer l'accès" }).click();
+  await page.getByLabel("Email pour publisher.example").fill("subscriber@example.test");
+  await page.getByLabel("Mot de passe", { exact: true }).fill("test-only-journal-password");
+  await page.getByRole("button", { name: "Enregistrer les identifiants" }).click();
+  await page.getByText(/connexion non prise en charge/).waitFor();
+  assert.equal(await page.locator('input[type="password"]').count(), 0);
+  await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).click();
+  await page
+    .getByText(/La connexion automatique à ce journal n'est pas encore prise en charge/)
+    .first()
+    .waitFor();
+  assert.equal(messages.length, 0);
+  await page.getByRole("button", { name: "Supprimer les identifiants" }).click();
+  await page.getByText("Non configuré", { exact: true }).waitFor();
+  await page.screenshot({ path: "/tmp/dailybrief-journals-mobile.png", fullPage: true });
+  await page.getByRole("link", { name: "Retour aux sources" }).click();
+  await page.waitForURL("**/dashboard");
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("switch", { name: "Récupération automatique", exact: true }).click();
   await page.getByLabel("Heure quotidienne").fill("08:45");
   await page.getByRole("button", { name: "Enregistrer les réglages" }).click();
@@ -323,9 +369,8 @@ try {
     "https://publisher.example/full-article",
   );
   await page
-    .getByText("Lien vers le document trouvé : https://publisher.example/full-article", {
-      exact: true,
-    })
+    .getByRole("table")
+    .getByRole("link", { name: "publisher.example", exact: true })
     .waitFor();
   assert.equal(messages.length, 1, "Testing a delivered article must not send another email");
   assert.deepEqual(

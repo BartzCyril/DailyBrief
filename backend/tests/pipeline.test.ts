@@ -133,7 +133,15 @@ describe("DailyBrief pipeline", () => {
       return { articles: scrapedArticles };
     }
   }
-  const collector = new SourceCollector(db, new FixtureRss(), new FixtureScraper());
+  const articleContent = new ArticleContentService(async (url) => {
+    pageFetches.push(url);
+    if (followDocument && url === "https://example.com/one")
+      return '<article><p>Notice à ne pas résumer</p><a class="primarydoc" href="https://publisher.example/document">Consulter le document</a></article>';
+    if (failContent && url.endsWith("one"))
+      throw new AppError(502, "Page indisponible.", "NETWORK_ERROR");
+    return `<html><body><article><h1>Texte complet</h1><p>${"Les détails du texte complet sont absents du flux. ".repeat(12)} Fin de l'article ${url}.</p></article></body></html>`;
+  });
+  const collector = new SourceCollector(db, new FixtureRss(), new FixtureScraper(), articleContent);
   const runner = new DailyBriefPipelineService(
     db,
     collector,
@@ -156,14 +164,7 @@ describe("DailyBrief pipeline", () => {
         sends.push(message);
       },
     },
-    new ArticleContentService(async (url) => {
-      pageFetches.push(url);
-      if (followDocument && url === "https://example.com/one")
-        return '<article><p>Notice à ne pas résumer</p><a class="primarydoc" href="https://publisher.example/document">Consulter le document</a></article>';
-      if (failContent && url.endsWith("one"))
-        throw new AppError(502, "Page indisponible.", "NETWORK_ERROR");
-      return `<html><body><article><h1>Texte complet</h1><p>${"Les détails du texte complet sont absents du flux. ".repeat(12)} Fin de l'article ${url}.</p></article></body></html>`;
-    }),
+    articleContent,
   );
   beforeAll(connect);
   afterAll(disconnect);
@@ -220,6 +221,7 @@ describe("DailyBrief pipeline", () => {
       where: { id: sourceId },
       data: { articleLinkSelector: "a.primarydoc" },
     });
+    await db.journalAccess.create({ data: { userId, domain: "publisher.example", enabled: true } });
     const result = await runner.run(userId);
     expect(result.status).toBe("SENT");
     const saved = await db.article.findFirstOrThrow({ where: { sourceId } });
@@ -232,6 +234,86 @@ describe("DailyBrief pipeline", () => {
     expect(saved.content).not.toContain("Notice à ne pas résumer");
     expect(summaryUrls).toContain("https://publisher.example/document");
     expect(sends[0]?.html).toContain('href="https://publisher.example/document"');
+  });
+  test("manual and scheduled collection inventory disabled journals without extracting, summarizing or emailing them", async () => {
+    followDocument = true;
+    scrapedArticles = [];
+    await db.source.update({
+      where: { id: sourceId },
+      data: { articleLinkSelector: "a.primarydoc" },
+    });
+    for (const trigger of ["manual", "scheduled"] as const) {
+      if (trigger === "scheduled")
+        await db.dailyBriefSettings.update({
+          where: { userId },
+          data: { collectionEnabled: true, nextCollectionAt: new Date(Date.now() - 1000) },
+        });
+      const result = await runner.run(userId, trigger);
+      expect(result.status).toBe("NO_NEW_ARTICLES");
+      expect(result.emailSent).toBe(false);
+    }
+    expect(pageFetches).toEqual(["https://example.com/one", "https://example.com/one"]);
+    expect(summaries).toBe(0);
+    expect(sends).toHaveLength(0);
+    const access = await db.journalAccess.findUniqueOrThrow({
+      where: { userId_domain: { userId, domain: "publisher.example" } },
+    });
+    expect(access.enabled).toBe(false);
+    await db.journalAccess.update({ where: { id: access.id }, data: { enabled: true } });
+    expect((await runner.run(userId)).status).toBe("SENT");
+    expect(summaries).toBe(1);
+    expect(sends[0]?.html).toContain("https://publisher.example/document");
+  });
+  test("disabling a journal excludes its already summarized pending article from the newsletter", async () => {
+    followDocument = true;
+    scrapedArticles = [];
+    await db.source.update({
+      where: { id: sourceId },
+      data: { articleLinkSelector: "a.primarydoc" },
+    });
+    const access = await db.journalAccess.create({
+      data: { userId, domain: "publisher.example", enabled: true },
+    });
+    failEmail = true;
+    expect((await runner.run(userId)).status).toBe("FAILED");
+    expect(summaries).toBe(1);
+    await db.journalAccess.update({ where: { id: access.id }, data: { enabled: false } });
+    failEmail = false;
+    const before = await db.article.findMany({ where: { userId } });
+    const fetchCount = pageFetches.length;
+    expect((await runner.run(userId)).status).toBe("NO_NEW_ARTICLES");
+    expect(pageFetches.slice(fetchCount)).toEqual(["https://example.com/one"]);
+    expect(summaries).toBe(1);
+    expect(sends).toHaveLength(0);
+    expect(await db.article.findMany({ where: { userId } })).toEqual(before);
+  });
+  test("a journal disabled while AI runs is excluded before newsletter preparation", async () => {
+    followDocument = true;
+    scrapedArticles = [];
+    await db.source.update({
+      where: { id: sourceId },
+      data: { articleLinkSelector: "a.primarydoc" },
+    });
+    const access = await db.journalAccess.create({
+      data: { userId, domain: "publisher.example", enabled: true },
+    });
+    let started = () => {};
+    let release = () => {};
+    const summarizing = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    waitForSummary = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = runner.run(userId, "manual", (progress) => {
+      if (progress.stage === "ai" && progress.message.startsWith("Envoi à l'IA")) started();
+    });
+    await summarizing;
+    await db.journalAccess.update({ where: { id: access.id }, data: { enabled: false } });
+    release();
+    expect((await running).status).toBe("NO_NEW_ARTICLES");
+    expect(sends).toHaveLength(0);
+    expect(await db.newsletter.count({ where: { userId } })).toBe(0);
   });
   test("refetches and regenerates only pending RSS content when its document selector changes", async () => {
     failEmail = true;
@@ -247,6 +329,7 @@ describe("DailyBrief pipeline", () => {
       data: { articleLinkSelector: "a.primarydoc" },
     });
     pageFetches = [];
+    await db.journalAccess.create({ data: { userId, domain: "publisher.example", enabled: true } });
     const result = await runner.run(userId);
     expect(result.status).toBe("SENT");
     expect(result.newArticles).toBe(0);

@@ -20,6 +20,7 @@ import { DailyBriefPipelineService } from "./pipeline";
 import { NewsletterEmailService, type NewsletterSender } from "./email";
 import { ArticleContentService } from "./article-content";
 import { sourceWorkflowRouter } from "./source-workflow";
+import { journalAccessRouter, JournalSecretCipher } from "./journal-access";
 export function createApp(
   db: Db,
   redis: Redis,
@@ -41,7 +42,7 @@ export function createApp(
     services.runner ??
     new DailyBriefPipelineService(
       db,
-      new SourceCollector(db, rss, scraping),
+      new SourceCollector(db, rss, scraping, articleContent),
       new UserCollectionLock(redis),
       summary,
       services.email ?? new NewsletterEmailService(config),
@@ -84,6 +85,10 @@ export function createApp(
   app.use("/auth", authRouter(db, config));
   app.use("/sources", sourcesRouter(db, rss, scraping));
   app.use("/sources", sourceWorkflowRouter(db, redis, rss, scraping, articleContent, summary));
+  app.use(
+    "/journals",
+    journalAccessRouter(db, new JournalSecretCipher(config.JOURNAL_ENCRYPTION_KEY)),
+  );
   app.use(settingsRouter(db, runner));
   const aiClient = new OllamaClient(config);
   app.use("/ai", aiRouter(summary, aiClient));
