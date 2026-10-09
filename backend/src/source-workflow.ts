@@ -14,6 +14,7 @@ import { scrapingSchema } from "../../shared/src/scraping";
 import { startEventStream } from "./event-stream";
 import { reportProgress } from "./progress";
 import { JournalAccessService, journalAccessVersion } from "./journal-access";
+import { recordJournalInventory } from "./journal-inventory";
 
 const PREVIEW_TTL_SECONDS = 1800;
 const previewKey = (userId: string, sourceId: string, id: string) =>
@@ -49,6 +50,7 @@ export function sourceWorkflowRouter(
       source.type === "RSS" && source.articleLinkSelector
         ? await journals.inventory(userId, collected.articles, source.articleLinkSelector)
         : null;
+    if (inventory) await recordJournalInventory(db, userId, source, inventory);
     const preview: WorkflowPreview = {
       id: randomUUID(),
       source: { id: source.id, url: source.url, type: source.type },

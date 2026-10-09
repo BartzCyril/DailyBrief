@@ -7,6 +7,7 @@ import { AppError } from "./errors";
 import { reportProgress, type ProgressObserver } from "./progress";
 import { ArticleContentService } from "./article-content";
 import { JournalAccessService } from "./journal-access";
+import { recordJournalInventory } from "./journal-inventory";
 
 export type CollectedArticle = ArticlePreview & { sourceId: string };
 export type SourceResult = {
@@ -52,6 +53,7 @@ export class SourceCollector {
             source.articleLinkSelector,
           );
           preview.articles = inventory.articles;
+          await recordJournalInventory(this.db, userId, source, inventory);
           for (const journal of inventory.journals)
             reportProgress(observer, {
               stage: "source",

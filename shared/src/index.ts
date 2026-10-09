@@ -110,6 +110,11 @@ export type JournalLoginConfig = {
   articleContentSelector?: string | null;
 };
 export type JournalPreview = JournalAccess & { count: number };
+export type JournalList = {
+  journals: JournalPreview[];
+  lastInventoriedAt: string | null;
+  unresolvedCount: number;
+};
 export type WorkflowSummary = {
   content: string;
   url?: string;

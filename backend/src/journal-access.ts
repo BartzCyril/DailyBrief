@@ -21,6 +21,7 @@ import { isIP } from "node:net";
 import { isPublicAddress } from "./network";
 import { requireAuth } from "./auth";
 import { AppError } from "./errors";
+import { readJournalInventory } from "./journal-inventory";
 
 // Exact hostname policy: www and apex hosts never share credentials implicitly.
 export function journalDomain(url: string): string {
@@ -289,6 +290,7 @@ function validateLoginConfig(config: JournalLoginConfig) {
 
 const patchSchema = z
   .object({
+    domain: z.string().trim().min(1).max(2048).optional(),
     enabled: z.boolean().optional(),
     email: z.email().max(320).optional(),
     password: z.string().max(4096).optional(),
@@ -298,7 +300,32 @@ const patchSchema = z
   .strict()
   .refine(
     (body) => !(body.clearCredentials && (body.email !== undefined || body.password !== undefined)),
-  );
+  )
+  .refine((body) => body.domain === undefined || Object.keys(body).length === 1);
+
+function normalizeJournalInput(value: string): string {
+  try {
+    const url = new URL(value.includes("://") ? value : `https://${value}`);
+    const domain = journalDomain(url.href);
+    if (
+      url.port ||
+      isIP(domain) ||
+      domain.endsWith(".local") ||
+      domain.endsWith(".localhost") ||
+      domain.length > 253 ||
+      !domain.includes(".") ||
+      !domain.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+    )
+      throw new Error();
+    return domain;
+  } catch {
+    throw new AppError(
+      400,
+      "Renseignez un domaine de journal valide, par exemple www.lemonde.fr.",
+      "INVALID_DOMAIN",
+    );
+  }
+}
 
 export function journalAccessRouter(
   db: Db,
@@ -307,6 +334,42 @@ export function journalAccessRouter(
 ) {
   const router = Router();
   router.use(requireAuth);
+  router.get("/", async (req, res) => {
+    const userId = req.session.userId!;
+    const [rows, inventory] = await Promise.all([
+      db.journalAccess.findMany({ where: { userId } }),
+      readJournalInventory(db, userId),
+    ]);
+    const journals = rows.map((row) => ({
+      ...publicJournal(row),
+      count: inventory.counts.get(row.domain) ?? 0,
+    }));
+    journals.sort(
+      (a, b) => b.count - a.count || (a.domain < b.domain ? -1 : a.domain > b.domain ? 1 : 0),
+    );
+    res.json({
+      journals,
+      lastInventoriedAt: inventory.lastInventoriedAt,
+      unresolvedCount: inventory.unresolvedCount,
+    });
+  });
+  router.post("/", async (req, res) => {
+    const input = z
+      .object({ domain: z.string().trim().min(1).max(2048) })
+      .strict()
+      .parse(req.body);
+    const row = await db.journalAccess.create({
+      data: { userId: req.session.userId!, domain: normalizeJournalInput(input.domain) },
+    });
+    res.status(201).json(publicJournal(row));
+  });
+  router.delete("/:domain", async (req, res) => {
+    const deleted = await db.journalAccess.deleteMany({
+      where: { userId: req.session.userId!, domain: String(req.params.domain) },
+    });
+    if (!deleted.count) throw new AppError(404, "Journal introuvable.", "JOURNAL_NOT_FOUND");
+    res.status(204).end();
+  });
   router.patch("/:domain", async (req, res) => {
     const body = patchSchema.parse(req.body);
     if (body.loginConfig) validateLoginConfig(body.loginConfig);
@@ -317,6 +380,29 @@ export function journalAccessRouter(
     const where = { userId_domain: { userId, domain } };
     const existing = await db.journalAccess.findUnique({ where });
     if (!existing) throw new AppError(404, "Journal introuvable.", "JOURNAL_NOT_FOUND");
+    if (body.domain !== undefined) {
+      const nextDomain = normalizeJournalInput(body.domain);
+      const row =
+        nextDomain === domain
+          ? existing
+          : await db.journalAccess.update({
+              where,
+              data: {
+                domain: nextDomain,
+                enabled: false,
+                email: null,
+                encryptedPassword: null,
+                loginUrl: null,
+                emailSelector: null,
+                passwordSelector: null,
+                submitSelector: null,
+                successSelector: null,
+                articleContentSelector: null,
+              },
+            });
+      res.json(publicJournal(row));
+      return;
+    }
     if (
       (body.email !== undefined || body.password || body.loginConfig) &&
       !(body.enabled ?? existing.enabled)

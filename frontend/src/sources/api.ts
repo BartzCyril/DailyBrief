@@ -8,13 +8,20 @@ import type {
   CollectionProgress,
   JournalAccess,
   JournalLoginConfig,
+  JournalList,
 } from "@dailybrief/shared";
 import { api, apiResponse, ApiError } from "@/lib/api";
 import { readEventStream } from "@/lib/event-stream";
 export const sourcesApi = {
+  journals: () => api<JournalList>("/journals"),
+  addJournal: (domain: string) =>
+    api<JournalAccess>("/journals", { method: "POST", body: { domain } }),
+  removeJournal: (domain: string) =>
+    api<void>(`/journals/${encodeURIComponent(domain)}`, { method: "DELETE" }),
   updateJournal: (
     domain: string,
     body: {
+      domain?: string;
       enabled?: boolean;
       email?: string;
       password?: string;

@@ -136,6 +136,42 @@ try {
   await page.getByLabel("Mot de passe", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Se connecter", exact: true }).click();
   await page.waitForURL("**/dashboard");
+  // Manage journals directly on the dashboard, including on a mobile viewport.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const addJournal = page.getByRole("button", { name: "Ajouter un journal", exact: true });
+  await addJournal.focus();
+  await page.keyboard.press("Enter");
+  await page.getByLabel("Domaine du nouveau journal").fill("MANUAL-JOURNAL.EXAMPLE");
+  await page.getByRole("button", { name: "Enregistrer le journal", exact: true }).click();
+  await page.getByRole("button", { name: "Activer manual-journal.example", exact: true }).waitFor();
+  await page
+    .getByRole("button", { name: "Modifier le domaine manual-journal.example", exact: true })
+    .click();
+  await page
+    .getByLabel("Nouveau domaine pour manual-journal.example")
+    .fill("corrected-journal.example");
+  await page.getByRole("button", { name: "Enregistrer le domaine", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Activer corrected-journal.example", exact: true })
+    .waitFor();
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "Journal management must fit the mobile viewport",
+  );
+  await page.screenshot({ path: "/tmp/dailybrief-journal-management-mobile.png", fullPage: true });
+  page.once("dialog", (dialog) => void dialog.dismiss());
+  await page
+    .getByRole("button", { name: "Supprimer le journal corrected-journal.example", exact: true })
+    .click();
+  await page.getByRole("link", { name: "corrected-journal.example", exact: true }).waitFor();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page
+    .getByRole("button", { name: "Supprimer le journal corrected-journal.example", exact: true })
+    .click();
+  await page
+    .getByRole("link", { name: "corrected-journal.example", exact: true })
+    .waitFor({ state: "hidden" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("link", { name: "Ajouter un flux RSS" }).click();
   await page.getByLabel("URL du flux RSS").fill("https://fixture.example/feed");
   await page.getByLabel("Sélecteur du lien vers l'article (facultatif)").fill("a.primarydoc");
@@ -341,6 +377,18 @@ try {
   await page.screenshot({ path: "/tmp/dailybrief-journals-mobile.png", fullPage: true });
   await page.getByRole("link", { name: "Retour aux sources" }).click();
   await page.waitForURL("**/dashboard");
+  const savedJournalRow = page
+    .getByRole("region", { name: "Vos journaux", exact: true })
+    .getByRole("row")
+    .filter({ hasText: "publisher.example" });
+  await savedJournalRow.getByRole("link", { name: "publisher.example", exact: true }).waitFor();
+  assert.equal(await savedJournalRow.getByRole("cell").first().textContent(), "1");
+  await savedJournalRow.getByRole("button", { name: "Configurer l'accès", exact: true }).click();
+  assert.equal(
+    await savedJournalRow.getByLabel("URL du formulaire de connexion").inputValue(),
+    loginConfig.loginUrl,
+  );
+  await savedJournalRow.getByRole("button", { name: "Annuler", exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("switch", { name: "Récupération automatique", exact: true }).click();
   await page.getByLabel("Heure quotidienne").fill("08:45");
@@ -502,7 +550,7 @@ try {
   await page.waitForURL("**/login");
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: register, login, dashboard journal addition, domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();

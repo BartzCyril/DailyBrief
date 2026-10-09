@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { JournalPreview, JournalLoginConfig } from "@dailybrief/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,9 +30,13 @@ const formFields = [
 function JournalRow({
   journal,
   onChange,
+  management = false,
+  onStructureChange,
 }: {
   journal: JournalPreview;
   onChange: (journal: JournalPreview) => void;
+  management?: boolean;
+  onStructureChange?: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [email, setEmail] = useState(journal.email ?? "");
@@ -41,6 +45,31 @@ function JournalRow({
   const [error, setError] = useState("");
   const [form, setForm] = useState<JournalLoginConfig>(() => formDefaults(journal));
   const [connectionResult, setConnectionResult] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [domain, setDomain] = useState(journal.domain);
+  async function changeStructure(remove = false) {
+    if (
+      remove &&
+      !window.confirm(
+        `Supprimer ${journal.domain} et ses réglages d'accès ? Les articles existants sont conservés. Si ce domaine réapparaît dans un flux RSS, il sera recréé désactivé.`,
+      )
+    )
+      return;
+    setBusy(true);
+    setError("");
+    setConnectionResult("");
+    setPassword("");
+    try {
+      if (remove) await sourcesApi.removeJournal(journal.domain);
+      else await sourcesApi.updateJournal(journal.domain, { domain });
+      setRenaming(false);
+      await onStructureChange?.();
+    } catch (error) {
+      setError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
   async function update(body: Parameters<typeof sourcesApi.updateJournal>[1]) {
     setBusy(true);
     setError("");
@@ -109,6 +138,7 @@ function JournalRow({
           variant="outline"
           disabled={!journal.enabled || busy}
           onClick={() => {
+            setRenaming(false);
             setPassword("");
             setEmail(journal.email ?? "");
             setForm(formDefaults(journal));
@@ -143,6 +173,41 @@ function JournalRow({
           >
             Supprimer les identifiants
           </Button>
+        )}
+        {renaming && (
+          <form
+            className="space-y-2 rounded-md border p-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void changeStructure();
+            }}
+          >
+            <label className="block">
+              Nouveau domaine pour {journal.domain}
+              <Input
+                required
+                value={domain}
+                maxLength={2048}
+                autoComplete="off"
+                onChange={(event) => setDomain(event.target.value)}
+              />
+            </label>
+            <p className="text-sm text-muted-foreground">
+              Changer de domaine désactive le journal et efface ses identifiants et son formulaire
+              de connexion. Les hôtes avec et sans www sont distincts.
+            </p>
+            <Button type="submit" disabled={busy}>
+              Enregistrer le domaine
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setRenaming(false)}
+            >
+              Annuler
+            </Button>
+          </form>
         )}
         {editing && (
           <form
@@ -232,6 +297,31 @@ function JournalRow({
         <Feedback message={error} error />
         <Feedback message={connectionResult} />
       </td>
+      {management && (
+        <td className="p-3 space-y-2">
+          <Button
+            variant="outline"
+            disabled={busy}
+            aria-label={`Modifier le domaine ${journal.domain}`}
+            onClick={() => {
+              setEditing(false);
+              setPassword("");
+              setRenaming(!renaming);
+              setDomain(journal.domain);
+            }}
+          >
+            Modifier le domaine
+          </Button>
+          <Button
+            variant="outline"
+            disabled={busy}
+            aria-label={`Supprimer le journal ${journal.domain}`}
+            onClick={() => void changeStructure(true)}
+          >
+            Supprimer
+          </Button>
+        </td>
+      )}
     </tr>
   );
 }
@@ -239,13 +329,25 @@ function JournalRow({
 export function JournalTable({
   journals,
   onChange,
+  management = false,
+  onStructureChange,
+  headerActions,
+  loading = false,
 }: {
   journals: JournalPreview[];
   onChange: (journal: JournalPreview) => void;
+  management?: boolean;
+  onStructureChange?: () => Promise<void>;
+  headerActions?: ReactNode;
+  loading?: boolean;
 }) {
+  const title = management ? "Vos journaux" : "Journaux de cet aperçu";
   return (
-    <section aria-label="Journaux de cet aperçu" className="space-y-3">
-      <h2 className="text-xl font-semibold">Journaux de cet aperçu</h2>
+    <section aria-label={title} className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold">{title}</h2>
+        {headerActions}
+      </div>
       <p className="text-sm">
         Les nouveaux journaux sont désactivés. Leur activation autorise l'extraction et l'IA. Les
         hôtes avec et sans www ont des réglages distincts. Les identifiants enregistrés ne
@@ -257,25 +359,45 @@ export function JournalTable({
         role="region"
         aria-label="Tableau des journaux, défilement horizontal"
       >
-        <table className="w-full text-sm">
+        <table className="w-full text-sm" aria-busy={loading}>
           <caption className="sr-only">
             Nombre d'articles par journal, par ordre décroissant
           </caption>
           <thead>
             <tr>
-              {["Domaine du journal", "Nombre d'articles", "Statut", "Email", "Accès"].map(
-                (label) => (
-                  <th key={label} scope="col" className="p-3 text-left">
-                    {label}
-                  </th>
-                ),
-              )}
+              {[
+                "Domaine du journal",
+                "Nombre d'articles",
+                "Statut",
+                "Email",
+                "Accès",
+                ...(management ? ["Actions"] : []),
+              ].map((label) => (
+                <th key={label} scope="col" className="p-3 text-left">
+                  {label}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {journals.map((journal) => (
-              <JournalRow key={journal.domain} journal={journal} onChange={onChange} />
+              <JournalRow
+                key={journal.domain}
+                journal={journal}
+                onChange={onChange}
+                management={management}
+                onStructureChange={onStructureChange}
+              />
             ))}
+            {!journals.length && !loading && (
+              <tr>
+                <td colSpan={management ? 6 : 5} className="p-3 text-muted-foreground">
+                  {management
+                    ? "Aucun journal enregistré. Ajoutez un domaine ou recensez les articles d'un flux RSS avec sélecteur."
+                    : "Aucun journal recensé."}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

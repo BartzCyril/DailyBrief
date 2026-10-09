@@ -62,6 +62,7 @@ model Source {
   type SourceType
   scrapingConfig Json?
   articleLinkSelector String?
+  journalInventory Json?
   enabled Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

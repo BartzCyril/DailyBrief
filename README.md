@@ -393,9 +393,32 @@ La collecte manuelle et programmée applique les mêmes règles. Le recensement 
 workflow n'écrit ni articles, ni résumés, ni newsletters et n'envoie aucun email.
 Les RSS directs et le scraping ne passent pas par ces réglages.
 
+Le tableau de bord affiche également **« Vos journaux »**, avec ajout, activation,
+configuration de l'accès, modification du domaine et suppression. `GET /journals`
+retourne uniquement les réglages du propriétaire et leurs comptes. Ces comptes
+additionnent le dernier recensement enregistré de chaque RSS avec sélecteur, issu
+du workflow ou d'une collecte. Chaque recensement remplace le précédent pour sa
+source ; les données sont conservées dans `Source.journalInventory`, séparément
+des articles et résumés. Les sources supprimées ou dont l'URL ou le sélecteur a
+changé sont exclues des comptes jusqu'à un nouveau recensement. Les notices non
+résolues sont signalées séparément. Charger le tableau de bord ne récupère pas de
+flux, ne lance pas d'IA et n'envoie pas d'email.
+
+`POST /journals` accepte `{ "domain": "www.lemonde.fr" }` et crée une configuration
+désactivée. Une URL HTTP(S) peut être fournie : seul son hôte normalisé est conservé.
+Les doublons par utilisateur sont refusés. `DELETE /journals/:domain` supprime les
+réglages et les identifiants du journal, en conservant les articles et newsletters.
+Si le domaine réapparaît dans un flux, il est recréé désactivé. Pour le conserver
+durablement dans la liste en ignorant ses articles, utilisez la désactivation.
+
 `PATCH /journals/:domain` nécessite la session du propriétaire et un domaine déjà
-recensé. Il accepte `enabled`, `email`, `password`, `clearCredentials: true` et
+enregistré. Il accepte `enabled`, `email`, `password`, `clearCredentials: true` et
 `loginConfig` (ou `null` pour supprimer seulement le formulaire).
+Un corps contenant uniquement `domain` permet de corriger le domaine. Un changement
+d'hôte désactive le journal et efface les identifiants et le formulaire : aucun
+secret ou accès n'est transféré implicitement à un autre site. Une correction de
+casse ou du point terminal conserve les réglages du même hôte. Un conflit avec un
+autre journal déjà enregistré est refusé sans modifier l'accès existant.
 L'email et le mot de passe peuvent être configurés seulement après activation.
 Un mot de passe vide conserve le secret ; changer l'email d'un accès existant exige
 un nouveau mot de passe. La suppression explicite efface email et secret, même si

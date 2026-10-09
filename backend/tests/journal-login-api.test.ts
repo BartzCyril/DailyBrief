@@ -248,6 +248,9 @@ describe("configured journal login API and pipeline", () => {
         });
       const result = await runner.run(userId, trigger);
       expect(result.status).toBe("SENT");
+      const journalList = (await agent.get("/journals").expect(200)).body;
+      expect(journalList.journals[0].count).toBe(1);
+      expect(journalList.lastInventoriedAt).toBeTruthy();
       expect(summaries).toBe(1);
       expect(sends).toBe(1);
       const article = await db.article.findFirstOrThrow({ where: { userId } });

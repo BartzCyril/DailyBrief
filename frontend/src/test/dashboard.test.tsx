@@ -12,6 +12,10 @@ function mockApi() {
   const mock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/auth/me"))
       return new Response(JSON.stringify({ id: "u1", email: "reader@example.com" }));
+    if (url.endsWith("/journals"))
+      return new Response(
+        JSON.stringify({ journals: [], lastInventoriedAt: null, unresolvedCount: 0 }),
+      );
     if (url.endsWith("/dashboard"))
       return new Response(JSON.stringify(failLoad ? { message: "Dashboard indisponible" } : data), {
         status: failLoad ? 503 : 200,
@@ -62,6 +66,8 @@ test("shows source statistics and an empty state with both add actions", async (
   ])
     expect(screen.getByText(label!).closest('[data-slot="card"]')).toHaveTextContent(count!);
   expect(screen.getByText(/Aucune source configurée/)).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Vos journaux" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Ajouter un journal" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Ajouter un flux RSS" })).toHaveAttribute(
     "href",
     "/sources/new/rss",

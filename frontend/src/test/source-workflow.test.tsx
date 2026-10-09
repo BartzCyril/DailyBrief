@@ -46,6 +46,10 @@ function mockApi() {
   const mock = vi.fn(async (url: string) => {
     if (url.endsWith("/auth/me"))
       return new Response(JSON.stringify({ id: "u1", email: "reader@example.com" }));
+    if (url.endsWith("/journals"))
+      return new Response(
+        JSON.stringify({ journals: [], lastInventoriedAt: null, unresolvedCount: 0 }),
+      );
     if (url.endsWith("/dashboard")) return new Response(JSON.stringify(emptyDashboard));
     if (url.endsWith("/sources")) return new Response(JSON.stringify([source]));
     if (url.endsWith("/workflow")) {

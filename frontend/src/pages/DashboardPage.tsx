@@ -11,6 +11,7 @@ import { CollectionSettings } from "@/dashboard/CollectionSettings";
 import { ManualCollection } from "@/dashboard/ManualCollection";
 import { useDashboard } from "@/dashboard/useDashboard";
 import { errorMessage } from "@/lib/api";
+import { JournalManager } from "@/dashboard/JournalManager";
 export function DashboardPage() {
   const auth = useAuth();
   const dashboard = useDashboard();
@@ -115,6 +116,7 @@ export function DashboardPage() {
                 </div>
                 <SourceList sources={dashboard.sources} onChanged={dashboard.refresh} />
               </section>
+              <JournalManager refreshKey={dashboard.revision} />
             </>
           )
         )}

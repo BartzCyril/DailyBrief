@@ -8,6 +8,10 @@ const user = { id: "u1", email: "reader@example.com" };
 function mockApi(current = false) {
   const mock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/sources")) return new Response("[]");
+    if (url.endsWith("/journals"))
+      return new Response(
+        JSON.stringify({ journals: [], lastInventoriedAt: null, unresolvedCount: 0 }),
+      );
     if (url.endsWith("/dashboard")) return new Response(JSON.stringify(emptyDashboard));
     if (url.endsWith("/auth/me"))
       return new Response(JSON.stringify(current ? user : { message: "Unauthorized" }), {
