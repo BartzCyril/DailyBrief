@@ -3,7 +3,7 @@ import type { JournalPreview, JournalLoginConfig } from "@dailybrief/shared";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/IconButton";
 import { KeyRound, Pencil, Trash2 } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Field } from "@/components/Field";
 import { Feedback } from "@/components/Feedback";
 import { Modal } from "@/components/Modal";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
@@ -24,12 +24,42 @@ function formDefaults(journal: JournalPreview): JournalLoginConfig {
   );
 }
 const formFields = [
-  ["loginUrl", "URL du formulaire de connexion", "https://journal.fr/connexion"],
-  ["emailSelector", "Sélecteur du champ email", "input[type='email']"],
-  ["passwordSelector", "Sélecteur du champ mot de passe", "input[type='password']"],
-  ["submitSelector", "Sélecteur du bouton de connexion", "button[type='submit']"],
-  ["successSelector", "Sélecteur visible après connexion", ".mon-compte"],
-  ["articleContentSelector", "Sélecteur du contenu intégral (facultatif)", ".article-body"],
+  [
+    "loginUrl",
+    "URL du formulaire de connexion",
+    "https://journal.fr/connexion",
+    "Adresse HTTPS de la page de connexion du journal, où se trouvent les champs email et mot de passe.",
+  ],
+  [
+    "emailSelector",
+    "Sélecteur du champ email",
+    "input[type='email']",
+    "Sélecteur CSS d'un unique champ input qui reçoit votre identifiant dans le formulaire de connexion.",
+  ],
+  [
+    "passwordSelector",
+    "Sélecteur du champ mot de passe",
+    "input[type='password']",
+    "Sélecteur CSS d'un unique input de type password dans le même formulaire.",
+  ],
+  [
+    "submitSelector",
+    "Sélecteur du bouton de connexion",
+    "button[type='submit']",
+    "Bouton qui envoie le formulaire de connexion, par exemple button[type='submit'].",
+  ],
+  [
+    "successSelector",
+    "Sélecteur visible après connexion",
+    ".mon-compte",
+    "Élément absent avant connexion et visible après, par exemple le menu de votre compte. À vérifier une fois connecté au journal.",
+  ],
+  [
+    "articleContentSelector",
+    "Sélecteur du contenu intégral (facultatif)",
+    ".article-body",
+    "Zone du texte complet sur la page d'un article, sans menus ni extrait d'abonnement. Laissez vide pour l'extraction automatique.",
+  ],
 ] as const;
 
 function JournalRow({
@@ -206,16 +236,15 @@ function JournalRow({
         }}
       >
         <fieldset disabled={pending} className="min-w-0 space-y-5">
-          <label className="flex flex-col gap-2 text-sm">
-            Email pour {journal.domain}
-            <Input
-              type="email"
-              required
-              value={email}
-              autoComplete="off"
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </label>
+          <Field
+            label={`Email pour ${journal.domain}`}
+            hint="Identifiant email de votre abonnement à ce journal. Il n'est pas envoyé à l'IA."
+            type="email"
+            required
+            value={email}
+            autoComplete="off"
+            onChange={(event) => setEmail(event.target.value)}
+          />
         </fieldset>
         <SelectorAssistance
           kind="JOURNAL_LOGIN"
@@ -246,41 +275,41 @@ function JournalRow({
               visible après, par exemple le menu du compte. CAPTCHA et double authentification ne
               sont pas automatisés.
             </p>
-            {formFields.map(([key, label, placeholder]) => (
-              <label key={key} className="flex flex-col gap-2 text-sm">
-                {label}
-                <Input
-                  type={key === "loginUrl" ? "url" : "text"}
-                  placeholder={placeholder}
-                  value={form[key] ?? ""}
-                  required={
-                    key !== "articleContentSelector" &&
-                    Boolean(form.loginUrl || journal.loginConfig)
-                  }
-                  autoComplete="off"
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setForm((previous) => ({ ...previous, [key]: value }));
-                    if (key === "loginUrl") setAssistanceUrl(value || `https://${journal.domain}`);
-                  }}
-                />
-              </label>
+            {formFields.map(([key, label, placeholder, hint]) => (
+              <Field
+                key={key}
+                label={label}
+                hint={hint}
+                type={key === "loginUrl" ? "url" : "text"}
+                placeholder={placeholder}
+                value={form[key] ?? ""}
+                required={
+                  key !== "articleContentSelector" && Boolean(form.loginUrl || journal.loginConfig)
+                }
+                autoComplete="off"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setForm((previous) => ({ ...previous, [key]: value }));
+                  if (key === "loginUrl") setAssistanceUrl(value || `https://${journal.domain}`);
+                }}
+              />
             ))}
             <p className="text-sm text-muted-foreground">
               Pour un article réservé aux abonnés, indiquez la zone du contenu intégral afin
               d'éviter de résumer un extrait public. Enregistrez avant de tester la connexion.
             </p>
           </fieldset>
-          <label className="flex flex-col gap-2 text-sm">
-            {journal.hasCredentials ? "Nouveau mot de passe (vide : conserver)" : "Mot de passe"}
-            <Input
-              type="password"
-              required={!journal.hasCredentials}
-              value={password}
-              autoComplete="new-password"
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </label>
+          <Field
+            label={
+              journal.hasCredentials ? "Nouveau mot de passe (vide : conserver)" : "Mot de passe"
+            }
+            hint="Mot de passe de votre abonnement, chiffré lors de l'enregistrement. Un champ vide conserve le mot de passe déjà enregistré."
+            type="password"
+            required={!journal.hasCredentials}
+            value={password}
+            autoComplete="new-password"
+            onChange={(event) => setPassword(event.target.value)}
+          />
         </fieldset>
         <div className="flex flex-wrap gap-3">
           <Button type="submit" disabled={pending}>
@@ -409,17 +438,16 @@ function JournalRow({
                   void changeDomain();
                 }}
               >
-                <label className="flex flex-col gap-2 text-sm">
-                  Nouveau domaine pour {journal.domain}
-                  <Input
-                    required
-                    disabled={busy}
-                    value={domain}
-                    maxLength={2048}
-                    autoComplete="off"
-                    onChange={(event) => setDomain(event.target.value)}
-                  />
-                </label>
+                <Field
+                  label={`Nouveau domaine pour ${journal.domain}`}
+                  hint="Nom d'hôte du journal, sans chemin, par exemple www.lemonde.fr."
+                  required
+                  disabled={busy}
+                  value={domain}
+                  maxLength={2048}
+                  autoComplete="off"
+                  onChange={(event) => setDomain(event.target.value)}
+                />
                 <p className="text-sm text-muted-foreground">
                   Changer de domaine désactive le journal et efface ses identifiants et son
                   formulaire de connexion.

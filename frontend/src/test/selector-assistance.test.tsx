@@ -102,12 +102,76 @@ test("fills scraping fields and retrieval mode, invalidating an existing preview
   expect(await screen.findByDisplayValue(".news-card")).toBeInTheDocument();
   expect(screen.getByLabelText("Sélecteur du titre")).toHaveValue("h2");
   expect(screen.getByLabelText("Sélecteur du lien")).toHaveValue("a.read");
+  expect(screen.getByLabelText("Sélecteur de description")).toHaveValue(".intro");
+  expect(screen.getByLabelText("Sélecteur de date")).toHaveValue("time");
   expect(screen.getByLabelText("Sélecteur du bouton")).toHaveValue(".next-news");
   expect(screen.getByLabelText("Délai maximum après un clic (ms)")).toHaveValue(20000);
   expect(screen.queryByText(preview.articles[0]!.title)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
 });
+
+test.each([
+  { mode: "SCROLL" as const, scroll: { maxScrolls: 2, waitAfterScrollMs: 900 } },
+  {
+    mode: "PAGINATE" as const,
+    pagination: { strategy: "QUERY_PARAM" as const, queryParam: "p", startPage: 0 },
+  },
+  {
+    mode: "PAGINATE" as const,
+    pagination: {
+      strategy: "URL_TEMPLATE" as const,
+      urlTemplate: "https://example.com/news/page/{page}",
+      startPage: 1,
+    },
+  },
+])(
+  "applies AI description fallback, date and retrieval settings: $mode $pagination.strategy",
+  async (retrieval) => {
+    const generated: ScrapingConfig = {
+      articleSelector: ".news",
+      titleSelector: "h2",
+      linkSelector: "h2 a",
+      descriptionSelector: "h2",
+      dateSelector: "time.date",
+      ...retrieval,
+    };
+    const fetcher = vi.fn(async (url: string, _init?: RequestInit) =>
+      json(url.endsWith("/analyze") ? { ...scrapingResult, scrapingConfig: generated } : preview),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(<ScrapingForm />, { wrapper: MemoryRouter });
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("URL du site"), "https://example.com/news");
+    await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
+    await screen.findByDisplayValue("time.date");
+    expect(screen.getByLabelText("Sélecteur de description")).toHaveValue("h2");
+    if (retrieval.mode === "SCROLL") {
+      expect(screen.getByLabelText("Nombre maximum de scrolls")).toHaveValue(2);
+      expect(screen.getByLabelText("Attente après un scroll (ms)")).toHaveValue(900);
+    } else {
+      expect(screen.getByLabelText("Page de départ")).toHaveValue(retrieval.pagination.startPage);
+      if (retrieval.pagination.strategy === "QUERY_PARAM")
+        expect(screen.getByLabelText("Nom du paramètre")).toHaveValue("p");
+      else
+        expect(screen.getByLabelText("Modèle d'URL")).toHaveValue(
+          "https://example.com/news/page/{page}",
+        );
+    }
+    for (const element of document.querySelectorAll("input, button[role=combobox]")) {
+      const hintId = element.getAttribute("aria-describedby");
+      expect(hintId).toBeTruthy();
+      expect(document.getElementById(hintId!)).toHaveTextContent(/\S/);
+    }
+    expect(screen.getByLabelText("Sélecteur du lien")).toHaveAccessibleDescription(
+      "Le lien doit porter un attribut href.",
+    );
+    expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Tester" }));
+    await screen.findByText(preview.articles[0]!.title);
+    expect(JSON.parse(String(fetcher.mock.calls.at(-1)?.[1]?.body)).config).toEqual(generated);
+  },
+);
 
 test("analyzes a journal's public login form, preserves credentials and authenticated selectors, and exposes partial help", async () => {
   const journal: JournalPreview = {

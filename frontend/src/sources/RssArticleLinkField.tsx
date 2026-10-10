@@ -29,7 +29,7 @@ export function RssArticleLinkField({
       disabled={disabled}
       maxLength={200}
       placeholder="a.accessToPrimaryDoc.primarydoc"
-      hint="Si le lien RSS mène à une notice, indiquez le lien vers le document à ouvrir sur cette page avant le résumé. Laissez vide pour lire directement la page du flux."
+      hint="Si le lien RSS mène à une notice, ciblez la balise a du lien vers l'article. Le lien doit porter un attribut href. Laissez vide pour lire directement la page du flux."
     />
   );
 }

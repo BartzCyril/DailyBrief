@@ -96,6 +96,7 @@ export function AuthPage({ register = false }: { register?: boolean }) {
               <fieldset disabled={busy} className="space-y-5">
                 <Field
                   label="Email"
+                  hint="Adresse email utilisée pour votre compte DailyBrief."
                   type="email"
                   autoComplete="email"
                   required
@@ -113,12 +114,13 @@ export function AuthPage({ register = false }: { register?: boolean }) {
                   hint={
                     register
                       ? "12 caractères, une majuscule, une minuscule et un chiffre."
-                      : undefined
+                      : "Mot de passe de votre compte DailyBrief."
                   }
                 />
                 {register && (
                   <Field
                     label="Confirmer le mot de passe"
+                    hint="Saisissez à nouveau le même mot de passe."
                     type="password"
                     autoComplete="new-password"
                     required

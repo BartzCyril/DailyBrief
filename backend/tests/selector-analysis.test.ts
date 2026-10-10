@@ -22,7 +22,6 @@ const config = readConfig({
 const articlePage = `<html><body><nav><a href="/contact">Contact</a></nav><main>
   <article class="news"><h2><a href="/a">Un premier article détaillé</a></h2><p class="summary">Description A</p><time datetime="2026-10-09">9 octobre 2026</time></article>
   <article class="news"><h2><a href="/b">Un deuxième article détaillé</a></h2><p class="summary">Description B</p><time datetime="2026-10-08">8 octobre 2026</time></article>
-  <button class="more">Charger plus d'articles</button><a href="?page=2">2</a>
 </main></body></html>`;
 const scraping = {
   articleSelector: "article.news",
@@ -47,16 +46,17 @@ const feed: SourcePreview = {
   articles: [{ title: "Notice", url: notice.url, publishedAt: null, description: null }],
 };
 
-test("scraping AI requires observed description and date and never accepts an incomplete configuration", async () => {
+test("scraping analysis recovers omitted description and date from actual article elements", async () => {
   for (const field of ["descriptionSelector", "dateSelector"]) {
     for (const value of [undefined, null, "", "   "]) {
-      await assert.rejects(
-        provider({ ...scraping, [field]: value }).service.analyze({
+      expect(
+        await provider({ ...scraping, [field]: value }).service.analyze({
           kind: "SCRAPING",
           url: "https://publisher.example/",
         }),
-        { code: "INVALID_SELECTOR_AI_RESPONSE" },
-      );
+      ).toMatchObject({
+        scrapingConfig: { [field]: field === "dateSelector" ? "time[datetime]" : ".summary" },
+      });
     }
     await assert.rejects(
       provider({ ...scraping, [field]: ".absent" }).service.analyze({
@@ -72,8 +72,191 @@ test("scraping AI requires observed description and date and never accepts an in
     12000,
   );
   expect(prompt).toContain("Les cinq sélecteurs sont obligatoires");
-  expect(prompt).toContain("Si la description ou la date est absente, retourne {}");
+  expect(prompt).toContain(
+    "descriptionSelector doit être EXACTEMENT le même sélecteur que titleSelector",
+  );
+  expect(prompt).toContain("dateSelector:null");
 });
+
+test("uses the title selector as description only when an excerpt is absent", async () => {
+  const page = {
+    html: articlePage.replace(/<p class="summary">.*?<\/p>/g, ""),
+    url: "https://publisher.example/",
+  };
+  for (const descriptionSelector of [null, undefined, "", "h2"]) {
+    const result = await provider({ ...scraping, descriptionSelector }, page).service.analyze({
+      kind: "SCRAPING",
+      url: page.url,
+    });
+    expect(result).toMatchObject({
+      complete: true,
+      scrapingConfig: { titleSelector: "h2", descriptionSelector: "h2", dateSelector: "time" },
+    });
+    expect(result.message).toContain("le sélecteur du titre sert de description");
+  }
+  const actualExcerpt = await provider({ ...scraping, descriptionSelector: "h2" }).service.analyze({
+    kind: "SCRAPING",
+    url: page.url,
+  });
+  expect(actualExcerpt).toMatchObject({ scrapingConfig: { descriptionSelector: ".summary" } });
+});
+
+test("an absent date remains an explicit failure and is never replaced by the title", async () => {
+  const page = {
+    html: articlePage.replace(/<time.*?<\/time>/g, ""),
+    url: "https://publisher.example/",
+  };
+  await assert.rejects(
+    provider({ ...scraping, dateSelector: null }, page).service.analyze({
+      kind: "SCRAPING",
+      url: page.url,
+    }),
+    { code: "SELECTOR_DATE_MISSING" },
+  );
+  await assert.rejects(
+    provider({ ...scraping, dateSelector: "h2" }, page).service.analyze({
+      kind: "SCRAPING",
+      url: page.url,
+    }),
+    { code: "INVALID_SELECTOR_ANALYSIS" },
+  );
+});
+
+test("detects query pagination even when the AI defaults to scroll, including a zero start", async () => {
+  for (const start of [0, 1, 4]) {
+    const url = `https://publisher.example/news?page=${start}`;
+    const html = articlePage.replace(
+      "</main>",
+      `</main><nav class="pagination"><a aria-current="page" href="?page=${start}">${start}</a><a rel="next" href="?page=${start + 1}">Suivant</a></nav>`,
+    );
+    const fixture = provider(scraping, { html, url });
+    const result = await fixture.service.analyze({ kind: "SCRAPING", url });
+    expect(result).toMatchObject({
+      scrapingConfig: {
+        mode: "PAGINATE",
+        pagination: { strategy: "QUERY_PARAM", queryParam: "page", startPage: start },
+      },
+    });
+    expect(result.kind === "SCRAPING" && result.scrapingConfig.scroll).toBeUndefined();
+    expect(result.message).toContain("Pagination détectée");
+    expect(String(fixture.bodies[0]?.prompt)).toContain('"rel":"next"');
+  }
+});
+
+test("detects path pagination without replacing a category number in the URL", async () => {
+  const url = "https://publisher.example/le-monde-du-cloud-computing-8.html";
+  const html = articlePage.replace(
+    "</main>",
+    `</main><nav class="pagination"><a class="page selected" href="/le-monde-du-cloud-computing-8-page-1.html">1</a><a rel="next" href="/le-monde-du-cloud-computing-8-page-2.html">2</a><a href="/le-monde-du-cloud-computing-8-page-3.html">3</a></nav>`,
+  );
+  const result = await provider(scraping, { html, url }).service.analyze({ kind: "SCRAPING", url });
+  expect(result).toMatchObject({
+    scrapingConfig: {
+      mode: "PAGINATE",
+      pagination: {
+        strategy: "URL_TEMPLATE",
+        startPage: 1,
+        urlTemplate: "https://publisher.example/le-monde-du-cloud-computing-8-page-{page}.html",
+      },
+    },
+  });
+});
+
+test("keeps late pagination and first article metadata in a bounded snapshot", () => {
+  const html = articlePage.replace(
+    "</main>",
+    `${'<p class="extra">Texte sans rapport.</p>'.repeat(1000)}</main><nav class="pagination"><a href="?page=1" aria-current="page">1</a><a href="?page=2&amp;token=private-token" rel="next">2</a></nav>`,
+  );
+  const snapshot = compactSelectorDom(html, "https://publisher.example/news", "SCRAPING", 3000);
+  expect(snapshot.length).toBeLessThanOrEqual(3000);
+  expect(snapshot).toContain('"class":"pagination"');
+  expect(snapshot).toContain('"rel":"next"');
+  expect(snapshot).toContain("Description A");
+  expect(snapshot).toContain('"datetime":"2026-10-09"');
+  expect(snapshot).not.toContain("private-token");
+});
+
+test("does not invent pagination from article links, foreign links, large offsets or ambiguous controls", async () => {
+  for (const controls of [
+    '<nav class="pagination"><a href="https://foreign.example/?page=2">2</a></nav>',
+    '<nav class="pagination"><a rel="next" href="?offset=20">Suivant</a></nav>',
+    '<nav class="pagination"><a href="?page=2">2</a><a href="?p=2">2</a></nav>',
+    "<footer><button>Voir plus</button></footer>",
+  ]) {
+    const url = "https://publisher.example/";
+    const result = await provider(scraping, { html: articlePage + controls, url }).service.analyze({
+      kind: "SCRAPING",
+      url,
+    });
+    expect(result).toMatchObject({ scrapingConfig: { mode: "SCROLL" } });
+    expect(result.message).toContain("Aucun chargement supplémentaire confirmé");
+  }
+});
+
+test("refuses AI pagination whose only next-page link is hidden or belongs to an article", async () => {
+  const url = "https://publisher.example/";
+  const output = {
+    ...scraping,
+    mode: "PAGINATE",
+    pagination: { strategy: "QUERY_PARAM", queryParam: "page", startPage: 1 },
+  };
+  for (const html of [
+    articlePage.replace('href="/a"', 'href="?page=2"'),
+    articlePage + '<a hidden href="?page=2">2</a>',
+  ]) {
+    await assert.rejects(
+      provider(output, { html, url }).service.analyze({ kind: "SCRAPING", url }),
+      { code: "INVALID_SELECTOR_ANALYSIS" },
+    );
+  }
+});
+
+test("detects a unique article load-more button even if the AI returns scroll", async () => {
+  const url = "https://publisher.example/";
+  const result = await provider(scraping, {
+    html: articlePage.replace(
+      "</main>",
+      '<button class="more">Charger plus d\'articles</button></main>',
+    ),
+    url,
+  }).service.analyze({ kind: "SCRAPING", url });
+  expect(result).toMatchObject({
+    scrapingConfig: {
+      mode: "LOAD_MORE",
+      loadMore: { buttonSelector: ".more", waitTimeoutMs: 10000 },
+    },
+  });
+});
+
+test("observes actual new article links after scrolling in Chromium", async () => {
+  const url = "https://publisher.example/";
+  const html =
+    articlePage.replace("<main>", '<main style="min-height:3000px">') +
+    `<script>let loaded=false; window.addEventListener("scroll", () => { if (loaded || window.scrollY === 0) return; loaded=true; document.querySelector("main").insertAdjacentHTML("beforeend", '<article class="news"><h2><a href="/new">Article ajouté au scroll</a></h2><p class="summary">Nouvelle description</p><time datetime="2026-10-10">10 octobre 2026</time></article>'); });</script>`;
+  const requests: string[] = [];
+  const page = await renderPublicSelectorPage(
+    url,
+    async (target) => {
+      requests.push(target);
+      return { text: html, status: 200, cookies: [], contentType: "text/html" };
+    },
+    undefined,
+    { probeScroll: true },
+  );
+  expect(page.scrollObserved).toBe(true);
+  expect(page.html).toContain("Article ajouté au scroll");
+  expect(requests).toEqual([url]);
+  const result = await provider(
+    {
+      ...scraping,
+      mode: "PAGINATE",
+      pagination: { strategy: "QUERY_PARAM", queryParam: "invented", startPage: 1 },
+    },
+    page,
+  ).service.analyze({ kind: "SCRAPING", url });
+  expect(result).toMatchObject({ scrapingConfig: { mode: "SCROLL" } });
+  expect(result.message).toContain("au scroll observé");
+}, 45000);
 
 function provider(
   output: unknown,
@@ -231,6 +414,13 @@ test("hidden fields are excluded even when an ancestor uses display:none", async
 });
 
 test("load-more and pagination are suggested only when the relevant controls really exist", async () => {
+  const page = {
+    html: articlePage.replace(
+      "</main>",
+      '<button class="more">Charger plus d\'articles</button><a href="?page=2">2</a></main>',
+    ),
+    url: "https://publisher.example/",
+  };
   const loadMore = {
     ...scraping,
     mode: "LOAD_MORE",
@@ -238,16 +428,19 @@ test("load-more and pagination are suggested only when the relevant controls rea
     scroll: undefined,
   };
   expect(
-    await provider(loadMore).service.analyze({
+    await provider(loadMore, page).service.analyze({
       kind: "SCRAPING",
       url: "https://publisher.example/",
     }),
   ).toMatchObject({ scrapingConfig: { mode: "LOAD_MORE" } });
   await assert.rejects(
-    provider({
-      ...loadMore,
-      loadMore: { buttonSelector: "h2", waitTimeoutMs: 10000 },
-    }).service.analyze({ kind: "SCRAPING", url: "https://publisher.example" }),
+    provider(
+      {
+        ...loadMore,
+        loadMore: { buttonSelector: "h2", waitTimeoutMs: 10000 },
+      },
+      page,
+    ).service.analyze({ kind: "SCRAPING", url: "https://publisher.example" }),
     { code: "INVALID_SELECTOR_ANALYSIS" },
   );
   const paginate = {
@@ -257,16 +450,19 @@ test("load-more and pagination are suggested only when the relevant controls rea
     scroll: undefined,
   };
   expect(
-    await provider(paginate).service.analyze({
+    await provider(paginate, page).service.analyze({
       kind: "SCRAPING",
       url: "https://publisher.example/",
     }),
   ).toMatchObject({ scrapingConfig: { mode: "PAGINATE" } });
   await assert.rejects(
-    provider({
-      ...paginate,
-      pagination: { ...paginate.pagination, queryParam: "unknown" },
-    }).service.analyze({ kind: "SCRAPING", url: "https://publisher.example" }),
+    provider(
+      {
+        ...paginate,
+        pagination: { ...paginate.pagination, queryParam: "unknown" },
+      },
+      { ...page, html: page.html.replace(/<button.*?<\/button>/, "") },
+    ).service.analyze({ kind: "SCRAPING", url: "https://publisher.example" }),
     { code: "INVALID_SELECTOR_ANALYSIS" },
   );
 });

@@ -7,19 +7,25 @@ export function SelectField({
   onChange,
   choices,
   disabled,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   choices: { value: string; label: string }[];
   disabled?: boolean;
+  hint?: string;
 }) {
   const id = useId();
   return (
     <div className="grid gap-2">
       <Label htmlFor={id}>{label}</Label>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger id={id} className="w-full">
+        <SelectTrigger
+          id={id}
+          className="w-full"
+          aria-describedby={hint ? `${id}-hint` : undefined}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -30,6 +36,11 @@ export function SelectField({
           ))}
         </SelectContent>
       </Select>
+      {hint && (
+        <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

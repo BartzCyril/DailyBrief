@@ -19,7 +19,7 @@ export type PageDiagnosis = {
 export async function diagnosePage(
   url: string,
   fetchPage: FetchPage = fetchRemotePage,
-  renderPage: RenderSelectorPage = renderPublicSelectorPage,
+  renderPage: RenderSelectorPage = (url) => renderPublicSelectorPage(url),
 ): Promise<PageDiagnosis[]> {
   const parsed = new URL(url);
   if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password)

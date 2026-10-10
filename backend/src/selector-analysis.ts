@@ -22,12 +22,29 @@ import {
   type BrowserNetworkFactory,
 } from "./browser-network";
 import { articleUrl, RssService } from "./rss";
+import {
+  discoverArticleField,
+  discoverLoadMore,
+  discoverPagination,
+  hasPublicationDate,
+  isHidden,
+  samePaginationUrl,
+  scrapingControlRoots,
+} from "./selector-scraping";
 
 export interface SelectorAnalysisProvider {
   analyze(input: SelectorAnalysisInput, signal?: AbortSignal): Promise<SelectorAnalysisResult>;
 }
-export type PublicSelectorPage = { html: string; url: string; status?: number };
-export type RenderSelectorPage = (url: string) => Promise<PublicSelectorPage>;
+export type PublicSelectorPage = {
+  html: string;
+  url: string;
+  status?: number;
+  scrollObserved?: boolean;
+};
+export type RenderSelectorPage = (
+  url: string,
+  options?: { probeScroll?: boolean },
+) => Promise<PublicSelectorPage>;
 export type SelectorAnalysisDependencies = {
   client?: OllamaClient;
   fetchPage?: FetchPage;
@@ -41,9 +58,9 @@ const scrapingCandidateSchema = z
     articleSelector: selector,
     titleSelector: selector,
     linkSelector: selector,
-    descriptionSelector: selector,
-    dateSelector: selector,
-    mode: z.enum(["SCROLL", "PAGINATE", "LOAD_MORE"]),
+    descriptionSelector: z.string().trim().max(200).nullish(),
+    dateSelector: z.string().trim().max(200).nullish(),
+    mode: z.enum(["SCROLL", "PAGINATE", "LOAD_MORE"]).optional(),
     scroll: z
       .object({
         maxScrolls: z.number().int().min(0).max(8),
@@ -130,17 +147,6 @@ export class PublicPageLoadFailure extends AppError {
   }
 }
 
-function isHidden(element: Element): boolean {
-  if (element.closest('[hidden], [aria-hidden="true"], [data-dailybrief-hidden], template'))
-    return true;
-  for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement)
-    if (
-      /(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(ancestor.getAttribute("style") ?? "")
-    )
-      return true;
-  return false;
-}
-
 /** A bounded structural snapshot, never HTML scripts, input values or hidden tokens. */
 export function compactSelectorDom(
   html: string,
@@ -165,6 +171,8 @@ export function compactSelectorDom(
     "autocomplete",
     "method",
     "datetime",
+    "rel",
+    "aria-current",
     "data-testid",
   ]);
   let roots: Element[];
@@ -180,13 +188,16 @@ export function compactSelectorDom(
   const lines: string[] = [];
   let length = 0;
   let count = 0;
+  let budget = maxChars;
+  const serialized = new Set<Element>();
   const append = (line: string) => {
-    if (length + line.length + 1 > maxChars) return false;
+    if (length + line.length + 1 > budget) return false;
     lines.push(line);
     length += line.length + 1;
     return true;
   };
   const walk = (element: Element, depth: number): boolean => {
+    if (serialized.has(element)) return true;
     if (isHidden(element) || element.matches('input[type="hidden"]')) return true;
     if (++count > 600 || depth > 24) return false;
     const attrs: Record<string, string> = {};
@@ -219,9 +230,15 @@ export function compactSelectorDom(
       )
     )
       return false;
+    serialized.add(element);
     for (const child of [...element.children]) if (!walk(child, depth + 1)) return false;
     return true;
   };
+  if (kind === "SCRAPING") {
+    budget = Math.floor(maxChars / 4);
+    for (const root of scrapingControlRoots(document)) if (!walk(root, 0)) break;
+    budget = maxChars;
+  }
   for (const root of roots) if (!walk(root, 0)) break;
   dom.window.close();
   return lines.join("\n");
@@ -234,7 +251,7 @@ export function selectorAnalysisPrompt(
 ): string {
   const task =
     input.kind === "SCRAPING"
-      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector, linkSelector, descriptionSelector et dateSelector sont RELATIFS à ce bloc. Les cinq sélecteurs sont obligatoires : titre, lien, description ou extrait et date de publication doivent être observables. Chaque sélecteur désigne un seul élément par bloc. Pour la date, utilise le texte ou l'attribut datetime d'un élément observé. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, présents dans les attributs observés, sans :contains ni syntaxe Playwright. Si la description ou la date est absente, retourne {} pour proposer une aide humaine ; n'invente aucun sélecteur. Mode par défaut SCROLL avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}; il autorise une collecte bornée, sans affirmer que le site charge de nouveaux articles. Utilise LOAD_MORE uniquement si un bouton explicite de nouveaux articles est observé (loadMore={"buttonSelector":"...","waitTimeoutMs":10000}). Utilise PAGINATE uniquement si des liens de pages numérotées prouvent l'URL et le paramètre; n'invente pas un schéma de pagination. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
+      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector, linkSelector, descriptionSelector et dateSelector sont RELATIFS à ce bloc. Les cinq sélecteurs sont obligatoires dans la configuration finale. Cherche activement la description ou l'extrait ET la date de publication, pas seulement le titre et le lien. Chaque sélecteur désigne un seul élément par bloc. Pour la description, privilégie p, .description, .summary, .excerpt ou l'élément réellement observé. Si aucune description n'est présente, descriptionSelector doit être EXACTEMENT le même sélecteur que titleSelector : le titre servira de description. Pour la date, repère time, son attribut datetime, une classe de date ou un texte de publication observé. Si aucune date n'est présente, retourne dateSelector:null sans inventer de date ni utiliser le titre comme date. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, sans :contains ni syntaxe Playwright. Inspecte AUSSI les contrôles de chargement prioritaires : PAGINATE pour des liens numérotés ou rel=next, avec strategy QUERY_PARAM pour ?page=2 ou URL_TEMPLATE pour /page/2 et {page} à la place du compteur. Ne confonds pas le numéro de catégorie ou l'identifiant d'article avec le compteur de page. Déduis startPage et les paramètres des liens observés, y compris les pages qui commencent à 0. LOAD_MORE pour un bouton explicite de nouveaux articles avec loadMore={"buttonSelector":"...","waitTimeoutMs":10000}. SCROLL si des articles supplémentaires ont été observés lors du scroll, avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}. Sans contrôle ni ajout observé, SCROLL reste un mode borné à vérifier, pas une preuve de scroll infini. N'invente aucun schéma de pagination. Observation du navigateur : ${page.scrollObserved ? "de nouveaux liens d'articles sont apparus au scroll" : "aucun ajout d'articles au scroll confirmé"}. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
       : input.kind === "RSS_LINK"
         ? `Cette page est une notice intermédiaire d'un item RSS. Trouve le lien principal « Consulter le document », « Lire l'article » ou équivalent vers le site du journal EXTERNE. Écarte partage social, publicité, menu, abonnement et autres documents. articleLinkSelector doit cibler exactement une balise a avec href HTTP(S), jamais le site de la notice. Retourne {"articleLinkSelector":"..."}.`
         : `Cette page est un formulaire de connexion PUBLIC. Repère l'input identifiant/email visible, l'input type=password et le bouton qui soumet ce même formulaire. Chaque sélecteur CSS doit cibler un unique élément visible. Utilise les attributs réellement observés, jamais un identifiant utilisateur. Ne tente aucune connexion. Aucun élément propre au compte connecté n'est observable: n'invente JAMAIS successSelector ou un sélecteur de contenu abonné. Retourne uniquement {"emailSelector":"...","passwordSelector":"...","submitSelector":"..."}.`;
@@ -255,6 +272,7 @@ export async function renderPublicSelectorPage(
   url: string,
   fetchPage?: FetchPage,
   createNetwork: BrowserNetworkFactory = () => BrowserNetwork.create(),
+  options: { probeScroll?: boolean } = {},
 ): Promise<PublicSelectorPage> {
   return articleBrowserLimiter.run(async () => {
     let browser;
@@ -423,6 +441,38 @@ export async function renderPublicSelectorPage(
         navigationFailure,
       ]);
       if (navigationError) throw navigationError;
+      const scrollObserved = options.probeScroll
+        ? await page.evaluate(async () => {
+            const root = document.querySelector('main, [role="main"], #main') ?? document.body;
+            const links = () =>
+              new Set(
+                [...root.querySelectorAll<HTMLAnchorElement>("a[href]")]
+                  .filter((anchor) => {
+                    if (anchor.closest("nav, header, footer") || !anchor.getClientRects().length)
+                      return false;
+                    const block = anchor.closest(
+                      'article, li, [class*="card"], [class*="item"], [class*="news"], [class*="post"]',
+                    );
+                    return !!block?.querySelector("h1, h2, h3, h4");
+                  })
+                  .map((anchor) => anchor.href),
+              );
+            const initial = links();
+            if (!initial.size) return false;
+            const previousY = window.scrollY;
+            let observed = false;
+            for (let attempt = 0; attempt < 2; attempt++) {
+              window.scrollTo(0, document.documentElement.scrollHeight);
+              await new Promise((resolve) => setTimeout(resolve, 800));
+              if ([...links()].some((link) => !initial.has(link))) {
+                observed = true;
+                break;
+              }
+            }
+            window.scrollTo(0, previousY);
+            return observed;
+          })
+        : undefined;
       // Keep the rendered visibility state for validation, without exposing this marker to AI.
       await page.evaluate(() => {
         for (const element of document.querySelectorAll("body *")) {
@@ -442,7 +492,12 @@ export async function renderPublicSelectorPage(
           "RESPONSE_TOO_LARGE",
           413,
         );
-      return { html, url: page.url(), status };
+      return {
+        html,
+        url: page.url(),
+        status,
+        ...(scrollObserved !== undefined ? { scrollObserved } : {}),
+      };
     } catch (error) {
       if (navigationError) throw navigationError;
       if (error instanceof AppError) throw error;
@@ -520,6 +575,11 @@ function validateScraping(document: Document, url: string, config: ScrapingConfi
           "Le sélecteur de description ou de date proposé ne contient aucune information.",
           "INVALID_SELECTOR_ANALYSIS",
         );
+      if (field === config.dateSelector && !hasPublicationDate(match))
+        throw analysisError(
+          "Le sélecteur de date proposé ne contient pas de date de publication identifiable.",
+          "INVALID_SELECTOR_ANALYSIS",
+        );
       observed = true;
     }
     if (!observed)
@@ -542,9 +602,9 @@ function validateScraping(document: Document, url: string, config: ScrapingConfi
   if (config.mode === "PAGINATE") {
     const pagination = config.pagination!;
     const current = new URL(url);
-    const anchors = [...document.querySelectorAll("a[href]")].map((anchor) =>
-      articleUrl(anchor.getAttribute("href")!, url),
-    );
+    const anchors = [...document.querySelectorAll("a[href]")]
+      .filter((anchor) => !isHidden(anchor) && !anchor.closest(config.articleSelector))
+      .map((anchor) => articleUrl(anchor.getAttribute("href")!, url));
     let next: URL;
     if (pagination.strategy === "QUERY_PARAM") {
       next = new URL(url);
@@ -562,7 +622,10 @@ function validateScraping(document: Document, url: string, config: ScrapingConfi
         );
       }
     }
-    if (next.origin !== current.origin || !anchors.includes(next.href))
+    if (
+      next.origin !== current.origin ||
+      !anchors.some((href) => href && samePaginationUrl(href, next.href))
+    )
       throw analysisError(
         "La pagination proposée n'est pas prouvée par un lien de la page.",
         "INVALID_SELECTOR_ANALYSIS",
@@ -582,7 +645,8 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
     const fetchPage = dependencies.fetchPage ?? fetchRemotePage;
     this.client = dependencies.client ?? new OllamaClient(config);
     this.renderPage =
-      dependencies.renderPage ?? ((url) => renderPublicSelectorPage(url, dependencies.fetchPage));
+      dependencies.renderPage ??
+      ((url, options) => renderPublicSelectorPage(url, dependencies.fetchPage, undefined, options));
     this.rss = dependencies.rss ?? new RssService(async (url) => (await fetchPage(url)).text);
     this.limiter = new ConcurrencyLimiter(config.AI_CONCURRENCY);
   }
@@ -629,7 +693,7 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
                 "SELECTOR_NOTICE_UNAVAILABLE",
               );
         page = loaded;
-      } else page = await this.renderPage(input.url);
+      } else page = await this.renderPage(input.url, { probeScroll: input.kind === "SCRAPING" });
       signal?.throwIfAborted();
 
       if (input.kind === "JOURNAL_LOGIN") {
@@ -731,7 +795,74 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
           );
         const base = { analyzedUrl: publicUrl, complete: true, missingFields: [] as string[] };
         if (input.kind === "SCRAPING") {
-          const parsed = scrapingInputSchema.safeParse(value);
+          const candidate = scrapingCandidateSchema.safeParse(value);
+          if (!candidate.success)
+            throw analysisError(
+              "L'IA n'a pas identifié les sélecteurs des articles, du titre et du lien.",
+              "INVALID_SELECTOR_AI_RESPONSE",
+              502,
+            );
+          const fields = candidate.data;
+          const blocks = select(document, fields.articleSelector, false);
+          const descriptionSelector =
+            fields.descriptionSelector && fields.descriptionSelector !== fields.titleSelector
+              ? fields.descriptionSelector
+              : (discoverArticleField(blocks, [
+                  '[itemprop="description"]',
+                  ".description",
+                  ".summary",
+                  ".excerpt",
+                  ".intro",
+                  ".chapo",
+                  ".lead",
+                  "p",
+                ]) ?? fields.titleSelector);
+          const dateSelector =
+            fields.dateSelector ||
+            discoverArticleField(blocks, [
+              "time[datetime]",
+              "time",
+              '[itemprop="datePublished"]',
+              ".date",
+              ".published",
+              ".pubdate",
+              ".publication-date",
+              ".article-date",
+            ]);
+          if (!dateSelector)
+            throw analysisError(
+              "Aucune date de publication n'a pu être identifiée dans les articles. Le sélecteur de date est obligatoire : choisissez une page qui l'affiche ou demandez de l'aide.",
+              "SELECTOR_DATE_MISSING",
+            );
+          const pagination = discoverPagination(document, page.url, fields.articleSelector);
+          const loadMore = discoverLoadMore(document, fields.articleSelector);
+          const mode = pagination
+            ? "PAGINATE"
+            : page.scrollObserved
+              ? "SCROLL"
+              : fields.mode === "PAGINATE"
+                ? "PAGINATE"
+                : loadMore
+                  ? "LOAD_MORE"
+                  : (fields.mode ?? "SCROLL");
+          const parsed = scrapingInputSchema.safeParse({
+            articleSelector: fields.articleSelector,
+            titleSelector: fields.titleSelector,
+            linkSelector: fields.linkSelector,
+            descriptionSelector,
+            dateSelector,
+            mode,
+            ...(mode === "PAGINATE"
+              ? { pagination: pagination ?? fields.pagination }
+              : mode === "LOAD_MORE"
+                ? {
+                    loadMore:
+                      fields.mode === "LOAD_MORE" && fields.loadMore
+                        ? fields.loadMore
+                        : { buttonSelector: loadMore, waitTimeoutMs: 10000 },
+                  }
+                : { scroll: fields.scroll ?? { maxScrolls: 3, waitAfterScrollMs: 800 } }),
+          });
           if (!parsed.success)
             throw analysisError(
               "L'IA n'a pas identifié tous les sélecteurs requis pour cette liste d'articles.",
@@ -743,8 +874,7 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
             ...base,
             kind: input.kind,
             scrapingConfig: parsed.data,
-            message:
-              "Sélecteurs vérifiés sur les articles présents. Testez la source avant de l'enregistrer.",
+            message: `Sélecteurs vérifiés sur les articles présents. ${descriptionSelector === fields.titleSelector ? "Aucune description distincte retenue : le sélecteur du titre sert de description. " : ""}${mode === "PAGINATE" ? "Pagination détectée à partir des liens de la page." : mode === "LOAD_MORE" ? "Bouton de chargement identifié." : page.scrollObserved ? "Chargement d'articles au scroll observé." : "Aucun chargement supplémentaire confirmé : mode scroll proposé, à vérifier."} Testez la source avant de l'enregistrer.`,
           };
         }
         if (input.kind === "RSS_LINK") {

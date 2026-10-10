@@ -148,6 +148,11 @@ export function EditSourceForm({
       <fieldset disabled={pending} className="space-y-5 min-w-0">
         <Field
           label={source.type === "RSS" ? "URL du flux RSS" : "URL du site"}
+          hint={
+            source.type === "RSS"
+              ? "Adresse HTTP ou HTTPS du flux RSS ou Atom."
+              : "Adresse HTTP ou HTTPS de la page qui liste les articles."
+          }
           type="url"
           value={url}
           autoFocus

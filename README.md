@@ -412,8 +412,19 @@ un curseur pointeur lorsqu'il est disponible.
 sur « Remplir avec l'IA ». Pour un flux RSS avec lien intermédiaire, l'analyse ouvre
 une notice du flux pour chercher le lien vers le journal. Pour le scraping, elle
 propose les cinq sélecteurs obligatoires (articles, titre, lien, description et date)
-et le mode de chargement lorsqu'ils sont identifiables. Si la description ou la date
-ne peut pas être identifiée, l'analyse propose une aide humaine sans inventer de sélecteur.
+et le mode de chargement lorsqu'ils sont identifiables. Les champs omis par l'IA
+sont complétés à partir d'éléments observés et non ambigus. En l'absence de
+description, le sélecteur du titre est réutilisé avec un message explicite. Une date
+absente reste une erreur avec possibilité d'aide humaine ; elle n'est jamais
+remplacée par le titre.
+Les contrôles de pagination en bas des longues listes sont prioritaires dans le
+DOM envoyé à l'IA. Le serveur vérifie les liens de pagination (paramètre d'URL ou
+modèle avec `{page}`, en préservant les numéros de catégorie), les boutons de
+chargement et les nouveaux liens d'articles observés après un court scroll dans
+Chromium. Les réglages et le mode remplissent le formulaire ensemble. Sans
+preuve d'un chargement supplémentaire, le mode scroll proposé est signalé comme
+à vérifier ; une pagination ambiguë ou un compteur qui avance par grands pas
+n'est pas inventé.
 Les résultats remplissent
 le formulaire sans l'enregistrer : vérifiez-les puis utilisez « Tester » avant de sauvegarder.
 Une modification de l'adresse invalide les résultats. « Annuler l'analyse » interrompt
@@ -430,7 +441,9 @@ Les sélecteurs proposés sont contrôlés sur la page chargée dans Chromium : 
 résultat ambigu, masqué ou absent est refusé. L'IA reçoit une structure de page
 limitée, sans scripts, valeurs des champs ni paramètres d'URL privés, avec des
 instructions pour traiter cette structure comme des données et éviter les sélecteurs
-inventés. L'analyse ne clique sur aucun bouton, ne se connecte pas et ne parcourt pas les pages suivantes.
+inventés. L'analyse peut effectuer deux scrolls courts ; elle ne clique sur aucun
+bouton, ne se connecte pas et ne parcourt pas les pages suivantes. Chaque champ de
+configuration présente une aide reliée à son contrôle pour les lecteurs d'écran.
 Les sites bloqués par un CAPTCHA ou imposant une interaction peuvent nécessiter une aide manuelle.
 Une iframe publicitaire indisponible ne bloque pas l'analyse de la page principale.
 Chromium charge directement l'URL avec `page.goto()`, exécute JavaScript et conserve

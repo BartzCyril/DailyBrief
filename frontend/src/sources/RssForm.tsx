@@ -59,6 +59,7 @@ export function RssForm() {
       <form onSubmit={test} className="space-y-4" noValidate>
         <Field
           label="URL du flux RSS"
+          hint="Adresse HTTP ou HTTPS du flux RSS ou Atom, par exemple https://example.com/feed.xml."
           type="url"
           value={url}
           disabled={pending}

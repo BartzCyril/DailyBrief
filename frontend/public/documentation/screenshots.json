@@ -1,19 +1,19 @@
 {
   "sources": {
     "width": 1152,
-    "height": 575
+    "height": 599
   },
   "rss": {
     "width": 768,
-    "height": 562
+    "height": 586
   },
   "scraping": {
     "width": 768,
-    "height": 944
+    "height": 1104
   },
   "assistance": {
     "width": 768,
-    "height": 992
+    "height": 1152
   },
   "journaux": {
     "width": 1152,
@@ -21,11 +21,11 @@
   },
   "acces": {
     "width": 672,
-    "height": 1167
+    "height": 1359
   },
   "dashboard": {
     "width": 1152,
-    "height": 752
+    "height": 792
   },
   "jobs": {
     "width": 1152,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { JournalList } from "@dailybrief/shared";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Field } from "@/components/Field";
 import { Feedback } from "@/components/Feedback";
 import { Modal } from "@/components/Modal";
 import { JournalTable } from "@/sources/JournalTable";
@@ -77,18 +77,17 @@ export function JournalManager({ refreshKey = 0 }: { refreshKey?: number }) {
             void add();
           }}
         >
-          <label className="flex flex-col gap-2 text-sm">
-            Domaine du nouveau journal
-            <Input
-              disabled={saving}
-              required
-              placeholder="www.lemonde.fr"
-              value={domain}
-              maxLength={2048}
-              autoComplete="off"
-              onChange={(event) => setDomain(event.target.value)}
-            />
-          </label>
+          <Field
+            label="Domaine du nouveau journal"
+            hint="Nom d'hôte du journal, sans chemin, par exemple www.lemonde.fr."
+            disabled={saving}
+            required
+            placeholder="www.lemonde.fr"
+            value={domain}
+            maxLength={2048}
+            autoComplete="off"
+            onChange={(event) => setDomain(event.target.value)}
+          />
           <p className="text-sm text-muted-foreground">
             Le nouveau journal sera désactivé. Vous pourrez ensuite l'activer et configurer son
             accès.

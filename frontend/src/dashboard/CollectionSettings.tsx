@@ -93,6 +93,7 @@ export function CollectionSettings({
           <fieldset disabled={busy} className="grid sm:grid-cols-2 gap-4">
             <Field
               label="Heure quotidienne"
+              hint="Heure de lancement de la collecte, dans le fuseau horaire indiqué."
               type="time"
               required
               value={time}
@@ -100,6 +101,7 @@ export function CollectionSettings({
             />
             <Field
               label="Fuseau horaire"
+              hint="Nom du fuseau horaire, par exemple Europe/Paris."
               required
               value={timezone}
               onChange={(event) => setTimezone(event.target.value)}

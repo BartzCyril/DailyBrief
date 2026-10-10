@@ -103,6 +103,7 @@ export function SourceList({
         <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_14rem]">
           <Field
             label="Rechercher une URL"
+            hint="Recherchez une partie de l'adresse parmi les sources de cet onglet."
             type="search"
             placeholder="https://…"
             maxLength={2000}

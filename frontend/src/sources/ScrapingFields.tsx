@@ -124,6 +124,7 @@ export function ScrollFields({ draft, update }: Props) {
         max={8}
         value={draft.maxScrolls}
         onChange={(event) => update({ maxScrolls: event.target.value })}
+        hint="De 0 à 8 descentes en bas de page pour charger les articles suivants."
       />
       <Field
         label="Attente après un scroll (ms)"
@@ -132,6 +133,7 @@ export function ScrollFields({ draft, update }: Props) {
         max={3000}
         value={draft.waitAfterScrollMs}
         onChange={(event) => update({ waitAfterScrollMs: event.target.value })}
+        hint="De 100 à 3 000 ms pour laisser apparaître les articles après chaque scroll."
       />
     </div>
   );
@@ -141,6 +143,7 @@ export function PaginationFields({ draft, update }: Props) {
     <div className="space-y-4">
       <SelectField
         label="Stratégie de pagination"
+        hint="Choisissez un paramètre comme ?page=2 ou une adresse comme /page/2."
         value={draft.strategy}
         onChange={(value) =>
           update({ strategy: value === "URL_TEMPLATE" ? "URL_TEMPLATE" : "QUERY_PARAM" })
@@ -192,13 +195,13 @@ export function ScrapingFields({ draft, update }: Props) {
               key: "articleSelector",
               label: "Sélecteur des articles",
               placeholder: ".article-card",
-              hint: "Bloc racine de chaque article.",
+              hint: "Sélecteur CSS du bloc qui contient un article : son titre, son lien, sa description et sa date.",
             },
             {
               key: "titleSelector",
               label: "Sélecteur du titre",
               placeholder: "h2",
-              hint: "Sélecteur relatif au bloc article.",
+              hint: "Élément qui contient le titre, à chercher à l'intérieur de chaque bloc article, par exemple h2.",
             },
             {
               key: "linkSelector",
@@ -210,8 +213,14 @@ export function ScrapingFields({ draft, update }: Props) {
               key: "descriptionSelector",
               label: "Sélecteur de description",
               placeholder: ".description",
+              hint: "Élément de l'extrait à l'intérieur du bloc article. S'il n'y a pas de description, utilisez le sélecteur du titre.",
             },
-            { key: "dateSelector", label: "Sélecteur de date", placeholder: "time" },
+            {
+              key: "dateSelector",
+              label: "Sélecteur de date",
+              placeholder: "time",
+              hint: "Élément de la date de publication dans le bloc article. Un élément time peut porter un attribut datetime.",
+            },
           ] as const
         ).map((field) => (
           <Field
@@ -227,6 +236,7 @@ export function ScrapingFields({ draft, update }: Props) {
       </div>
       <SelectField
         label="Mode de récupération"
+        hint="L'IA repère les liens de pages, un bouton de chargement ou l'ajout d'articles au scroll. Vérifiez le résultat avec Tester."
         value={draft.mode}
         onChange={(value) =>
           update({

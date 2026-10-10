@@ -365,9 +365,13 @@ export function DocumentationPage() {
             <p>
               Les sélecteurs de titre, lien, description et date se cherchent{" "}
               <strong>à l’intérieur de chaque bloc article</strong>. La description et la date sont
-              obligatoires à la création et à la modification. Si elles sont absentes de la page,
-              choisissez une autre rubrique qui les affiche ; n’utilisez pas un élément sans rapport
-              pour remplir le champ.
+              obligatoires à la création et à la modification. Si la page ne fournit pas de
+              description, utilisez le sélecteur du titre : l’assistance IA applique ce remplacement
+              automatiquement. Si la date est absente, choisissez une autre rubrique qui l’affiche
+              ou demandez de l’aide. L’analyse vérifie les liens de pagination, les boutons de
+              chargement et l’ajout de liens d’articles lors d’un court scroll dans le navigateur
+              pour remplir le mode de récupération. Le résultat indique si le scroll a été observé
+              ou si ce mode reste à vérifier.
             </p>
             <Screenshot
               name="scraping"

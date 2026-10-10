@@ -86,6 +86,7 @@ export function ScrapingForm() {
         <fieldset disabled={pending} className="space-y-5">
           <Field
             label="URL du site"
+            hint="Adresse HTTP ou HTTPS de la page qui liste les articles, plutôt que celle d'un article seul."
             type="url"
             value={url}
             onChange={(event) => {
