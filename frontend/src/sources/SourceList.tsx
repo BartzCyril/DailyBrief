@@ -1,5 +1,5 @@
-import type { Source, ScrapingConfig } from "@dailybrief/shared";
-import { useEffect, useId, useState } from "react";
+import type { Source, ScrapingConfig, SourcePage, SourceListQuery } from "@dailybrief/shared";
+import { useId, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Feedback } from "@/components/Feedback";
 import { sourcesApi } from "./api";
@@ -16,31 +16,36 @@ import { ConfirmDelete } from "@/components/ConfirmDelete";
 export function SourceList({
   sources,
   onChanged,
+  pagination,
+  controls,
+  loading = false,
 }: {
   sources: Source[];
   onChanged?: () => Promise<void>;
+  pagination?: Omit<SourcePage, "sources">;
+  controls?: {
+    query: string;
+    status: NonNullable<SourceListQuery["status"]>;
+    onQueryChange: (query: string) => void;
+    onStatusChange: (status: NonNullable<SourceListQuery["status"]>) => void;
+    onPageChange: (page: number) => void;
+  };
+  loading?: boolean;
 }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState("");
   const [helpBusyId, setHelpBusyId] = useState("");
   const [message, setMessage] = useState("");
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("all");
-  const [page, setPage] = useState(1);
   const statusId = useId();
-  const filtered = sources.filter(
-    (source) =>
-      source.url.toLowerCase().includes(query.trim().toLowerCase()) &&
-      (status === "all" || source.enabled === (status === "active")),
-  );
-  const pageCount = Math.max(1, Math.ceil(filtered.length / 5));
-  const currentPage = Math.min(page, pageCount);
-  const start = (currentPage - 1) * 5;
-  const visible = filtered.slice(start, start + 5);
-  useEffect(() => {
-    setPage((previous) => Math.min(previous, pageCount));
-  }, [pageCount]);
+  const {
+    total,
+    page: currentPage,
+    pageSize,
+  } = pagination ?? { total: sources.length, page: 1, pageSize: 5 };
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const start = (currentPage - 1) * pageSize;
+  const pending = !!busy || loading;
   async function remove(source: Source) {
     if (busy) return;
     setBusy(source.id);
@@ -94,37 +99,40 @@ export function SourceList({
     <div className="space-y-5">
       <Feedback message={editingId ? "" : error} error />
       <Feedback message={message} />
-      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_14rem]">
-        <Field
-          label="Rechercher une URL"
-          type="search"
-          placeholder="https://…"
-          value={query}
-          disabled={!!busy}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setPage(1);
-          }}
-        />
-        <div className="grid gap-2">
-          <Label htmlFor={statusId}>Statut des sources</Label>
-          <select
-            id={statusId}
-            value={status}
+      {controls && (
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_14rem]">
+          <Field
+            label="Rechercher une URL"
+            type="search"
+            placeholder="https://…"
+            maxLength={2000}
+            value={controls.query}
             disabled={!!busy}
             onChange={(event) => {
-              setStatus(event.target.value);
-              setPage(1);
+              controls.onQueryChange(event.target.value);
             }}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
-          >
-            <option value="all">Toutes les sources</option>
-            <option value="active">Actives</option>
-            <option value="inactive">Inactives</option>
-          </select>
+          />
+          <div className="grid gap-2">
+            <Label htmlFor={statusId}>Statut des sources</Label>
+            <select
+              id={statusId}
+              value={controls.status}
+              disabled={!!busy}
+              onChange={(event) => {
+                controls.onStatusChange(
+                  event.target.value as NonNullable<SourceListQuery["status"]>,
+                );
+              }}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+            >
+              <option value="all">Toutes les sources</option>
+              <option value="active">Actives</option>
+              <option value="inactive">Inactives</option>
+            </select>
+          </div>
         </div>
-      </div>
-      <div className="overflow-x-auto rounded-lg border">
+      )}
+      <div className="overflow-x-auto rounded-lg border" aria-busy={loading}>
         <table className="w-full min-w-[32rem] table-fixed text-sm">
           <caption className="sr-only">Sources configurées</caption>
           <thead className="border-b bg-muted/50">
@@ -141,7 +149,7 @@ export function SourceList({
             </tr>
           </thead>
           <tbody className="divide-y">
-            {visible.map((source) => (
+            {sources.map((source) => (
               <tr key={source.id}>
                 <td className="px-4 py-4 align-middle">
                   <a
@@ -192,7 +200,7 @@ export function SourceList({
                           trigger={
                             <IconButton
                               tooltip="Modifier la source"
-                              disabled={!!busy}
+                              disabled={pending}
                               aria-label={`Modifier ${source.url}`}
                             >
                               <Pencil aria-hidden="true" />
@@ -230,7 +238,7 @@ export function SourceList({
                             <IconButton
                               tooltip="Supprimer la source"
                               className="text-destructive hover:text-destructive"
-                              disabled={!!busy}
+                              disabled={pending}
                               aria-label={`Supprimer ${source.url}`}
                             >
                               <Trash2 aria-hidden="true" />
@@ -241,7 +249,7 @@ export function SourceList({
                           title={source.enabled ? "Désactiver la source" : "Activer la source"}
                           aria-label={`Activer ${source.url}`}
                           checked={source.enabled}
-                          disabled={!!busy}
+                          disabled={pending}
                           onCheckedChange={(enabled) => void toggle(source, enabled)}
                         />
                       </>
@@ -250,54 +258,56 @@ export function SourceList({
                 </td>
               </tr>
             ))}
-            {!visible.length && (
+            {!sources.length && (
               <tr>
                 <td colSpan={3} className="px-4 py-8 text-center text-muted-foreground">
-                  {sources.length
-                    ? "Aucune source ne correspond à votre recherche ou à ce filtre."
-                    : "Aucune source configurée dans cet onglet."}
+                  {loading
+                    ? "Chargement des sources…"
+                    : controls && (controls.query.trim() || controls.status !== "all")
+                      ? "Aucune source ne correspond à votre recherche ou à ce filtre."
+                      : "Aucune source configurée dans cet onglet."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      <nav
-        aria-label="Pagination des sources"
-        className="flex flex-wrap items-center justify-between gap-4"
-      >
-        <p className="text-sm text-muted-foreground" aria-live="polite">
-          {filtered.length
-            ? `${start + 1}–${Math.min(start + 5, filtered.length)} sur ${filtered.length}`
-            : "0"}{" "}
-          source{filtered.length === 1 ? "" : "s"}
-        </p>
-        <div className="flex items-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            aria-label="Page précédente"
-            disabled={!!busy || currentPage === 1}
-            onClick={() => setPage(currentPage - 1)}
-          >
-            <ChevronLeft aria-hidden="true" />
-          </Button>
-          <span className="text-sm">
-            Page {currentPage} sur {pageCount}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            aria-label="Page suivante"
-            disabled={!!busy || currentPage === pageCount}
-            onClick={() => setPage(currentPage + 1)}
-          >
-            <ChevronRight aria-hidden="true" />
-          </Button>
-        </div>
-      </nav>
+      {controls && (
+        <nav
+          aria-label="Pagination des sources"
+          className="flex flex-wrap items-center justify-between gap-4"
+        >
+          <p className="text-sm text-muted-foreground" aria-live="polite">
+            {total ? `${start + 1}–${Math.min(start + pageSize, total)} sur ${total}` : "0"} source
+            {total === 1 ? "" : "s"}
+          </p>
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              aria-label="Page précédente"
+              disabled={pending || currentPage === 1}
+              onClick={() => controls.onPageChange(currentPage - 1)}
+            >
+              <ChevronLeft aria-hidden="true" />
+            </Button>
+            <span className="text-sm">
+              Page {currentPage} sur {pageCount}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              aria-label="Page suivante"
+              disabled={pending || currentPage === pageCount}
+              onClick={() => controls.onPageChange(currentPage + 1)}
+            >
+              <ChevronRight aria-hidden="true" />
+            </Button>
+          </div>
+        </nav>
+      )}
     </div>
   );
 }

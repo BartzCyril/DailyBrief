@@ -42,10 +42,10 @@ function mockApi() {
       saved = true;
       return new Response(JSON.stringify({ id: "s1" }), { status: 201 });
     }
-    if (url.endsWith("/sources"))
+    if (new URL(url, "http://localhost").pathname === "/api/sources")
       return new Response(
-        JSON.stringify(
-          saved
+        JSON.stringify({
+          sources: saved
             ? [
                 {
                   id: "s1",
@@ -56,7 +56,10 @@ function mockApi() {
                 },
               ]
             : [],
-        ),
+          total: saved ? 1 : 0,
+          page: 1,
+          pageSize: 5,
+        }),
       );
     return new Response("{}");
   });

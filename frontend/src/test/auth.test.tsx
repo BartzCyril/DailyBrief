@@ -7,7 +7,8 @@ import { App } from "../App";
 const user = { id: "u1", email: "reader@example.com" };
 function mockApi(current = false) {
   const mock = vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.endsWith("/sources")) return new Response("[]");
+    if (new URL(url, "http://localhost").pathname === "/api/sources")
+      return new Response(JSON.stringify({ sources: [], total: 0, page: 1, pageSize: 5 }));
     if (url.endsWith("/journals"))
       return new Response(
         JSON.stringify({ journals: [], lastInventoriedAt: null, unresolvedCount: 0 }),

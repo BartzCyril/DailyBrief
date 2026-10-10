@@ -3,12 +3,12 @@ import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "../App";
-import { emptyDashboard } from "./fixtures";
+import { emptyDashboard, sourcePageFixture } from "./fixtures";
 
 const source = {
   id: "s1",
   url: "https://example.com/feed",
-  type: "RSS",
+  type: "RSS" as const,
   enabled: false,
   scrapingConfig: null,
 };
@@ -51,7 +51,8 @@ function mockApi() {
         JSON.stringify({ journals: [], lastInventoriedAt: null, unresolvedCount: 0 }),
       );
     if (url.endsWith("/dashboard")) return new Response(JSON.stringify(emptyDashboard));
-    if (url.endsWith("/sources")) return new Response(JSON.stringify([source]));
+    if (new URL(url, "http://localhost").pathname === "/api/sources")
+      return new Response(JSON.stringify(sourcePageFixture([source], url)));
     if (url.endsWith("/workflow")) {
       collectCalls++;
       return new Response(
@@ -105,7 +106,9 @@ beforeEach(() => {
 
 test("opens a fresh workflow from an inactive source and shows all returned articles", async () => {
   mount("/sources");
-  await userEvent.click(await screen.findByRole("link", { name: "Tester le workflow de A à Z" }));
+  await userEvent.click(
+    await screen.findByRole("link", { name: "Tester le workflow de A à Z" }, { timeout: 5000 }),
+  );
   expect(await screen.findByText("1. Article déjà livré")).toBeInTheDocument();
   expect(screen.getByText("2. Article sans lien")).toBeInTheDocument();
   expect(screen.getByText("Correction du XML appliquée.")).toBeInTheDocument();

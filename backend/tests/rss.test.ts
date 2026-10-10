@@ -211,8 +211,9 @@ describe("RSS source ownership", () => {
   });
   test("lists only current user's sources", async () => {
     const response = await agent.get("/sources");
-    expect(response.body).toHaveLength(1);
-    expect(response.body[0].userId).toBe(userId);
+    expect(response.body.sources).toHaveLength(1);
+    expect(response.body.total).toBe(1);
+    expect(response.body.sources[0].url).toBe("https://example.com/feed");
   });
   test("hides upstream errors", async () => {
     const response = await agent

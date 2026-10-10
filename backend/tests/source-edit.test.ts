@@ -368,7 +368,7 @@ describe("source URL editing", () => {
     expect(created.body.articleLinkSelector).toBe("a.primarydoc");
     const listed = await agent.get("/sources");
     expect(
-      listed.body.find((source: { id: string }) => source.id === created.body.id)
+      listed.body.sources.find((source: { id: string }) => source.id === created.body.id)
         .articleLinkSelector,
     ).toBe("a.primarydoc");
     requests.length = 0;

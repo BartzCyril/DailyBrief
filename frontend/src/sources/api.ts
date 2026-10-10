@@ -1,5 +1,7 @@
 import type {
   Source,
+  SourcePage,
+  SourceListQuery,
   SourcePreview,
   ScrapingConfig,
   WorkflowPreview,
@@ -34,7 +36,14 @@ export const sourcesApi = {
       `/journals/${encodeURIComponent(domain)}/test`,
       { method: "POST", body: {} },
     ),
-  list: () => api<Source[]>("/sources"),
+  list: (query: SourceListQuery = {}, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (query.type) params.set("type", query.type);
+    if (query.status && query.status !== "all") params.set("status", query.status);
+    if (query.query?.trim()) params.set("q", query.query.trim());
+    params.set("page", String(query.page ?? 1));
+    return api<SourcePage>(`/sources?${params}`, { signal });
+  },
   remove: (id: string) => api<void>(`/sources/${id}`, { method: "DELETE" }),
   testRss: (url: string, articleLinkSelector?: string | null) =>
     api<SourcePreview>("/sources/rss/test", {

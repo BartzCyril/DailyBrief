@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import type { Source } from "@dailybrief/shared";
 import { SourceList } from "../sources/SourceList";
 import { sourcesApi } from "../sources/api";
+import { sourcePageFixture } from "./fixtures";
 
 const rss: Source = {
   id: "s1",
@@ -78,13 +79,16 @@ const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       });
     return new Response(null, { status: 204 });
   }
-  return new Response(JSON.stringify(stored));
+  return new Response(JSON.stringify(sourcePageFixture(stored, url)));
 });
 function Harness() {
   const [sources, setSources] = useState(stored);
   return (
     <MemoryRouter>
-      <SourceList sources={sources} onChanged={async () => setSources(await sourcesApi.list())} />
+      <SourceList
+        sources={sources}
+        onChanged={async () => setSources((await sourcesApi.list()).sources)}
+      />
     </MemoryRouter>
   );
 }

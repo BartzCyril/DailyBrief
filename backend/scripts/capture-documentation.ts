@@ -184,7 +184,23 @@ try {
           error: null,
         })),
       });
-    if (path === "/sources") return respond(sources);
+    if (path === "/sources") {
+      const params = new URL(route.request().url()).searchParams;
+      const filtered = sources.filter(
+        (source) =>
+          (!params.get("type") || source.type === params.get("type")) &&
+          (!params.get("status") || source.enabled === (params.get("status") === "active")) &&
+          source.url.toLowerCase().includes((params.get("q") ?? "").toLowerCase()),
+      );
+      const total = filtered.length;
+      const page = Math.min(Number(params.get("page") ?? 1), Math.max(1, Math.ceil(total / 5)));
+      return respond({
+        sources: filtered.slice((page - 1) * 5, page * 5),
+        total,
+        page,
+        pageSize: 5,
+      });
+    }
     if (path === "/journals")
       return respond({ journals, lastInventoriedAt: day, unresolvedCount: 0 });
     if (path === "/dashboard")

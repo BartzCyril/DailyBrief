@@ -45,7 +45,8 @@ function mockApi() {
         status: failLoad ? 503 : 200,
       });
     if (url.endsWith("/collection/current")) return new Response(JSON.stringify(currentRun));
-    if (url.endsWith("/sources")) return new Response("[]");
+    if (new URL(url, "http://localhost").pathname === "/api/sources")
+      return new Response(JSON.stringify({ sources: [], total: 0, page: 1, pageSize: 5 }));
     if (url.endsWith("/settings/dailybrief")) {
       const body = JSON.parse(String(init?.body));
       data.collection = {
@@ -309,7 +310,10 @@ test("navigates between sources and journals without loading unrelated features"
   mount();
   await screen.findByText("Sources totales");
   expect(
-    mock.mock.calls.some(([url]) => url.endsWith("/sources") || url.endsWith("/journals")),
+    mock.mock.calls.some(
+      ([url]) =>
+        new URL(url, "http://localhost").pathname === "/api/sources" || url.endsWith("/journals"),
+    ),
   ).toBe(false);
   await user.click(screen.getByRole("link", { name: "Sources" }));
   expect(await screen.findByText(/Aucune source configurée/)).toBeInTheDocument();

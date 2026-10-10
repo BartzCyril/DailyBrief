@@ -10,6 +10,21 @@ import { articleLinkSelectorSchema } from "../../shared/src/rss";
 import { validateArticleLinkSelector } from "./article-content";
 
 export const urlSchema = z.url({ protocol: /^https?$/ });
+const sourceListSchema = z
+  .object({
+    type: z.enum(["RSS", "SCRAPING"]).optional(),
+    status: z.enum(["all", "active", "inactive"]).default("all"),
+    q: z.string().trim().max(2000).default(""),
+    page: z
+      .string()
+      .regex(/^[1-9]\d*$/)
+      .transform(Number)
+      .pipe(z.number().int().max(1000000))
+      .optional()
+      .default(1),
+  })
+  .strict();
+const sourcePageSize = 5;
 export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService) {
   const router = Router();
   router.use(requireAuth);
@@ -22,14 +37,40 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
     const result = await rss.collect(url);
     res.json({ ...result, articles: result.articles.slice(0, 20) });
   });
-  router.get("/", async (req, res) =>
-    res.json(
-      await db.source.findMany({
-        where: { userId: req.session.userId! },
-        orderBy: { createdAt: "desc" },
-      }),
-    ),
-  );
+  router.get("/", async (req, res) => {
+    const input = sourceListSchema.parse(req.query);
+    // contains uses LIKE in PostgreSQL: treat wildcard characters as literal URL text.
+    const query = input.q.replace(/[\\%_]/g, "\\$&");
+    const where = {
+      userId: req.session.userId!,
+      ...(input.type ? { type: input.type } : {}),
+      ...(input.status === "all" ? {} : { enabled: input.status === "active" }),
+      ...(query ? { url: { contains: query, mode: "insensitive" as const } } : {}),
+    };
+    const result = await db.$transaction(
+      async (tx) => {
+        const total = await tx.source.count({ where });
+        const page = Math.min(input.page, Math.max(1, Math.ceil(total / sourcePageSize)));
+        const sources = await tx.source.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          skip: (page - 1) * sourcePageSize,
+          take: sourcePageSize,
+          select: {
+            id: true,
+            url: true,
+            type: true,
+            enabled: true,
+            scrapingConfig: true,
+            articleLinkSelector: true,
+          },
+        });
+        return { sources, total, page, pageSize: sourcePageSize };
+      },
+      { isolationLevel: "RepeatableRead" },
+    );
+    res.json(result);
+  });
   router.post("/scraping/test", async (req, res) => {
     const input = z
       .object({ url: urlSchema, config: scrapingInputSchema })

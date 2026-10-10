@@ -70,7 +70,14 @@ chiffre. Les routes `POST /auth/register`, `/auth/login`, `/auth/logout` et
 `GET /auth/me` gèrent le compte. Les routes `/sources` nécessitent une session.
 `POST /sources/rss/test` attend `{url}` ; `/sources/scraping/test` attend
 `{url, config}`. `POST /sources` accepte `RSS` ou `SCRAPING` avec `scrapingConfig`.
-`GET /sources` liste les sources du compte ; `PATCH /sources/:id` accepte `{enabled}`
+`GET /sources` renvoie `{sources, total, page, pageSize}` avec cinq sources au maximum.
+Les paramètres `type=RSS|SCRAPING`, `status=all|active|inactive`, `q` (recherche
+d'URL sans distinction de casse) et `page` (à partir de 1) sont appliqués en base,
+toujours pour le compte connecté. Le total porte sur les sources filtrées ; si
+une suppression rend la page demandée inexistante, la dernière page disponible
+est renvoyée. La recherche traite `%` et `_` comme des caractères littéraux.
+Le tableau `/sources` transmet ces critères à chaque changement et ne charge
+que la page affichée. `PATCH /sources/:id` accepte `{enabled}`
 ou `{url?, scrapingConfig?}` pour modifier son adresse et sa configuration.
 L'ancien champ `urlTemplate` reste accepté avec `url` pour les clients précédents.
 `DELETE /sources/:id` supprime une source du compte et ses articles associés.

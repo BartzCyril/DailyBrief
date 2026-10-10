@@ -325,7 +325,15 @@ try {
   await page.waitForURL("**/sources");
   await page.getByRole("link", { name: "Ajouter un flux RSS" }).click();
   await page.getByLabel("URL du flux RSS").fill("https://fixture.example/feed");
+  const rssAnalysisResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/ai/selectors/analyze"),
+  );
   await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
+  const rssAnalysis = await rssAnalysisResponse;
+  assert(
+    rssAnalysis.ok(),
+    `RSS selector analysis failed with HTTP ${rssAnalysis.status()}: ${(await rssAnalysis.json()).message ?? "unknown error"}`,
+  );
   await page.getByText(/Lien externe vérifié sur une notice du flux/).waitFor();
   assert.equal(
     await page.getByLabel("Sélecteur du lien vers l'article (facultatif)").inputValue(),
@@ -517,34 +525,38 @@ try {
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   // Inventory and configuration happen before any content extraction or AI.
-  // A browser-only source list fixture exercises more than one page without
-  // creating articles or adding feeds to the later real collection.
+  // Exercise SQL filtering and pagination through the real API. Remove these
+  // temporary sources before the later article collection.
   const storedSources = await db.source.findMany({ where: { user: { email } } });
-  const sourceTableFixture = [
-    ...Array.from({ length: 11 }, (_, index) => ({
-      id: `table-rss-${index + 1}`,
-      type: "RSS",
-      url: `https://fixture.example/table-feed/${index + 1}`,
-      enabled: index % 2 === 0,
-      scrapingConfig: null,
-    })),
-    ...storedSources.filter((source) => source.type === "SCRAPING"),
-  ];
-  await page.route("**/api/sources", (route) => route.fulfill({ json: sourceTableFixture }));
-  await page.goto(`${config.FRONTEND_ORIGIN}/sources`);
+  const tableOwnerId = storedSources[0]!.userId;
+  const sourceTableFixture = Array.from({ length: 11 }, (_, index) => ({
+    id: `table-rss-${randomUUID()}`,
+    userId: tableOwnerId,
+    type: "RSS" as const,
+    url: `https://fixture.example/table-feed/${index + 1}`,
+    enabled: index % 2 === 0,
+    createdAt: new Date(Date.now() - index * 1000),
+  }));
+  await db.source.createMany({ data: sourceTableFixture });
+  await page.goto(`${config.FRONTEND_ORIGIN}/sources?q=table-feed`);
   const sourceTable = page.getByRole("table", { name: "Sources configurées" });
-  await sourceTable.waitFor();
+  await page.getByText("1–5 sur 11 sources").waitFor();
   assert.equal(await sourceTable.getByRole("row").count(), 6);
   assert(await page.getByRole("button", { name: "Page précédente" }).isDisabled());
   await page.getByRole("button", { name: "Page suivante" }).click();
+  await page.getByText("Page 2 sur 3").waitFor();
   await page.getByRole("button", { name: "Page suivante" }).click();
+  await page.getByText("Page 3 sur 3").waitFor();
   assert.equal(await sourceTable.getByRole("row").count(), 2);
   assert(await page.getByRole("button", { name: "Page suivante" }).isDisabled());
   await page.getByRole("searchbox", { name: "Rechercher une URL" }).fill("TABLE-FEED/1");
+  await page.getByText("1–3 sur 3 sources").waitFor();
   assert.equal(await sourceTable.getByRole("row").count(), 4);
   await page.getByRole("combobox", { name: "Statut des sources" }).selectOption("active");
+  await page.getByText("1–2 sur 2 sources").waitFor();
   assert.equal(await sourceTable.getByRole("row").count(), 3);
   await page.getByRole("combobox", { name: "Statut des sources" }).selectOption("inactive");
+  await page.getByText("1–1 sur 1 source").waitFor();
   assert.equal(await sourceTable.getByRole("row").count(), 2);
   await page.getByRole("combobox", { name: "Statut des sources" }).selectOption("all");
   await page.getByRole("searchbox", { name: "Rechercher une URL" }).fill("");
@@ -566,12 +578,15 @@ try {
     .getByRole("tab", { name: "SCRAPING", exact: true })
     .and(page.locator('[aria-selected="true"]'))
     .waitFor();
+  await page.getByText("1–1 sur 1 source").waitFor();
   assert.equal(await sourceTable.getByRole("row").count(), 2);
   assert.equal(
     await page.getByRole("link", { name: "Ajouter une source de scraping" }).getAttribute("href"),
     "/sources/new/scraping",
   );
-  await page.unroute("**/api/sources");
+  await db.source.deleteMany({
+    where: { userId: tableOwnerId, id: { in: sourceTableFixture.map((source) => source.id) } },
+  });
   await page.goto(`${config.FRONTEND_ORIGIN}/sources`);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("link", { name: "Sources", exact: true }).click();

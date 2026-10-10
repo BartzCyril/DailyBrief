@@ -24,6 +24,18 @@ export type Source = {
   scrapingConfig: ScrapingConfig | null;
   articleLinkSelector?: string | null;
 };
+export type SourceListQuery = {
+  type?: Source["type"];
+  status?: "all" | "active" | "inactive";
+  query?: string;
+  page?: number;
+};
+export type SourcePage = {
+  sources: Source[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
 export type ScrapingConfig = {
   articleSelector: string;
   titleSelector: string;

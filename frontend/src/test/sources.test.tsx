@@ -1,4 +1,4 @@
-import { emptyDashboard } from "./fixtures";
+import { emptyDashboard, sourcePageFixture } from "./fixtures";
 import { test, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -17,7 +17,7 @@ const preview = {
 };
 const source = {
   id: "s1",
-  type: "RSS",
+  type: "RSS" as const,
   url: "https://example.com/feed",
   enabled: true,
   scrapingConfig: null,
@@ -49,7 +49,8 @@ function mockApi() {
         { status: duplicate ? 409 : 201 },
       );
     }
-    if (url.endsWith("/sources")) return new Response(JSON.stringify(saved ? [source] : []));
+    if (new URL(url, "http://localhost").pathname === "/api/sources")
+      return new Response(JSON.stringify(sourcePageFixture(saved ? [source] : [], url)));
     return new Response("{}");
   });
   vi.stubGlobal("fetch", mock);

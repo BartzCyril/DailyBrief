@@ -89,9 +89,9 @@ describe("source deletion", () => {
       retainedArticle,
     );
     expect(await db.source.findUnique({ where: { id: otherSource.id } })).toEqual(otherSource);
-    expect((await agent.get("/sources")).body.map((source: { id: string }) => source.id)).toEqual([
-      otherSource.id,
-    ]);
+    expect(
+      (await agent.get("/sources")).body.sources.map((source: { id: string }) => source.id),
+    ).toEqual([otherSource.id]);
     expect(await db.newsletterArticle.count({ where: { newsletterId: newsletter.id } })).toBe(1);
     expect((await agent.delete(`/sources/${sourceId}`)).status).toBe(404);
     expect((await agent.delete(`/sources/${otherSource.id}`)).status).toBe(204);
