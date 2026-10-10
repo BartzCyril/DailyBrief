@@ -2,7 +2,7 @@ import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { randomUUID } from "node:crypto";
 import request from "supertest";
 import type { ScrapingConfig } from "@dailybrief/shared";
-import { scrapingSchema } from "../../shared/src/scraping";
+import { scrapingInputSchema, scrapingSchema } from "../../shared/src/scraping";
 import { ScrapingService, paginationUrl } from "../src/scraping";
 import { createApp } from "../src/app";
 import { AppError, UpstreamHttpError } from "../src/errors";
@@ -26,6 +26,16 @@ const paginate: ScrapingConfig = {
 };
 const html = (id: string) =>
   `<article><h2>Article ${id}</h2><a href="/articles/${id}">Lire</a><p>Description</p><time datetime="2026-10-06">Date</time></article>`;
+test("requires description and date for source input while retaining saved legacy configurations", () => {
+  expect(scrapingInputSchema.safeParse(scroll).success).toBe(true);
+  for (const field of ["descriptionSelector", "dateSelector"] as const) {
+    for (const value of [undefined, null, "", "   "]) {
+      expect(scrapingInputSchema.safeParse({ ...scroll, [field]: value }).success).toBe(false);
+    }
+  }
+  const legacy = { ...scroll, descriptionSelector: null, dateSelector: undefined };
+  expect(scrapingSchema.safeParse(legacy).success).toBe(true);
+});
 test("validates both modes and rejects incomplete configurations", () => {
   expect(scrapingSchema.safeParse(scroll).success).toBe(true);
   expect(scrapingSchema.safeParse(paginate).success).toBe(true);

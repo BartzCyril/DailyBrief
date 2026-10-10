@@ -76,6 +76,8 @@ async function fill() {
   await ui.type(screen.getByLabelText("Sélecteur des articles"), "article");
   await ui.type(screen.getByLabelText("Sélecteur du titre"), "h2");
   await ui.type(screen.getByLabelText("Sélecteur du lien"), "a");
+  await ui.type(screen.getByLabelText("Sélecteur de description"), "p");
+  await ui.type(screen.getByLabelText("Sélecteur de date"), "time");
   return ui;
 }
 async function choose(label: string, choice: string) {
@@ -114,6 +116,24 @@ test("shows only the controls for the selected mode and supports both pagination
   expect(screen.getByLabelText("Modèle d'URL")).toBeInTheDocument();
   expect(screen.queryByLabelText("Nom du paramètre")).not.toBeInTheDocument();
 });
+test("requires description and date before previewing or saving a new source", async () => {
+  const mock = mockApi();
+  mount();
+  const ui = await fill();
+  for (const label of ["Sélecteur de description", "Sélecteur de date"]) {
+    const input = screen.getByLabelText(label);
+    expect(input).toBeRequired();
+    const selector = (input as HTMLInputElement).value;
+    await ui.clear(input);
+    await ui.click(screen.getByRole("button", { name: "Tester" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "description et de date sont obligatoires",
+    );
+    expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
+    expect(mock.mock.calls.some((call) => call[0].endsWith("/scraping/test"))).toBe(false);
+    await ui.type(input, selector);
+  }
+});
 test("requires a page placeholder for template pagination", async () => {
   mount();
   const ui = await fill();
@@ -151,6 +171,8 @@ test("requires a load-more button, tests its settings and saves only the selecte
     articleSelector: "article",
     titleSelector: "h2",
     linkSelector: "a",
+    descriptionSelector: "p",
+    dateSelector: "time",
     mode: "LOAD_MORE",
     loadMore: { buttonSelector: ".more", waitTimeoutMs: 20000 },
   });

@@ -23,6 +23,8 @@ const scraping: Source = {
     articleSelector: "article",
     titleSelector: "h2",
     linkSelector: "a",
+    descriptionSelector: "p",
+    dateSelector: "time",
     mode: "PAGINATE",
     pagination: { strategy: "QUERY_PARAM", queryParam: "page", startPage: 0 },
   },
@@ -221,16 +223,16 @@ test("prefills every scraping field and saves selector and mode changes without 
   expect(screen.getByLabelText("Sélecteur des articles")).toHaveValue("article");
   expect(screen.getByLabelText("Sélecteur du titre")).toHaveValue("h2");
   expect(screen.getByLabelText("Sélecteur du lien")).toHaveValue("a");
-  expect(screen.getByLabelText("Sélecteur de description (facultatif)")).toHaveValue("p");
-  expect(screen.getByLabelText("Sélecteur de date (facultatif)")).toHaveValue("time");
+  expect(screen.getByLabelText("Sélecteur de description")).toHaveValue("p");
+  expect(screen.getByLabelText("Sélecteur de date")).toHaveValue("time");
   expect(screen.getByLabelText("Page de départ")).toHaveValue(0);
   expect(screen.getByRole("button", { name: "Enregistrer les modifications" })).toBeDisabled();
   for (const [label, value] of [
     ["Sélecteur des articles", ".card"],
     ["Sélecteur du titre", "h3"],
     ["Sélecteur du lien", ".link"],
-    ["Sélecteur de description (facultatif)", ""],
-    ["Sélecteur de date (facultatif)", ""],
+    ["Sélecteur de description", ".description"],
+    ["Sélecteur de date", ".date"],
   ]) {
     const input = screen.getByLabelText(label!);
     await ui.clear(input);
@@ -248,6 +250,8 @@ test("prefills every scraping field and saves selector and mode changes without 
     articleSelector: ".card",
     titleSelector: "h3",
     linkSelector: ".link",
+    descriptionSelector: ".description",
+    dateSelector: ".date",
     mode: "SCROLL",
     scroll: { maxScrolls: 0, waitAfterScrollMs: 250 },
   });
@@ -287,6 +291,24 @@ test("tests edited settings without saving, invalidates the preview and refuses 
   expect(await screen.findByRole("alert")).toHaveTextContent("sélecteurs requis");
   expect(fetcher.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
 });
+test("requires description and date when testing or saving changes to a source", async () => {
+  render(<Harness />);
+  const ui = await edit(scraping, "https://example.com/new-news");
+  for (const label of ["Sélecteur de description", "Sélecteur de date"]) {
+    const input = screen.getByLabelText(label);
+    expect(input).toBeRequired();
+    const selector = (input as HTMLInputElement).value;
+    await ui.clear(input);
+    await ui.click(screen.getByRole("button", { name: "Tester" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "description et de date sont obligatoires",
+    );
+    await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(stored[1]?.scrapingConfig).toEqual(scraping.scrapingConfig);
+    await ui.type(input, selector);
+  }
+});
 test("prefills and edits load-more fields, then drops them when changing modes", async () => {
   const source: Source = {
     ...scraping,
@@ -294,6 +316,8 @@ test("prefills and edits load-more fields, then drops them when changing modes",
       articleSelector: "article",
       titleSelector: "h2",
       linkSelector: "a",
+      descriptionSelector: "p",
+      dateSelector: "time",
       mode: "LOAD_MORE",
       loadMore: { buttonSelector: ".more", waitTimeoutMs: 25000 },
     },

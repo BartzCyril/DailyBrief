@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import type { SourcePreview, ScrapingConfig } from "@dailybrief/shared";
-import { scrapingSchema } from "../../../shared/src/scraping";
+import { scrapingInputSchema } from "../../../shared/src/scraping";
 import { LoaderCircle, Check } from "lucide-react";
 import { Field } from "@/components/Field";
 import { Button } from "@/components/ui/button";
@@ -44,12 +44,16 @@ export function ScrapingForm() {
       setError("Saisissez une URL HTTP ou HTTPS valide.");
       return;
     }
-    const validation = scrapingSchema.safeParse(buildScrapingConfig(draft));
+    const validation = scrapingInputSchema.safeParse(buildScrapingConfig(draft));
     if (!validation.success) {
       setError(
         validation.error.issues.some((issue) => issue.path.includes("urlTemplate"))
           ? "Le modèle d'URL doit contenir {page}."
-          : "Vérifiez les sélecteurs requis et les limites de collecte.",
+          : validation.error.issues.some((issue) =>
+                ["descriptionSelector", "dateSelector"].includes(String(issue.path[0])),
+              )
+            ? "Les sélecteurs de description et de date sont obligatoires. Vérifiez les sélecteurs requis."
+            : "Vérifiez les sélecteurs requis et les limites de collecte.",
       );
       return;
     }

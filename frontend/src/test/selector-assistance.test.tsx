@@ -21,6 +21,7 @@ const config: ScrapingConfig = {
   titleSelector: "h2",
   linkSelector: "a.read",
   descriptionSelector: ".intro",
+  dateSelector: "time",
   mode: "LOAD_MORE",
   loadMore: { buttonSelector: ".next-news", waitTimeoutMs: 20000 },
 };
@@ -93,6 +94,8 @@ test("fills scraping fields and retrieval mode, invalidating an existing preview
   await user.type(screen.getByLabelText("Sélecteur des articles"), "article");
   await user.type(screen.getByLabelText("Sélecteur du titre"), "h1");
   await user.type(screen.getByLabelText("Sélecteur du lien"), "a");
+  await user.type(screen.getByLabelText("Sélecteur de description"), "p");
+  await user.type(screen.getByLabelText("Sélecteur de date"), "time");
   await user.click(screen.getByRole("button", { name: "Tester" }));
   await screen.findByText(preview.articles[0]!.title);
   await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
@@ -303,6 +306,8 @@ test.each(["RSS", "SCRAPING"] as const)(
               articleSelector: "article",
               titleSelector: "h1",
               linkSelector: "a",
+              descriptionSelector: "p",
+              dateSelector: "time",
               mode: "SCROLL",
               scroll: { maxScrolls: 3, waitAfterScrollMs: 1000 },
             },

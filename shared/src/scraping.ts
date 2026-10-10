@@ -78,3 +78,10 @@ export const scrapingSchema = z
         });
     }
   });
+
+// Reading saved sources remains compatible with configurations created before
+// description and date became mandatory. New and edited configurations are strict.
+export const scrapingInputSchema = scrapingSchema.safeExtend({
+  descriptionSelector: selector,
+  dateSelector: selector,
+});

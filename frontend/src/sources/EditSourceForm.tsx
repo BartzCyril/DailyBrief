@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import type { Source, ScrapingConfig, SourcePreview } from "@dailybrief/shared";
-import { scrapingSchema } from "../../../shared/src/scraping";
+import { scrapingInputSchema } from "../../../shared/src/scraping";
 import { LoaderCircle } from "lucide-react";
 import { Field } from "@/components/Field";
 import { Button } from "@/components/ui/button";
@@ -91,12 +91,16 @@ export function EditSourceForm({
           articleLinkSelector.trim() || (source.articleLinkSelector ? null : undefined),
       };
     }
-    const validation = scrapingSchema.safeParse(buildScrapingConfig(draft));
+    const validation = scrapingInputSchema.safeParse(buildScrapingConfig(draft));
     if (!validation.success) {
       setError(
         validation.error.issues.some((issue) => issue.path.includes("urlTemplate"))
           ? "Le modèle d'URL doit contenir {page}."
-          : "Vérifiez les sélecteurs requis et les paramètres de collecte.",
+          : validation.error.issues.some((issue) =>
+                ["descriptionSelector", "dateSelector"].includes(String(issue.path[0])),
+              )
+            ? "Les sélecteurs de description et de date sont obligatoires. Vérifiez les sélecteurs requis."
+            : "Vérifiez les sélecteurs requis et les paramètres de collecte.",
       );
       return null;
     }

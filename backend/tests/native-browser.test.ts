@@ -94,7 +94,7 @@ const server = createServer((request, response) => {
     response.setHeader("Content-Type", "text/html");
     response.end(
       Buffer.from(
-        '<!doctype html><meta charset="iso-8859-1"><main><article><h2><a href="/article">Données du cloud en été</a></h2></article></main>',
+        '<!doctype html><meta charset="iso-8859-1"><main><article><h2><a href="/article">Données du cloud en été</a></h2><p>Description détaillée du cloud</p><time datetime="2026-10-09">9 octobre 2026</time></article></main>',
         "latin1",
       ),
     );
@@ -190,6 +190,8 @@ test("Chromium decodes a legacy meta charset before selector AI receives the ren
           articleSelector: "article",
           titleSelector: "h2",
           linkSelector: "h2 a",
+          descriptionSelector: "p",
+          dateSelector: "time",
           mode: "SCROLL",
           scroll: { maxScrolls: 0, waitAfterScrollMs: 800 },
         }),

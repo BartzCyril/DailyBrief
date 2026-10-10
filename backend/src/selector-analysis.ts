@@ -6,7 +6,7 @@ import type {
   SelectorAnalysisInput,
   SelectorAnalysisResult,
 } from "@dailybrief/shared";
-import { scrapingSchema } from "../../shared/src/scraping";
+import { scrapingInputSchema } from "../../shared/src/scraping";
 import { OllamaClient } from "./ai";
 import { articleBrowserLimiter } from "./article-browser";
 import { ConcurrencyLimiter } from "./concurrency";
@@ -41,8 +41,8 @@ const scrapingCandidateSchema = z
     articleSelector: selector,
     titleSelector: selector,
     linkSelector: selector,
-    descriptionSelector: selector.nullish(),
-    dateSelector: selector.nullish(),
+    descriptionSelector: selector,
+    dateSelector: selector,
     mode: z.enum(["SCROLL", "PAGINATE", "LOAD_MORE"]),
     scroll: z
       .object({
@@ -234,7 +234,7 @@ export function selectorAnalysisPrompt(
 ): string {
   const task =
     input.kind === "SCRAPING"
-      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector et linkSelector sont RELATIFS à ce bloc, chacun doit désigner un seul titre/lien. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, présents dans les attributs observés, sans :contains ni syntaxe Playwright. Ne crée pas de sélecteur pour un champ facultatif absent. Mode par défaut SCROLL avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}; il autorise une collecte bornée, sans affirmer que le site charge de nouveaux articles. Utilise LOAD_MORE uniquement si un bouton explicite de nouveaux articles est observé (loadMore={"buttonSelector":"...","waitTimeoutMs":10000}). Utilise PAGINATE uniquement si des liens de pages numérotées prouvent l'URL et le paramètre; n'invente pas un schéma de pagination. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
+      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector, linkSelector, descriptionSelector et dateSelector sont RELATIFS à ce bloc. Les cinq sélecteurs sont obligatoires : titre, lien, description ou extrait et date de publication doivent être observables. Chaque sélecteur désigne un seul élément par bloc. Pour la date, utilise le texte ou l'attribut datetime d'un élément observé. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, présents dans les attributs observés, sans :contains ni syntaxe Playwright. Si la description ou la date est absente, retourne {} pour proposer une aide humaine ; n'invente aucun sélecteur. Mode par défaut SCROLL avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}; il autorise une collecte bornée, sans affirmer que le site charge de nouveaux articles. Utilise LOAD_MORE uniquement si un bouton explicite de nouveaux articles est observé (loadMore={"buttonSelector":"...","waitTimeoutMs":10000}). Utilise PAGINATE uniquement si des liens de pages numérotées prouvent l'URL et le paramètre; n'invente pas un schéma de pagination. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
       : input.kind === "RSS_LINK"
         ? `Cette page est une notice intermédiaire d'un item RSS. Trouve le lien principal « Consulter le document », « Lire l'article » ou équivalent vers le site du journal EXTERNE. Écarte partage social, publicité, menu, abonnement et autres documents. articleLinkSelector doit cibler exactement une balise a avec href HTTP(S), jamais le site de la notice. Retourne {"articleLinkSelector":"..."}.`
         : `Cette page est un formulaire de connexion PUBLIC. Repère l'input identifiant/email visible, l'input type=password et le bouton qui soumet ce même formulaire. Chaque sélecteur CSS doit cibler un unique élément visible. Utilise les attributs réellement observés, jamais un identifiant utilisateur. Ne tente aucune connexion. Aucun élément propre au compte connecté n'est observable: n'invente JAMAIS successSelector ou un sélecteur de contenu abonné. Retourne uniquement {"emailSelector":"...","passwordSelector":"...","submitSelector":"..."}.`;
@@ -509,22 +509,22 @@ function validateScraping(document: Document, url: string, config: ScrapingConfi
       );
     urls.add(href);
   }
-  for (const optional of [config.descriptionSelector, config.dateSelector]) {
-    if (!optional) continue;
+  for (const field of [config.descriptionSelector, config.dateSelector]) {
+    if (!field) continue;
     let observed = false;
     for (const block of blocks) {
-      if (!select(block, optional, false).length) continue;
-      const match = unique(block, optional, false);
+      if (!select(block, field, false).length) continue;
+      const match = unique(block, field, false);
       if (!(match.textContent?.trim() || match.getAttribute("datetime")?.trim()))
         throw analysisError(
-          "Un champ facultatif proposé ne contient aucune information.",
+          "Le sélecteur de description ou de date proposé ne contient aucune information.",
           "INVALID_SELECTOR_ANALYSIS",
         );
       observed = true;
     }
     if (!observed)
       throw analysisError(
-        "Un champ facultatif proposé n'existe pas dans les articles.",
+        "Le sélecteur de description ou de date proposé n'existe pas dans les articles.",
         "INVALID_SELECTOR_ANALYSIS",
       );
   }
@@ -731,7 +731,7 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
           );
         const base = { analyzedUrl: publicUrl, complete: true, missingFields: [] as string[] };
         if (input.kind === "SCRAPING") {
-          const parsed = scrapingSchema.safeParse(value);
+          const parsed = scrapingInputSchema.safeParse(value);
           if (!parsed.success)
             throw analysisError(
               "L'IA n'a pas identifié tous les sélecteurs requis pour cette liste d'articles.",

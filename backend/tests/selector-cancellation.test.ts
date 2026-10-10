@@ -22,13 +22,15 @@ const config = readConfig({
 });
 const input: SelectorAnalysisInput = { kind: "SCRAPING", url: "https://publisher.example/" };
 const page: PublicSelectorPage = {
-  html: '<main><article><h2>Premier article</h2><a href="/first">Lire</a></article><article><h2>Deuxième article</h2><a href="/second">Lire</a></article></main>',
+  html: '<main><article><h2>Premier article</h2><a href="/first">Lire</a><p>Description du premier article</p><time datetime="2026-10-09">9 octobre</time></article><article><h2>Deuxième article</h2><a href="/second">Lire</a><p>Description du deuxième article</p><time datetime="2026-10-08">8 octobre</time></article></main>',
   url: input.url,
 };
 const scrapingConfig = {
   articleSelector: "article",
   titleSelector: "h2",
   linkSelector: "a",
+  descriptionSelector: "p",
+  dateSelector: "time",
   mode: "SCROLL" as const,
   scroll: { maxScrolls: 0, waitAfterScrollMs: 300 },
 };

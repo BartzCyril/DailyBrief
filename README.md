@@ -268,7 +268,12 @@ Une erreur de récupération ou une adresse déjà utilisée laisse la source ex
 inchangée. « Annuler » ferme le formulaire sans enregistrer.
 
 L'identifiant, les articles existants et l'état actif ou inactif sont conservés.
-Les sélecteurs facultatifs peuvent être effacés et le mode de récupération changé.
+Les sélecteurs de description et de date sont obligatoires lors de la création,
+du test de configuration et de la modification d'une source de scraping, au même titre
+que ceux des articles, du titre et du lien. Le formulaire et l'API refusent les champs
+absents, vides ou constitués uniquement d'espaces. Les anciennes configurations restent
+lisibles pour la collecte et le workflow ; complétez-les avant de modifier leur URL
+ou leurs réglages. Le mode de récupération peut être changé.
 Pour une pagination par modèle d'URL, conservez `{page}`. Son préfixe suit l'URL de départ
 si le modèle utilise cette adresse et n'a pas été modifié manuellement.
 Seul le propriétaire de la source peut la modifier.
@@ -285,8 +290,10 @@ un curseur pointeur lorsqu'il est disponible.
 À la création ou à la modification d'une source, renseignez son adresse puis cliquez
 sur « Remplir avec l'IA ». Pour un flux RSS avec lien intermédiaire, l'analyse ouvre
 une notice du flux pour chercher le lien vers le journal. Pour le scraping, elle
-propose les sélecteurs d'articles, de titre et de lien ainsi que les champs facultatifs
-et le mode de chargement lorsqu'ils sont identifiables. Les résultats remplissent
+propose les cinq sélecteurs obligatoires (articles, titre, lien, description et date)
+et le mode de chargement lorsqu'ils sont identifiables. Si la description ou la date
+ne peut pas être identifiée, l'analyse propose une aide humaine sans inventer de sélecteur.
+Les résultats remplissent
 le formulaire sans l'enregistrer : vérifiez-les puis utilisez « Tester » avant de sauvegarder.
 Une modification de l'adresse invalide les résultats. « Annuler l'analyse » interrompt
 la requête IA ; fermer le formulaire l'interrompt également.

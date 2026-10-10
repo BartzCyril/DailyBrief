@@ -47,6 +47,34 @@ const feed: SourcePreview = {
   articles: [{ title: "Notice", url: notice.url, publishedAt: null, description: null }],
 };
 
+test("scraping AI requires observed description and date and never accepts an incomplete configuration", async () => {
+  for (const field of ["descriptionSelector", "dateSelector"]) {
+    for (const value of [undefined, null, "", "   "]) {
+      await assert.rejects(
+        provider({ ...scraping, [field]: value }).service.analyze({
+          kind: "SCRAPING",
+          url: "https://publisher.example/",
+        }),
+        { code: "INVALID_SELECTOR_AI_RESPONSE" },
+      );
+    }
+    await assert.rejects(
+      provider({ ...scraping, [field]: ".absent" }).service.analyze({
+        kind: "SCRAPING",
+        url: "https://publisher.example/",
+      }),
+      { code: "INVALID_SELECTOR_ANALYSIS" },
+    );
+  }
+  const prompt = selectorAnalysisPrompt(
+    { kind: "SCRAPING", url: "https://publisher.example/" },
+    { html: articlePage, url: "https://publisher.example/" },
+    12000,
+  );
+  expect(prompt).toContain("Les cinq sélecteurs sont obligatoires");
+  expect(prompt).toContain("Si la description ou la date est absente, retourne {}");
+});
+
 function provider(
   output: unknown,
   page: PublicSelectorPage = { html: articlePage, url: "https://publisher.example/" },
@@ -461,7 +489,7 @@ test("login analysis refuses fragment routes rather than returning a different f
 });
 
 test("scraping rejects responsive duplicates that the actual collector would resolve to a hidden element", async () => {
-  const config = { ...scraping, descriptionSelector: null, dateSelector: null };
+  const config = { ...scraping };
   for (const html of [
     `<article class="news"><h2 hidden>Mobile title</h2><h2>Visible title</h2><a href="/right">Visible</a></article>`,
     `<article class="news"><h2>Visible title</h2><a hidden href="/wrong">Mobile</a><a href="/right">Visible</a></article>`,

@@ -59,8 +59,8 @@ export function buildScrapingConfig(draft: ScrapingDraft): ScrapingConfig {
     articleSelector: draft.articleSelector,
     titleSelector: draft.titleSelector,
     linkSelector: draft.linkSelector,
-    ...(draft.descriptionSelector ? { descriptionSelector: draft.descriptionSelector } : {}),
-    ...(draft.dateSelector ? { dateSelector: draft.dateSelector } : {}),
+    descriptionSelector: draft.descriptionSelector,
+    dateSelector: draft.dateSelector,
     mode: draft.mode,
     ...(draft.mode === "SCROLL"
       ? {
@@ -208,14 +208,15 @@ export function ScrapingFields({ draft, update }: Props) {
             },
             {
               key: "descriptionSelector",
-              label: "Sélecteur de description (facultatif)",
+              label: "Sélecteur de description",
               placeholder: ".description",
             },
-            { key: "dateSelector", label: "Sélecteur de date (facultatif)", placeholder: "time" },
+            { key: "dateSelector", label: "Sélecteur de date", placeholder: "time" },
           ] as const
         ).map((field) => (
           <Field
             key={field.key}
+            required
             label={field.label}
             value={draft[field.key]}
             placeholder={field.placeholder}

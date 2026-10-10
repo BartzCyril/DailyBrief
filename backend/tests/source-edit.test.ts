@@ -12,6 +12,8 @@ const scrapingConfig = {
   articleSelector: "article",
   titleSelector: "h2",
   linkSelector: "a",
+  descriptionSelector: "p",
+  dateSelector: "time",
   mode: "PAGINATE",
   pagination: { strategy: "QUERY_PARAM", queryParam: "page", startPage: 0 },
 };
@@ -159,7 +161,54 @@ describe("source URL editing", () => {
     ).toBe(400);
     expect(requests).toHaveLength(0);
   });
-  test("edits all scraping settings at the same URL, clears optional selectors and switches modes without losing history", async () => {
+  test("rejects missing description or date on preview, creation and modification before fetching or writing", async () => {
+    await db.source.update({
+      where: { id: sourceId },
+      data: { type: "SCRAPING", url: "https://fixture.example/scroll", scrapingConfig },
+    });
+    for (const field of ["descriptionSelector", "dateSelector"]) {
+      for (const value of [undefined, null, "", "   "]) {
+        const invalid = { ...scrapingConfig, [field]: value };
+        expect(
+          (
+            await agent
+              .post("/sources/scraping/test")
+              .send({ url: "https://fixture.example/new", config: invalid })
+          ).status,
+        ).toBe(400);
+        expect(
+          (
+            await agent.post("/sources").send({
+              url: "https://fixture.example/new",
+              type: "SCRAPING",
+              scrapingConfig: invalid,
+            })
+          ).status,
+        ).toBe(400);
+        expect((await patch({ scrapingConfig: invalid, enabled: true })).status).toBe(400);
+      }
+    }
+    expect(requests).toHaveLength(0);
+    expect(await db.source.count({ where: { userId } })).toBe(1);
+    expect(await db.source.findUniqueOrThrow({ where: { id: sourceId } })).toMatchObject({
+      enabled: false,
+      scrapingConfig,
+    });
+  });
+  test("retains activation for legacy sources but requires description and date when editing their URL", async () => {
+    const { descriptionSelector: _description, dateSelector: _date, ...legacy } = scrapingConfig;
+    await db.source.update({
+      where: { id: sourceId },
+      data: { type: "SCRAPING", scrapingConfig: legacy },
+    });
+    expect((await patch({ enabled: true })).status).toBe(204);
+    expect((await patch({ url: "https://fixture.example/new" })).status).toBe(400);
+    expect(requests).toHaveLength(0);
+    expect((await db.source.findUniqueOrThrow({ where: { id: sourceId } })).scrapingConfig).toEqual(
+      legacy,
+    );
+  });
+  test("edits all scraping settings at the same URL, retains required description and date selectors and switches modes without losing history", async () => {
     await db.source.update({
       where: { id: sourceId },
       data: { type: "SCRAPING", url: "https://fixture.example/scroll", scrapingConfig },

@@ -4,7 +4,7 @@ import { requireAuth } from "./auth";
 import type { Db } from "./db";
 import { RssService } from "./rss";
 import { ScrapingService } from "./scraping";
-import { scrapingSchema } from "../../shared/src/scraping";
+import { scrapingInputSchema } from "../../shared/src/scraping";
 import { AppError } from "./errors";
 import { articleLinkSelectorSchema } from "../../shared/src/rss";
 import { validateArticleLinkSelector } from "./article-content";
@@ -31,7 +31,10 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
     ),
   );
   router.post("/scraping/test", async (req, res) => {
-    const input = z.object({ url: urlSchema, config: scrapingSchema }).strict().parse(req.body);
+    const input = z
+      .object({ url: urlSchema, config: scrapingInputSchema })
+      .strict()
+      .parse(req.body);
     const result = await scraping.collect(input.url, input.config);
     res.json({ ...result, articles: result.articles.slice(0, 50) });
   });
@@ -47,7 +50,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
       .object({
         enabled: z.boolean().optional(),
         url: urlSchema.optional(),
-        scrapingConfig: scrapingSchema.optional(),
+        scrapingConfig: scrapingInputSchema.optional(),
         articleLinkSelector: articleLinkSelectorSchema,
         urlTemplate: z.string().trim().min(1).max(2000).optional(),
       })
@@ -69,7 +72,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
     const data: {
       enabled?: boolean;
       url?: string;
-      scrapingConfig?: z.infer<typeof scrapingSchema>;
+      scrapingConfig?: z.infer<typeof scrapingInputSchema>;
       articleLinkSelector?: string | null;
     } = {};
     if (input.enabled !== undefined) data.enabled = input.enabled;
@@ -99,7 +102,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
           );
         if (url !== source.url) await rss.collect(url);
       } else {
-        const config = input.scrapingConfig ?? scrapingSchema.parse(source.scrapingConfig);
+        const config = input.scrapingConfig ?? scrapingInputSchema.parse(source.scrapingConfig);
         const templatePagination =
           config.mode === "PAGINATE" && config.pagination?.strategy === "URL_TEMPLATE";
         if (input.urlTemplate !== undefined && !templatePagination)
@@ -122,7 +125,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
         const updated =
           input.urlTemplate === undefined
             ? config
-            : scrapingSchema.parse({
+            : scrapingInputSchema.parse({
                 ...config,
                 pagination: { ...config.pagination, urlTemplate: input.urlTemplate },
               });
@@ -154,7 +157,11 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
           })
           .strict(),
         z
-          .object({ url: urlSchema, type: z.literal("SCRAPING"), scrapingConfig: scrapingSchema })
+          .object({
+            url: urlSchema,
+            type: z.literal("SCRAPING"),
+            scrapingConfig: scrapingInputSchema,
+          })
           .strict(),
       ])
       .parse(req.body);

@@ -78,7 +78,7 @@ const selectorPage: FetchPage = async (url, options) => {
     contentType: "text/html",
     text: url.includes("rss-article")
       ? noticeHtml
-      : '<main><article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article><button class="more">Charger plus</button></main>',
+      : '<main><article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p><time datetime="2026-10-09">9 octobre 2026</time></article><button class="more">Charger plus</button></main>',
   };
 };
 const selectorClient = new OllamaClient(config, async (_url, init) => {
@@ -98,6 +98,7 @@ const selectorClient = new OllamaClient(config, async (_url, init) => {
           titleSelector: "h2",
           linkSelector: "a",
           descriptionSelector: "p",
+          dateSelector: "time",
           mode: "LOAD_MORE",
           loadMore: { buttonSelector: ".more", waitTimeoutMs: 10000 },
         };
@@ -140,7 +141,7 @@ const app = createApp(db, redis, config, {
           ? '<article><h2>Article supplémentaire</h2><a href="/scraped-next">Lire</a></article>'
           : '<article><h2>Dernier article chargé</h2><a href="/scraped-last">Lire</a></article>',
       });
-    return `<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article><button id="more" class="more">Plus</button><script>
+    return `<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p><time datetime="2026-10-09">9 octobre 2026</time></article><button id="more" class="more">Plus</button><script>
       let batch=0; const button=document.querySelector('#more');
       button.onclick=async()=>{
         if(button.classList.contains('fetching')) return;
@@ -349,6 +350,11 @@ try {
     await page.getByLabel("Sélecteur des articles", { exact: true }).inputValue(),
     "article",
   );
+  assert.equal(await page.getByLabel("Sélecteur de description").inputValue(), "p");
+  assert.equal(await page.getByLabel("Sélecteur de date").inputValue(), "time");
+  for (const label of ["Sélecteur de description", "Sélecteur de date"]) {
+    assert.equal(await page.getByLabel(label).getAttribute("required"), "");
+  }
   assert.equal(await page.getByLabel("Sélecteur du bouton", { exact: true }).inputValue(), ".more");
   assert(
     await page
@@ -411,7 +417,11 @@ try {
   await page.getByLabel("Sélecteur des articles", { exact: true }).fill("article");
   await page.getByLabel("Sélecteur du titre", { exact: true }).fill("h2:first-of-type");
   await page.getByLabel("Sélecteur du lien", { exact: true }).fill("a[href]");
-  await page.getByLabel("Sélecteur de description (facultatif)").fill("p");
+  await page.getByLabel("Sélecteur de description").fill("p");
+  assert.equal(await page.getByLabel("Sélecteur de date").inputValue(), "time");
+  for (const label of ["Sélecteur de description", "Sélecteur de date"]) {
+    assert.equal(await page.getByLabel(label).getAttribute("required"), "");
+  }
   assert.equal(await page.getByLabel("Sélecteur du bouton").inputValue(), ".more");
   await page.getByLabel("Sélecteur du bouton").fill("#more");
   await page.getByLabel("Délai maximum après un clic (ms)").fill("20000");
@@ -464,6 +474,7 @@ try {
     titleSelector: "h2:first-of-type",
     linkSelector: "a[href]",
     descriptionSelector: "p",
+    dateSelector: "time",
     mode: "PAGINATE",
     pagination: { strategy: "QUERY_PARAM", queryParam: "offset", startPage: 0 },
   });

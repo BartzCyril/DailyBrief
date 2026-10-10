@@ -17,7 +17,7 @@ const routes = new Map<string, { body: Buffer; headers?: IncomingHttpHeaders }>(
     "/html-meta-latin",
     {
       body: Buffer.from(
-        '<!DOCTYPE html><html><head><meta charset="iso-8859-1"></head><body><div id="main"><article><h2><a href="/article">Données du cloud en été</a></h2></article></div></body></html>',
+        '<!DOCTYPE html><html><head><meta charset="iso-8859-1"></head><body><div id="main"><article><h2><a href="/article">Données du cloud en été</a></h2><p>Description détaillée du cloud</p><time datetime="2026-10-09">9 octobre 2026</time></article></div></body></html>',
         "latin1",
       ),
       headers: { "content-type": "text/html" },
@@ -239,6 +239,8 @@ test("legacy HTML reaches Chromium and selector AI with decoded titles and valid
           articleSelector: "article",
           titleSelector: "h2",
           linkSelector: "h2 a",
+          descriptionSelector: "p",
+          dateSelector: "time",
           mode: "SCROLL",
           scroll: { maxScrolls: 0, waitAfterScrollMs: 800 },
         }),
