@@ -3,6 +3,7 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public code?: string,
+    public helpRequestId?: string,
   ) {
     super(message);
   }
@@ -28,10 +29,19 @@ export async function apiResponse(
     throw new ApiError(0, "Connexion impossible. Vérifiez votre réseau puis réessayez.");
   }
   if (!response.ok) {
-    const data = (await response.json().catch(() => ({}))) as { message?: string; code?: string };
+    const data = (await response.json().catch(() => ({}))) as {
+      message?: string;
+      code?: string;
+      helpRequestId?: string;
+    };
     if (response.status === 401 && !path.startsWith("/auth/"))
       window.dispatchEvent(new Event("dailybrief:unauthenticated"));
-    throw new ApiError(response.status, data.message ?? "La requête a échoué.", data.code);
+    throw new ApiError(
+      response.status,
+      data.message ?? "La requête a échoué.",
+      data.code,
+      data.helpRequestId,
+    );
   }
   return response;
 }

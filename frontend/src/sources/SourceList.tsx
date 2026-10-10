@@ -22,6 +22,7 @@ export function SourceList({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState("");
+  const [helpBusyId, setHelpBusyId] = useState("");
   const [message, setMessage] = useState("");
   async function remove(source: Source) {
     if (busy) return;
@@ -108,7 +109,7 @@ export function SourceList({
                       setError("");
                       setMessage("");
                     }}
-                    busy={!!busy}
+                    busy={!!busy || helpBusyId === source.id}
                     title={
                       source.type === "RSS"
                         ? "Modifier le flux RSS"
@@ -133,6 +134,11 @@ export function SourceList({
                       key={source.id}
                       source={source}
                       busy={!!busy}
+                      onBlockingChange={(blocked) =>
+                        setHelpBusyId((current) =>
+                          blocked ? source.id : current === source.id ? "" : current,
+                        )
+                      }
                       onSave={(url, config, articleLinkSelector) =>
                         updateSource(source, url, config, articleLinkSelector)
                       }

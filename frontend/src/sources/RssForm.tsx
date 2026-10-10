@@ -9,6 +9,7 @@ import { errorMessage } from "@/lib/api";
 import { sourcesApi, validHttpUrl } from "./api";
 import { ArticlePreview } from "./ArticlePreview";
 import { RssArticleLinkField, validArticleLinkSelector } from "./RssArticleLinkField";
+import { SelectorAssistance } from "./SelectorAssistance";
 export function RssForm() {
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
@@ -16,9 +17,11 @@ export function RssForm() {
   const [preview, setPreview] = useState<SourcePreview | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
+  const [assistanceBusy, setAssistanceBusy] = useState(false);
+  const pending = !!busy || assistanceBusy;
   async function test(event: FormEvent) {
     event.preventDefault();
-    if (busy) return;
+    if (pending) return;
     setError("");
     setPreview(null);
     if (!validHttpUrl(url)) {
@@ -39,7 +42,7 @@ export function RssForm() {
     }
   }
   async function save() {
-    if (!preview || busy) return;
+    if (!preview || pending) return;
     setBusy("save");
     setError("");
     try {
@@ -58,7 +61,7 @@ export function RssForm() {
           label="URL du flux RSS"
           type="url"
           value={url}
-          disabled={!!busy}
+          disabled={pending}
           onChange={(event) => {
             setUrl(event.target.value);
             setPreview(null);
@@ -67,9 +70,22 @@ export function RssForm() {
           placeholder="https://example.com/feed.xml"
           required
         />
+        <SelectorAssistance
+          kind="RSS_LINK"
+          url={url}
+          disabled={!!busy}
+          onBusyChange={setAssistanceBusy}
+          onStart={() => {
+            setPreview(null);
+            setError("");
+          }}
+          onResult={(result) => {
+            if (result.kind === "RSS_LINK") setArticleLinkSelector(result.articleLinkSelector);
+          }}
+        />
         <RssArticleLinkField
           value={articleLinkSelector}
-          disabled={!!busy}
+          disabled={pending}
           onChange={(value) => {
             setArticleLinkSelector(value);
             setPreview(null);
@@ -77,14 +93,14 @@ export function RssForm() {
           }}
         />
         <div className="flex flex-wrap gap-3">
-          <Button type="submit" disabled={!!busy}>
+          <Button type="submit" disabled={pending}>
             {busy === "test" && <LoaderCircle className="animate-spin" />}
             {busy === "test" ? "Test du flux en cours…" : "Tester"}
           </Button>
           <Button
             type="button"
             variant="outline"
-            disabled={!preview || !!busy}
+            disabled={!preview || pending}
             onClick={() => void save()}
           >
             {busy === "save" ? <LoaderCircle className="animate-spin" /> : <Check />}

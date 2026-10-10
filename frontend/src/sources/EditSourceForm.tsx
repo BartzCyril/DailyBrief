@@ -9,6 +9,7 @@ import { errorMessage } from "@/lib/api";
 import { sourcesApi, validHttpUrl } from "./api";
 import { ArticlePreview } from "./ArticlePreview";
 import { RssArticleLinkField, validArticleLinkSelector } from "./RssArticleLinkField";
+import { SelectorAssistance } from "./SelectorAssistance";
 import {
   ScrapingFields,
   createScrapingDraft,
@@ -21,6 +22,7 @@ export function EditSourceForm({
   busy,
   onSave,
   onCancel,
+  onBlockingChange,
 }: {
   source: Source;
   busy: boolean;
@@ -30,6 +32,7 @@ export function EditSourceForm({
     articleLinkSelector?: string | null,
   ) => Promise<void>;
   onCancel: () => void;
+  onBlockingChange?: (blocked: boolean) => void;
 }) {
   const [url, setUrl] = useState(source.url);
   const [articleLinkSelector, setArticleLinkSelector] = useState(source.articleLinkSelector ?? "");
@@ -37,8 +40,9 @@ export function EditSourceForm({
   const [templateEdited, setTemplateEdited] = useState(false);
   const [error, setError] = useState("");
   const [testing, setTesting] = useState(false);
+  const [assistanceBusy, setAssistanceBusy] = useState(false);
   const [preview, setPreview] = useState<SourcePreview | null>(null);
-  const pending = busy || testing;
+  const pending = busy || testing || assistanceBusy;
   const unchanged =
     url.trim() === source.url &&
     (source.type === "RSS"
@@ -145,6 +149,26 @@ export function EditSourceForm({
           autoFocus
           onChange={(event) => changeUrl(event.target.value)}
         />
+      </fieldset>
+      <SelectorAssistance
+        kind={source.type === "RSS" ? "RSS_LINK" : "SCRAPING"}
+        url={url}
+        disabled={busy || testing}
+        onBusyChange={setAssistanceBusy}
+        onPendingChange={(pending) => onBlockingChange?.(pending === "help")}
+        onStart={() => {
+          setPreview(null);
+          setError("");
+        }}
+        onResult={(result) => {
+          if (result.kind === "RSS_LINK") setArticleLinkSelector(result.articleLinkSelector);
+          else if (result.kind === "SCRAPING") {
+            setDraft(createScrapingDraft(result.scrapingConfig));
+            setTemplateEdited(false);
+          }
+        }}
+      />
+      <fieldset disabled={pending} className="space-y-5 min-w-0">
         {source.type === "SCRAPING" ? (
           <ScrapingFields draft={draft} update={update} />
         ) : (

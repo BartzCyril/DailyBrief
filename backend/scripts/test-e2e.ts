@@ -15,6 +15,11 @@ import { RssService } from "../src/rss";
 import { ScrapingService } from "../src/scraping";
 import { UpstreamHttpError } from "../src/errors";
 import { NewsletterEmailService, type NewsletterMessage } from "../src/email";
+import { OllamaClient } from "../src/ai";
+import { OllamaSelectorAnalysisProvider } from "../src/selector-analysis";
+import { SmtpSelectorHelpSender, type SelectorHelpMessage } from "../src/selector-support";
+import { AppError } from "../src/errors";
+import type { FetchPage } from "../src/network";
 
 const url = process.env.TEST_DATABASE_URL;
 if (!url || !new URL(url).pathname.endsWith("_test"))
@@ -25,11 +30,16 @@ const config = readConfig({
   PORT: "3001",
   FRONTEND_ORIGIN: "http://127.0.0.1:5174",
   NODE_ENV: "test",
+  SMTP_USER: "selector-help@example.test",
 });
 const db = createDb(url);
 const redis = createRedis(config.REDIS_URL);
 await redis.connect();
 const messages: NewsletterMessage[] = [];
+const helpMessages: SelectorHelpMessage[] = [];
+const selectorPrompts: string[] = [];
+let selectorAiFailure = false;
+let selectorMailFailure = false;
 const scrapingRequests: string[] = [];
 const articleRequests: string[] = [];
 let releaseSummary = () => {};
@@ -41,20 +51,85 @@ const sender = new NewsletterEmailService(
   nodemailer.createTransport({ jsonTransport: true }),
 );
 const loginFixture = journalFixture();
+const noticeHtml =
+  '<article><p>Notice de bibliothèque à ne pas résumer.</p><a class="accessToPrimaryDoc primarydoc" target="_blank" href="https://publisher.example/full-article">Consulter le document</a></article>';
+const testRss = new RssService(
+  async () =>
+    "<rss><channel><title>Flux de test</title><item><title>Article RSS</title><link>https://fixture.example/rss-article</link><description>Informations RSS contrôlées.</description></item></channel></rss>",
+);
+const selectorPage: FetchPage = async (url, options) => {
+  assert(
+    !options?.method || options.method === "GET",
+    "Selector analysis must never submit a form",
+  );
+  if (url === "https://publisher.example/")
+    return {
+      url,
+      status: 200,
+      cookies: [],
+      contentType: "text/html",
+      text: '<main><a href="/login">Se connecter</a></main>',
+    };
+  if (url === loginConfig.loginUrl) return loginFixture.fetch(url, options);
+  return {
+    url,
+    status: 200,
+    cookies: [],
+    contentType: "text/html",
+    text: url.includes("rss-article")
+      ? noticeHtml
+      : '<main><article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p></article><button class="more">Charger plus</button></main>',
+  };
+};
+const selectorClient = new OllamaClient(config, async (_url, init) => {
+  const body = JSON.parse(String(init?.body));
+  selectorPrompts.push(body.prompt);
+  assert.equal(body.think, false);
+  assert.equal(body.options.temperature, 0);
+  assert.equal(body.options.num_ctx, 8192);
+  if (selectorAiFailure) return new Response("{}", { status: 503 });
+  const fields = body.format.anyOf[0].properties;
+  const suggestion = fields.articleLinkSelector
+    ? { articleLinkSelector: "a.accessToPrimaryDoc.primarydoc" }
+    : fields.emailSelector
+      ? { emailSelector: "#email", passwordSelector: "#password", submitSelector: "#submit" }
+      : {
+          articleSelector: "article",
+          titleSelector: "h2",
+          linkSelector: "a",
+          descriptionSelector: "p",
+          mode: "LOAD_MORE",
+          loadMore: { buttonSelector: ".more", waitTimeoutMs: 10000 },
+        };
+  return new Response(JSON.stringify({ done: true, response: JSON.stringify(suggestion) }));
+});
+const helpSender = new SmtpSelectorHelpSender(
+  config,
+  nodemailer.createTransport({ jsonTransport: true }),
+);
 const app = createApp(db, redis, config, {
+  selectorAnalysis: new OllamaSelectorAnalysisProvider(config, {
+    client: selectorClient,
+    fetchPage: selectorPage,
+    rss: testRss,
+  }),
+  selectorHelpSender: {
+    async send(message) {
+      if (selectorMailFailure)
+        throw new AppError(503, "Envoi de la demande impossible. Réessayez.", "SMTP_FAILED");
+      await helpSender.send(message);
+      helpMessages.push(message);
+    },
+  },
   journalLogin: new JournalLoginBrowser((url, options) =>
     loginFixture.fetch(url.replace("/full-article", "/article"), options),
   ),
   articleContent: new ArticleContentService(async (url) => {
     articleRequests.push(url);
-    if (url === "https://fixture.example/rss-article")
-      return '<article><p>Notice de bibliothèque à ne pas résumer.</p><a class="accessToPrimaryDoc primarydoc" target="_blank" href="https://publisher.example/full-article">Consulter le document</a></article>';
+    if (url === "https://fixture.example/rss-article") return noticeHtml;
     return `<article><h1>Article complet</h1><p>${"Ces informations complètes viennent de la page liée et complètent le flux RSS. ".repeat(12)} Information finale conservée.</p></article>`;
   }),
-  rss: new RssService(
-    async () =>
-      "<rss><channel><title>Flux de test</title><item><title>Article RSS</title><link>https://fixture.example/rss-article</link><description>Informations RSS contrôlées.</description></item></channel></rss>",
-  ),
+  rss: testRss,
   scraping: new ScrapingService(async (url) => {
     scrapingRequests.push(url);
     const offset = new URL(url).searchParams.get("offset");
@@ -211,6 +286,41 @@ try {
   await page.waitForURL("**/sources");
   await page.getByRole("link", { name: "Ajouter un flux RSS" }).click();
   await page.getByLabel("URL du flux RSS").fill("https://fixture.example/feed");
+  await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
+  await page.getByText(/Lien externe vérifié sur une notice du flux/).waitFor();
+  assert.equal(
+    await page.getByLabel("Sélecteur du lien vers l'article (facultatif)").inputValue(),
+    "a.accessToPrimaryDoc.primarydoc",
+  );
+  assert.equal(helpMessages.length, 0, "Successful analysis must not send mail");
+  assert(await page.getByRole("button", { name: "Enregistrer le flux", exact: true }).isDisabled());
+  selectorAiFailure = true;
+  await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "Le service IA est indisponible" }).waitFor();
+  assert.equal(helpMessages.length, 0, "AI failure must not send mail without a click");
+  const askHelp = page.getByRole("button", { name: "Envoyer une demande d'aide", exact: true });
+  selectorMailFailure = true;
+  await askHelp.click();
+  await page.getByText("Envoi de la demande impossible. Réessayez.", { exact: true }).waitFor();
+  assert.equal(helpMessages.length, 0);
+  selectorMailFailure = false;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await askHelp.focus();
+  await page.keyboard.press("Enter");
+  await page.getByText(/La demande d.aide a été envoyée/).waitFor();
+  assert.equal(helpMessages.length, 1);
+  assert.equal(helpMessages[0]?.to, config.SMTP_USER);
+  assert.equal(helpMessages[0]?.replyTo, email);
+  assert(helpMessages[0]?.text.includes("https://fixture.example/feed"));
+  assert(helpMessages[0]?.text.includes("sélecteur CSS"));
+  assert(await askHelp.isDisabled());
+  assert(
+    await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    "Selector assistance must fit mobile",
+  );
+  await page.screenshot({ path: "/tmp/dailybrief-selector-help-mobile.png", fullPage: true });
+  selectorAiFailure = false;
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByLabel("Sélecteur du lien vers l'article (facultatif)").fill("a.primarydoc");
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article RSS", { exact: true }).waitFor();
@@ -231,6 +341,22 @@ try {
   await page.getByText("https://fixture.example/updated-feed", { exact: true }).waitFor();
   await page.getByRole("link", { name: "Ajouter une source de scraping" }).click();
   await page.getByLabel("URL du site").fill("https://fixture.example/news");
+  await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
+  await page.getByText(/Sélecteurs vérifiés sur les articles présents/).waitFor();
+  assert.equal(
+    await page.getByLabel("Sélecteur des articles", { exact: true }).inputValue(),
+    "article",
+  );
+  assert.equal(await page.getByLabel("Sélecteur du bouton", { exact: true }).inputValue(), ".more");
+  assert(
+    await page
+      .getByRole("combobox", { name: "Mode de récupération" })
+      .innerText()
+      .then((text) => text.includes("Bouton charger plus")),
+  );
+  assert(
+    await page.getByRole("button", { name: "Enregistrer la source", exact: true }).isDisabled(),
+  );
   await page.getByLabel("Sélecteur des articles", { exact: true }).fill("article");
   await page.getByLabel("Sélecteur du titre", { exact: true }).fill("h2");
   await page.getByLabel("Sélecteur du lien", { exact: true }).fill("a");
@@ -382,6 +508,37 @@ try {
     .waitFor();
   assert.equal(messages.length, 0);
   await page.getByRole("button", { name: "Configurer l'accès" }).click();
+  await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
+  await page.getByText(/Champs et bouton vérifiés/).waitFor();
+  assert.equal(
+    await page.getByLabel("URL du formulaire de connexion").inputValue(),
+    loginConfig.loginUrl,
+  );
+  assert.equal(
+    await page.getByLabel("Sélecteur du champ email", { exact: true }).inputValue(),
+    "#email",
+  );
+  assert.equal(await page.getByLabel("Sélecteur visible après connexion").inputValue(), "");
+  assert.equal(
+    await page.getByLabel("Email pour publisher.example").inputValue(),
+    "subscriber@example.test",
+  );
+  assert.equal(
+    loginFixture.requests.filter((request) => request.options?.method === "POST").length,
+    0,
+  );
+  assert.equal(helpMessages.length, 1, "Partial login analysis must wait for a click before email");
+  await page.getByRole("button", { name: "Envoyer une demande d'aide", exact: true }).click();
+  await page.getByText(/La demande d.aide a été envoyée/).waitFor();
+  assert.equal(helpMessages.length, 2);
+  assert(helpMessages[1]?.text.includes("Élément visible uniquement après une connexion réussie"));
+  assert(
+    selectorPrompts.every(
+      (prompt) =>
+        !prompt.includes("test-only-journal-password") &&
+        !prompt.includes("subscriber@example.test"),
+    ),
+  );
   await page.getByLabel("URL du formulaire de connexion").fill(loginConfig.loginUrl);
   await page
     .getByLabel("Sélecteur du champ email", { exact: true })
@@ -636,15 +793,27 @@ try {
   assert.equal(await db.article.count({ where: { userId: user.id } }), 0);
   await page.getByRole("button", { name: "Se déconnecter" }).click();
   await page.waitForURL("**/login");
+  assert.equal(helpMessages.length, 2, "Only the two explicit help requests may send help emails");
+  assert(
+    helpMessages.every(
+      (message) =>
+        message.to === config.SMTP_USER && !message.text.includes("test-only-journal-password"),
+    ),
+  );
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: register, login, separate sources and journals navigation, modal journal addition and domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: RSS, scraping and journal selector autofill through public Chromium and structured AI; partial login and failed AI help on explicit click only, SMTP retry, no credentials in AI, mobile and keyboard assistance; register, login, separate sources and journals navigation, modal journal addition and domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();
   await browser.close();
   frontend.kill("SIGTERM");
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  const account = await db.user.findUnique({ where: { email }, select: { id: true } });
+  if (account) {
+    const helpKeys = await redis.keys(`dailybrief:selector-help:user:${account.id}:*`);
+    if (helpKeys.length) await redis.del(helpKeys);
+  }
   await db.user.deleteMany({ where: { email } });
   await db.$disconnect();
   await redis.quit();

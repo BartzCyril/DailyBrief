@@ -1,4 +1,10 @@
 export type User = { id: string; email: string };
+export type {
+  SelectorAnalysisKind,
+  SelectorAnalysisInput,
+  SelectorAnalysisResult,
+  SelectorAnalysisResponse,
+} from "./selector-assistance";
 export type ArticlePreview = {
   title: string;
   url: string | null;

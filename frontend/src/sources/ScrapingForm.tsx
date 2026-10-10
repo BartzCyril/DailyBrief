@@ -13,8 +13,10 @@ import {
   ScrapingFields,
   defaultDraft,
   buildScrapingConfig,
+  createScrapingDraft,
   type ScrapingDraft,
 } from "./ScrapingFields";
+import { SelectorAssistance } from "./SelectorAssistance";
 export function ScrapingForm() {
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
@@ -26,6 +28,8 @@ export function ScrapingForm() {
   } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
+  const [assistanceBusy, setAssistanceBusy] = useState(false);
+  const pending = !!busy || assistanceBusy;
   function update(value: Partial<ScrapingDraft>) {
     setDraft((previous) => ({ ...previous, ...value }));
     setTested(null);
@@ -33,7 +37,7 @@ export function ScrapingForm() {
   }
   async function test(event: FormEvent) {
     event.preventDefault();
-    if (busy) return;
+    if (pending) return;
     setError("");
     setTested(null);
     if (!validHttpUrl(url)) {
@@ -60,7 +64,7 @@ export function ScrapingForm() {
     }
   }
   async function save() {
-    if (!tested || busy) return;
+    if (!tested || pending) return;
     setBusy("save");
     setError("");
     try {
@@ -75,7 +79,7 @@ export function ScrapingForm() {
   return (
     <div className="space-y-6">
       <form onSubmit={test} noValidate className="space-y-5">
-        <fieldset disabled={!!busy} className="space-y-5">
+        <fieldset disabled={pending} className="space-y-5">
           <Field
             label="URL du site"
             type="url"
@@ -87,17 +91,32 @@ export function ScrapingForm() {
             }}
             placeholder="https://example.com/articles"
           />
+        </fieldset>
+        <SelectorAssistance
+          kind="SCRAPING"
+          url={url}
+          disabled={!!busy}
+          onBusyChange={setAssistanceBusy}
+          onStart={() => {
+            setTested(null);
+            setError("");
+          }}
+          onResult={(result) => {
+            if (result.kind === "SCRAPING") setDraft(createScrapingDraft(result.scrapingConfig));
+          }}
+        />
+        <fieldset disabled={pending} className="space-y-5">
           <ScrapingFields draft={draft} update={update} />
         </fieldset>
         <div className="flex flex-wrap gap-3">
-          <Button type="submit" disabled={!!busy}>
+          <Button type="submit" disabled={pending}>
             {busy === "test" && <LoaderCircle className="animate-spin" />}
             {busy === "test" ? "Test du scraping en cours…" : "Tester"}
           </Button>
           <Button
             type="button"
             variant="outline"
-            disabled={!tested || !!busy}
+            disabled={!tested || pending}
             onClick={() => void save()}
           >
             {busy === "save" ? <LoaderCircle className="animate-spin" /> : <Check />}

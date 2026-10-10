@@ -60,8 +60,10 @@ export class OllamaClient {
     private config: Config,
     private fetcher: HttpFetch = fetch,
   ) {}
-  async request(path: string, body?: unknown): Promise<unknown> {
-    const signal = AbortSignal.timeout(this.config.OLLAMA_TIMEOUT_MS);
+  async request(path: string, body?: unknown, externalSignal?: AbortSignal): Promise<unknown> {
+    externalSignal?.throwIfAborted();
+    const deadline = AbortSignal.timeout(this.config.OLLAMA_TIMEOUT_MS);
+    const signal = externalSignal ? AbortSignal.any([deadline, externalSignal]) : deadline;
     try {
       const response = await this.fetcher(
         `${this.config.OLLAMA_BASE_URL.replace(/\/$/, "")}${path}`,
@@ -76,6 +78,7 @@ export class OllamaClient {
             : {}),
         },
       );
+      externalSignal?.throwIfAborted();
       if (response.status === 404)
         throw new AppError(
           503,
@@ -85,6 +88,7 @@ export class OllamaClient {
       if (!response.ok)
         throw new AppError(503, "Le service IA est indisponible.", "AI_UNAVAILABLE");
       const content = await response.text();
+      externalSignal?.throwIfAborted();
       if (content.length > 1024 * 1024)
         throw new AppError(502, "Réponse IA trop volumineuse.", "INVALID_AI_RESPONSE");
       try {
@@ -93,6 +97,8 @@ export class OllamaClient {
         throw new AppError(502, "Réponse IA invalide.", "INVALID_AI_RESPONSE");
       }
     } catch (error) {
+      // A caller cancellation is not an Ollama outage or generation deadline.
+      externalSignal?.throwIfAborted();
       if (error instanceof AppError) throw error;
       if (
         signal.aborted ||

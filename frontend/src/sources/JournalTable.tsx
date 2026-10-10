@@ -7,6 +7,7 @@ import { Modal } from "@/components/Modal";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { sourcesApi } from "./api";
 import { errorMessage } from "@/lib/api";
+import { SelectorAssistance, type SelectorAssistancePending } from "./SelectorAssistance";
 
 function formDefaults(journal: JournalPreview): JournalLoginConfig {
   return (
@@ -44,13 +45,19 @@ function JournalRow({
   const [email, setEmail] = useState(journal.email ?? "");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [assistancePending, setAssistancePending] = useState<SelectorAssistancePending>(null);
   const [error, setError] = useState("");
   const [form, setForm] = useState<JournalLoginConfig>(() => formDefaults(journal));
+  const [assistanceUrl, setAssistanceUrl] = useState(
+    journal.loginConfig?.loginUrl || `https://${journal.domain}`,
+  );
+  const pending = busy || !!assistancePending;
+  const modalBusy = busy || assistancePending === "help";
   const [connectionResult, setConnectionResult] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [domain, setDomain] = useState(journal.domain);
   async function changeDomain() {
-    if (busy) return;
+    if (pending) return;
     setBusy(true);
     setError("");
     setConnectionResult("");
@@ -76,7 +83,7 @@ function JournalRow({
     setForm(formDefaults({ ...saved, count: journal.count }));
   }
   async function update(body: Parameters<typeof sourcesApi.updateJournal>[1]) {
-    if (busy) return;
+    if (pending) return;
     setBusy(true);
     setError("");
     setConnectionResult("");
@@ -90,6 +97,7 @@ function JournalRow({
     }
   }
   async function testConnection() {
+    if (pending) return;
     setBusy(true);
     setError("");
     setConnectionResult("");
@@ -118,7 +126,7 @@ function JournalRow({
       <td className="p-3">
         <Button
           variant="outline"
-          disabled={busy}
+          disabled={pending}
           aria-label={`${journal.enabled ? "Désactiver" : "Activer"} ${journal.domain}`}
           aria-pressed={journal.enabled}
           onClick={() => void update({ enabled: !journal.enabled })}
@@ -145,13 +153,14 @@ function JournalRow({
               if (open) {
                 setEmail(journal.email ?? "");
                 setForm(formDefaults(journal));
+                setAssistanceUrl(journal.loginConfig?.loginUrl || `https://${journal.domain}`);
               }
             }}
-            busy={busy}
+            busy={modalBusy}
             title={`Configurer l'accès à ${journal.domain}`}
             description="Enregistrez les identifiants et, si nécessaire, les paramètres du formulaire de connexion."
             trigger={
-              <Button variant="outline" disabled={!journal.enabled || busy}>
+              <Button variant="outline" disabled={!journal.enabled || pending}>
                 Configurer l'accès
               </Button>
             }
@@ -174,7 +183,7 @@ function JournalRow({
                 });
               }}
             >
-              <fieldset disabled={busy} className="min-w-0 space-y-5">
+              <fieldset disabled={pending} className="min-w-0 space-y-5">
                 <label className="flex flex-col gap-2 text-sm">
                   Email pour {journal.domain}
                   <Input
@@ -185,6 +194,31 @@ function JournalRow({
                     onChange={(event) => setEmail(event.target.value)}
                   />
                 </label>
+              </fieldset>
+              <SelectorAssistance
+                kind="JOURNAL_LOGIN"
+                url={assistanceUrl}
+                disabled={busy}
+                onPendingChange={setAssistancePending}
+                onStart={() => {
+                  setError("");
+                  setConnectionResult("");
+                }}
+                onResult={(result) => {
+                  if (result.kind !== "JOURNAL_LOGIN") return;
+                  setForm((previous) => ({
+                    ...previous,
+                    ...result.loginConfig,
+                    successSelector:
+                      previous.successSelector || result.loginConfig.successSelector || "",
+                    articleContentSelector:
+                      previous.articleContentSelector ||
+                      result.loginConfig.articleContentSelector ||
+                      "",
+                  }));
+                }}
+              />
+              <fieldset disabled={pending} className="min-w-0 space-y-5">
                 <fieldset className="min-w-0 space-y-4 rounded-lg border p-4">
                   <legend className="px-1 font-medium">Connexion automatique</legend>
                   <p className="text-sm text-muted-foreground">
@@ -205,9 +239,12 @@ function JournalRow({
                           Boolean(form.loginUrl || journal.loginConfig)
                         }
                         autoComplete="off"
-                        onChange={(event) =>
-                          setForm((previous) => ({ ...previous, [key]: event.target.value }))
-                        }
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setForm((previous) => ({ ...previous, [key]: value }));
+                          if (key === "loginUrl")
+                            setAssistanceUrl(value || `https://${journal.domain}`);
+                        }}
                       />
                     </label>
                   ))}
@@ -228,22 +265,23 @@ function JournalRow({
                     onChange={(event) => setPassword(event.target.value)}
                   />
                 </label>
-                <div className="flex flex-wrap gap-3">
-                  <Button type="submit" disabled={busy}>
-                    Enregistrer les identifiants
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setPassword("");
-                      setEditing(false);
-                    }}
-                  >
-                    Annuler
-                  </Button>
-                </div>
               </fieldset>
+              <div className="flex flex-wrap gap-3">
+                <Button type="submit" disabled={pending}>
+                  Enregistrer les identifiants
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={modalBusy}
+                  onClick={() => {
+                    setPassword("");
+                    setEditing(false);
+                  }}
+                >
+                  Annuler
+                </Button>
+              </div>
               <Feedback message={error} error />
             </form>
           </Modal>

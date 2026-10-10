@@ -272,6 +272,57 @@ qui nomme le type : « Êtes-vous sûr de vouloir supprimer ce flux RSS ? » ou
 sources et les newsletters restent conservées. L'interrupteur d'activation affiche
 un curseur pointeur lorsqu'il est disponible.
 
+### Aide automatique pour les sélecteurs
+
+À la création ou à la modification d'une source, renseignez son adresse puis cliquez
+sur « Remplir avec l'IA ». Pour un flux RSS avec lien intermédiaire, l'analyse ouvre
+une notice du flux pour chercher le lien vers le journal. Pour le scraping, elle
+propose les sélecteurs d'articles, de titre et de lien ainsi que les champs facultatifs
+et le mode de chargement lorsqu'ils sont identifiables. Les résultats remplissent
+le formulaire sans l'enregistrer : vérifiez-les puis utilisez « Tester » avant de sauvegarder.
+Une modification de l'adresse invalide les résultats. « Annuler l'analyse » interrompt
+la requête IA ; fermer le formulaire l'interrompt également.
+
+Dans la configuration d'accès d'un journal, le même bouton analyse l'adresse du
+formulaire de connexion, ou cherche un lien de connexion sur la page publique du
+journal. Il propose les champs d'identifiant et de mot de passe et le bouton d'envoi.
+L'analyse ne soumet pas le formulaire et ne reçoit pas vos identifiants. Le sélecteur
+confirmant une connexion réussie doit être vérifié après connexion ; l'IA ne peut
+pas le déduire de la page publique. Les champs déjà renseignés restent conservés.
+
+Les sélecteurs proposés sont contrôlés sur la page chargée dans Chromium : un
+résultat ambigu, masqué ou absent est refusé. L'IA reçoit une structure de page
+limitée, sans scripts, valeurs des champs ni paramètres d'URL privés, avec des
+instructions pour traiter cette structure comme des données et éviter les sélecteurs
+inventés. L'analyse ne clique sur aucun bouton, ne se connecte pas et ne parcourt pas les pages suivantes.
+Les sites bloqués par un CAPTCHA ou imposant une interaction peuvent nécessiter une aide manuelle.
+
+Si l'analyse échoue ou reste incomplète, « Envoyer une demande d'aide » permet
+d'envoyer un email à l'adresse configurée dans `SMTP_USER`. Aucun email n'est
+envoyé automatiquement. Le message indique le type de configuration, le site,
+la notice réellement analysée pour un RSS et les informations restant à trouver.
+L'adresse du compte sert de `Reply-To`. Les mots de passe, cookies, contenu HTML,
+prompts IA et paramètres privés des URL ne sont jamais inclus.
+
+Les demandes sont isolées par utilisateur et expirent après une heure. Un deuxième
+clic sur une demande déjà envoyée ne renvoie pas le mail. Après un refus SMTP
+explicite, une nouvelle tentative est possible ; une livraison incertaine bloque
+le renvoi de cette demande pour éviter les doublons. L'API limite chaque compte à
+10 analyses et 5 demandes d'aide par période de 15 minutes.
+
+Cette fonctionnalité utilise les réglages existants `OLLAMA_BASE_URL`, `OLLAMA_MODEL`,
+`OLLAMA_TIMEOUT_MS`, `AI_MAX_INPUT_CHARS` et `SMTP_*`. Préparez Chromium avec
+`bun run browser:install` (ou `bun run browser:prepare`). Conservez une limite
+`AI_MAX_INPUT_CHARS` suffisante, par exemple `16000`. `SMTP_USER` doit être une
+adresse email valide pour recevoir l'aide, même lorsque le serveur SMTP local
+n'exige pas d'authentification. Si votre serveur demande un identifiant qui n'est
+pas une adresse email, l'envoi d'aide affiche une erreur de configuration.
+Redémarrez le backend après avoir modifié `.env`.
+
+Les routes authentifiées sont `POST /ai/selectors/analyze` avec `{kind, url}`
+(`SCRAPING`, `RSS_LINK` ou `JOURNAL_LOGIN`) et `POST /ai/selectors/help` avec
+`{helpRequestId}`. Le destinataire et le contenu du mail sont déterminés côté serveur.
+
 ### Tester une source de A à Z
 
 Dans la liste des sources, « Tester le workflow de A à Z » ouvre une liste
@@ -298,8 +349,9 @@ flux NDJSON de progression/résultat. Les deux endpoints exigent une session
 et la propriété de la source ; le client ne peut pas remplacer l'URL sélectionnée
 dans l'aperçu. Plusieurs onglets peuvent conserver leurs aperçus indépendants.
 
-SMTP se configure dans `.env`. Le destinataire provient exclusivement de
-`User.email`. Mailpit utilise les valeurs locales proposées et permet de consulter
+SMTP se configure dans `.env`. Le destinataire d'une newsletter provient exclusivement de
+`User.email` ; les demandes d'aide pour les sélecteurs sont adressées à `SMTP_USER`.
+Mailpit utilise les valeurs locales proposées et permet de consulter
 les messages sur le port 8025. Le template fournit HTML échappé et texte brut.
 Pour un serveur SMTP réel, utilisez vos identifiants et `SMTP_SECURE` conformément
 à sa configuration ; ne désactivez pas la vérification TLS.
@@ -329,7 +381,9 @@ bun run test:e2e
 ```
 
 Le test navigateur parcourt inscription, connexion, ajout RSS, scraping Chromium,
-réglages, collecte, prévention d'un second envoi, affichage mobile et déconnexion.
+aide IA pour les trois types de configuration, demande d'aide après erreur ou
+résultat incomplet, réglages, collecte, prévention d'un second envoi, affichage
+mobile et déconnexion.
 Il utilise PostgreSQL/Redis réels et des transports contrôlés pour les sites,
 l'IA et Nodemailer. Il n'envoie aucun email externe. Les tests unitaires vérifient
 aussi les erreurs, l'isolation des utilisateurs, les verrous, les changements
