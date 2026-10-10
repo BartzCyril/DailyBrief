@@ -90,6 +90,7 @@ beforeEach(() => {
 });
 test("opens scraping from the sources page and validates URL and selectors", async () => {
   mount("/sources");
+  await userEvent.click(await screen.findByRole("tab", { name: "SCRAPING" }));
   await userEvent.click(
     await screen.findByRole("link", { name: "Ajouter une source de scraping" }),
   );
@@ -225,7 +226,7 @@ test("shows a repeated-page warning alongside the collected articles", async () 
   expect(await screen.findByText("Article extrait")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeEnabled();
 });
-test("saves a tested scraping source without userId and lists its mode", async () => {
+test("saves a tested scraping source without userId and opens the scraping tab", async () => {
   const mock = mockApi();
   mount();
   const ui = await fill();
@@ -233,7 +234,8 @@ test("saves a tested scraping source without userId and lists its mode", async (
   await screen.findByText("Article extrait");
   await ui.click(screen.getByRole("button", { name: "Enregistrer la source" }));
   expect(await screen.findByText("SCRAPING")).toBeInTheDocument();
-  expect(screen.getByText("SCROLL")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "SCRAPING" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByRole("link", { name: "https://example.com/news" })).toBeInTheDocument();
   const call = mock.mock.calls.find(
     (call) => call[0].endsWith("/sources") && call[1]?.method === "POST",
   );

@@ -69,7 +69,7 @@ export function ScrapingForm() {
     setError("");
     try {
       await sourcesApi.saveScraping(tested.url, tested.config);
-      navigate("/sources", { state: { message: "Source de scraping ajoutée." } });
+      navigate("/sources?type=scraping", { state: { message: "Source de scraping ajoutée." } });
     } catch (error) {
       setError(errorMessage(error));
     } finally {

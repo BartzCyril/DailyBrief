@@ -5,7 +5,10 @@ import { ScrapingForm } from "@/sources/ScrapingForm";
 export function NewSourcePage({ scraping = false }: { scraping?: boolean }) {
   return (
     <main className="max-w-3xl mx-auto px-5 py-8 space-y-6">
-      <Link to="/sources" className="text-sm text-primary underline">
+      <Link
+        to={scraping ? "/sources?type=scraping" : "/sources"}
+        className="text-sm text-primary underline"
+      >
         ← Retour aux sources
       </Link>
       <Card>

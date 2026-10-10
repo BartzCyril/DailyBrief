@@ -247,6 +247,12 @@ La navigation commune propose « Tableau de bord », « Sources » (`/sources`) 
 « Journaux » (`/journals`). Le tableau de bord conserve les statistiques et les
 réglages de collecte ; chaque page de configuration se charge indépendamment.
 
+La page « Sources » sépare les flux RSS et les sites de scraping en deux onglets.
+Chaque tableau affiche au plus cinq sources par page, avec recherche par URL et
+filtre sur les sources actives ou inactives. Les URL ouvrent directement le site,
+les points verts et rouges indiquent le statut, et les actions utilisent des icônes
+avec infobulles. Le bouton d'ajout et le retour après création suivent le type de source.
+
 Dans « Sources », le bouton « Modifier » ouvre une modale avec les mêmes champs que la création,
 préremplis avec les valeurs enregistrées : URL pour un flux RSS ; URL, sélecteurs
 d'articles, de titre, de lien, de description et de date, mode de récupération,

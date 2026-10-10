@@ -339,6 +339,7 @@ try {
     .fill("a.accessToPrimaryDoc.primarydoc");
   await page.getByRole("button", { name: "Enregistrer les modifications" }).click();
   await page.getByText("https://fixture.example/updated-feed", { exact: true }).waitFor();
+  await page.getByRole("tab", { name: "SCRAPING", exact: true }).click();
   await page.getByRole("link", { name: "Ajouter une source de scraping" }).click();
   await page.getByLabel("URL du site").fill("https://fixture.example/news");
   await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
@@ -369,7 +370,7 @@ try {
   await page.getByText("Dernier article chargé", { exact: true }).waitFor();
   scrapingRequests.length = 0;
   await page.getByRole("button", { name: "Enregistrer la source" }).click();
-  await page.waitForURL("**/sources");
+  await page.waitForURL("**/sources?type=scraping");
   assert.deepEqual(
     scrapingRequests,
     ["https://fixture.example/news"],
@@ -467,6 +468,63 @@ try {
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   // Inventory and configuration happen before any content extraction or AI.
+  // A browser-only source list fixture exercises more than one page without
+  // creating articles or adding feeds to the later real collection.
+  const storedSources = await db.source.findMany({ where: { user: { email } } });
+  const sourceTableFixture = [
+    ...Array.from({ length: 11 }, (_, index) => ({
+      id: `table-rss-${index + 1}`,
+      type: "RSS",
+      url: `https://fixture.example/table-feed/${index + 1}`,
+      enabled: index % 2 === 0,
+      scrapingConfig: null,
+    })),
+    ...storedSources.filter((source) => source.type === "SCRAPING"),
+  ];
+  await page.route("**/api/sources", (route) => route.fulfill({ json: sourceTableFixture }));
+  await page.goto(`${config.FRONTEND_ORIGIN}/sources`);
+  const sourceTable = page.getByRole("table", { name: "Sources configurées" });
+  await sourceTable.waitFor();
+  assert.equal(await sourceTable.getByRole("row").count(), 6);
+  assert(await page.getByRole("button", { name: "Page précédente" }).isDisabled());
+  await page.getByRole("button", { name: "Page suivante" }).click();
+  await page.getByRole("button", { name: "Page suivante" }).click();
+  assert.equal(await sourceTable.getByRole("row").count(), 2);
+  assert(await page.getByRole("button", { name: "Page suivante" }).isDisabled());
+  await page.getByRole("searchbox", { name: "Rechercher une URL" }).fill("TABLE-FEED/1");
+  assert.equal(await sourceTable.getByRole("row").count(), 4);
+  await page.getByRole("combobox", { name: "Statut des sources" }).selectOption("active");
+  assert.equal(await sourceTable.getByRole("row").count(), 3);
+  await page.getByRole("combobox", { name: "Statut des sources" }).selectOption("inactive");
+  assert.equal(await sourceTable.getByRole("row").count(), 2);
+  await page.getByRole("combobox", { name: "Statut des sources" }).selectOption("all");
+  await page.getByRole("searchbox", { name: "Rechercher une URL" }).fill("");
+  const workflowAction = page
+    .getByRole("link", { name: "Tester le workflow de A à Z", exact: true })
+    .first();
+  assert.equal((await workflowAction.textContent())?.trim(), "");
+  await workflowAction.focus();
+  await page.getByRole("tooltip").waitFor();
+  assert((await page.getByRole("tooltip").innerText()).includes("Tester le workflow de A à Z"));
+  await page.keyboard.press("Escape");
+  await page.screenshot({ path: "/tmp/dailybrief-source-table-desktop.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.screenshot({ path: "/tmp/dailybrief-source-table-mobile.png", fullPage: true });
+  await page.getByRole("tab", { name: "RSS", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await page
+    .getByRole("tab", { name: "SCRAPING", exact: true })
+    .and(page.locator('[aria-selected="true"]'))
+    .waitFor();
+  assert.equal(await sourceTable.getByRole("row").count(), 2);
+  assert.equal(
+    await page.getByRole("link", { name: "Ajouter une source de scraping" }).getAttribute("href"),
+    "/sources/new/scraping",
+  );
+  await page.unroute("**/api/sources");
+  await page.goto(`${config.FRONTEND_ORIGIN}/sources`);
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("link", { name: "Sources", exact: true }).click();
   await page.getByRole("link", { name: "Tester le workflow de A à Z" }).last().click();
   await page
@@ -734,6 +792,9 @@ try {
   const rssUrl = "https://fixture.example/updated-feed";
   const scrapingUrl = "https://fixture.example/updated-news";
   for (const sourceUrl of [rssUrl, scrapingUrl]) {
+    await page
+      .getByRole("tab", { name: sourceUrl === rssUrl ? "RSS" : "SCRAPING", exact: true })
+      .click();
     for (const action of ["Modifier", "Supprimer"]) {
       const button = page.getByRole("button", { name: `${action} ${sourceUrl}`, exact: true });
       assert.equal(
@@ -744,6 +805,7 @@ try {
       assert.equal(await button.evaluate((element) => getComputedStyle(element).cursor), "pointer");
     }
   }
+  await page.getByRole("tab", { name: "RSS", exact: true }).click();
   const activation = page.getByRole("switch", { name: `Activer ${rssUrl}`, exact: true });
   assert.equal(await activation.evaluate((element) => getComputedStyle(element).cursor), "pointer");
   await activation.click();
@@ -757,6 +819,7 @@ try {
   await page.keyboard.press("Escape");
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   assert(await rssEditTrigger.evaluate((element) => element === document.activeElement));
+  await page.getByRole("tab", { name: "SCRAPING", exact: true }).click();
   await page.getByRole("button", { name: `Supprimer ${scrapingUrl}`, exact: true }).click();
   assert(
     (await page.getByRole("alertdialog").innerText()).includes(
@@ -778,6 +841,7 @@ try {
   assert.equal(await db.source.count({ where: { userId: user.id } }), 1);
   assert.equal(await db.article.count({ where: { userId: user.id } }), 1);
   assert.equal(await db.newsletter.count({ where: { userId: user.id, status: "SENT" } }), 1);
+  await page.getByRole("tab", { name: "RSS", exact: true }).click();
   await page.getByRole("button", { name: `Supprimer ${rssUrl}`, exact: true }).click();
   assert(
     (await page.getByRole("alertdialog").innerText()).includes(

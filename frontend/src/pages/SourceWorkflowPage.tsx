@@ -93,7 +93,10 @@ export function SourceWorkflowPage() {
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 px-5 py-8">
-      <Link to="/sources" className="text-sm text-primary underline">
+      <Link
+        to={preview?.source.type === "SCRAPING" ? "/sources?type=scraping" : "/sources"}
+        className="text-sm text-primary underline"
+      >
         ← Retour aux sources
       </Link>
       <Card>
