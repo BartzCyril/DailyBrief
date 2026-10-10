@@ -14,12 +14,19 @@ import type { Config } from "./config";
 import { AppError, UpstreamHttpError } from "./errors";
 import { fetchRemotePage, RemoteConnectionError, type FetchPage } from "./network";
 import { MAX_REMOTE_BYTES } from "./remote-response";
+import {
+  BrowserNetwork,
+  publicBrowserOptions,
+  watchBrowserResponseSize,
+  watchBrowserRequests,
+  type BrowserNetworkFactory,
+} from "./browser-network";
 import { articleUrl, RssService } from "./rss";
 
 export interface SelectorAnalysisProvider {
   analyze(input: SelectorAnalysisInput, signal?: AbortSignal): Promise<SelectorAnalysisResult>;
 }
-export type PublicSelectorPage = { html: string; url: string };
+export type PublicSelectorPage = { html: string; url: string; status?: number };
 export type RenderSelectorPage = (url: string) => Promise<PublicSelectorPage>;
 export type SelectorAnalysisDependencies = {
   client?: OllamaClient;
@@ -104,6 +111,22 @@ export class SelectorAnalysisFailure extends AppError {
   constructor(error: AppError, pageUrl: string) {
     super(error.status, error.message, error.code);
     this.analyzedUrl = selectorPromptUrl(pageUrl) ?? undefined;
+  }
+}
+
+/** Preserve safe transport categories without retaining the source URL or error details. */
+export class PublicPageLoadFailure extends AppError {
+  readonly upstreamStatus?: number;
+  readonly networkReason?: RemoteConnectionError["reason"];
+
+  constructor(message: string, source: unknown) {
+    super(
+      source instanceof AppError && source.status === 400 ? 400 : 422,
+      message,
+      source instanceof AppError ? source.code : "SELECTOR_PAGE_UNAVAILABLE",
+    );
+    if (source instanceof UpstreamHttpError) this.upstreamStatus = source.upstreamStatus;
+    if (source instanceof RemoteConnectionError) this.networkReason = source.reason;
   }
 }
 
@@ -227,38 +250,35 @@ export function selectorAnalysisPrompt(
   return prefix + snapshot;
 }
 
-/** All browser traffic uses the shared DNS-pinned SSRF transport, in an anonymous context. */
+/** Chromium loads the URL itself; a TCP relay pins public destinations without reading HTTP. */
 export async function renderPublicSelectorPage(
   url: string,
-  fetchPage: FetchPage = fetchRemotePage,
+  fetchPage?: FetchPage,
+  createNetwork: BrowserNetworkFactory = () => BrowserNetwork.create(),
 ): Promise<PublicSelectorPage> {
   return articleBrowserLimiter.run(async () => {
     let browser;
+    let network: BrowserNetwork | undefined;
     try {
+      // An injected fetcher is reserved for deterministic fixtures. Production always
+      // uses Chromium's network stack, with no HTTP pre-download or route.fulfill.
+      if (!fetchPage) network = await createNetwork();
       browser = await chromium.launch({
         headless: true,
         executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+        ...network?.launchOptions,
       });
     } catch {
+      await network?.close();
       throw analysisError(
         "Chromium est nécessaire pour analyser les pages. Installez-le avec bun run browser:install.",
         "SELECTOR_BROWSER_UNAVAILABLE",
         503,
       );
     }
-    const platform =
-      process.platform === "win32"
-        ? "Windows NT 10.0; Win64; x64"
-        : process.platform === "darwin"
-          ? "Macintosh; Intel Mac OS X 10_15_7"
-          : "X11; Linux x86_64";
-    const context = await browser.newContext({
-      serviceWorkers: "block",
-      acceptDownloads: false,
-      locale: "fr-FR",
-      userAgent: `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${browser.version()} Safari/537.36`,
-    });
+    const context = await browser.newContext(publicBrowserOptions(browser.version()));
     let navigationError: AppError | undefined;
+    let status: number | undefined;
     let navigations = 0;
     let rejectNavigation = (_error: unknown) => {};
     const navigationFailure = new Promise<never>((_resolve, reject) => {
@@ -266,8 +286,73 @@ export async function renderPublicSelectorPage(
     });
     void navigationFailure.catch(() => {});
     const timer = setTimeout(() => void context.close().catch(() => {}), 35000);
+    const fail = (error: unknown) => {
+      // Never retain URLs, raw browser exceptions, cookies or query parameters.
+      const message =
+        error instanceof UpstreamHttpError
+          ? `Le site a refusé le chargement de la page (HTTP ${error.upstreamStatus}). L'analyse n'a pas été envoyée à l'IA.`
+          : error instanceof RemoteConnectionError
+            ? error.message
+            : error instanceof AppError && error.code === "UNSAFE_URL"
+              ? "La page utilise une adresse locale ou privée interdite."
+              : error instanceof AppError && error.code === "NETWORK_ERROR"
+                ? "Le serveur ne peut pas joindre le site (erreur réseau ou DNS). Vérifiez son accès à Internet et les éventuels proxy ou pare-feu."
+                : error instanceof AppError && error.code === "TIMEOUT"
+                  ? "Le site n'a pas répondu dans le délai de chargement. Réessayez dans quelques instants."
+                  : error instanceof AppError && error.code === "REDIRECT_LIMIT"
+                    ? "Le site effectue trop de redirections pour être analysé."
+                    : error instanceof AppError && error.code === "RESPONSE_TOO_LARGE"
+                      ? "La page dépasse la taille maximale autorisée pour l'analyse."
+                      : error instanceof AppError &&
+                          ["INVALID_TEXT_ENCODING", "UNSUPPORTED_TEXT_ENCODING"].includes(
+                            error.code,
+                          )
+                        ? "La page a été reçue, mais son encodage de caractères ne peut pas être lu par le serveur."
+                        : error instanceof AppError &&
+                            ["DECOMPRESSION_FAILED", "UNSUPPORTED_CONTENT_ENCODING"].includes(
+                              error.code,
+                            )
+                          ? "La page a été reçue, mais sa compression HTTP est invalide ou non prise en charge."
+                          : "Impossible de charger la page publique à analyser.";
+      navigationError ??= new PublicPageLoadFailure(message, error);
+      rejectNavigation(navigationError);
+    };
     try {
+      if (network) {
+        try {
+          await network.guard(url);
+        } catch (error) {
+          fail(error);
+          throw navigationError;
+        }
+      }
       const page = await context.newPage();
+      if (network) {
+        const nativeNetwork = network;
+        await watchBrowserResponseSize(page, fail);
+        await watchBrowserRequests(
+          page,
+          network,
+          (request) => {
+            if (request.method !== "GET")
+              throw new AppError(400, "Cette requête de page n'est pas autorisée.", "UNSAFE_URL");
+          },
+          (error, request) => {
+            if (request.mainNavigation) fail(error);
+          },
+        );
+        page.on("response", (response) => {
+          const request = response.request();
+          if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) return;
+          if (++navigations > 8) fail(analysisError("Trop de redirections.", "REDIRECT_LIMIT"));
+          if (response.status() >= 400)
+            fail(new UpstreamHttpError(response.status(), request.url()));
+        });
+        page.on("requestfailed", (request) => {
+          if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+            fail(nativeNetwork.failure(request.url(), request.failure()?.errorText));
+        });
+      }
       await context.route("**/*", async (route) => {
         const request = route.request();
         const mainNavigation =
@@ -280,10 +365,15 @@ export async function renderPublicSelectorPage(
           return;
         }
         try {
+          if (network) {
+            await network.guard(request.url());
+            await route.continue();
+            return;
+          }
           if (mainNavigation && ++navigations > 8)
             throw analysisError("La page boucle sur des redirections.", "REDIRECT_LIMIT");
           const headers = await request.allHeaders();
-          const response = await fetchPage(request.url(), {
+          const response = await fetchPage!(request.url(), {
             userAgent: headers["user-agent"],
             cookie: headers.cookie,
             accept: headers.accept,
@@ -317,48 +407,15 @@ export async function renderPublicSelectorPage(
             },
           });
         } catch (error) {
-          if (mainNavigation) {
-            // Transport error details can include query tokens; expose fixed messages only.
-            const message =
-              error instanceof UpstreamHttpError
-                ? `Le site a refusé le chargement de la page (HTTP ${error.upstreamStatus}). L'analyse n'a pas été envoyée à l'IA.`
-                : error instanceof RemoteConnectionError
-                  ? error.message
-                  : error instanceof AppError && error.code === "UNSAFE_URL"
-                    ? "La page utilise une adresse locale ou privée interdite."
-                    : error instanceof AppError && error.code === "NETWORK_ERROR"
-                      ? "Le serveur ne peut pas joindre le site (erreur réseau ou DNS). Vérifiez son accès à Internet et les éventuels proxy ou pare-feu."
-                      : error instanceof AppError && error.code === "TIMEOUT"
-                        ? "Le site n'a pas répondu dans le délai de chargement. Réessayez dans quelques instants."
-                        : error instanceof AppError && error.code === "REDIRECT_LIMIT"
-                          ? "Le site effectue trop de redirections pour être analysé."
-                          : error instanceof AppError && error.code === "RESPONSE_TOO_LARGE"
-                            ? "La page dépasse la taille maximale autorisée pour l'analyse."
-                            : error instanceof AppError &&
-                                ["INVALID_TEXT_ENCODING", "UNSUPPORTED_TEXT_ENCODING"].includes(
-                                  error.code,
-                                )
-                              ? "La page a été reçue, mais son encodage de caractères ne peut pas être lu par le serveur."
-                              : error instanceof AppError &&
-                                  ["DECOMPRESSION_FAILED", "UNSUPPORTED_CONTENT_ENCODING"].includes(
-                                    error.code,
-                                  )
-                                ? "La page a été reçue, mais sa compression HTTP est invalide ou non prise en charge."
-                                : "Impossible de charger la page publique à analyser.";
-            navigationError = analysisError(
-              message,
-              error instanceof AppError ? error.code : "SELECTOR_PAGE_UNAVAILABLE",
-              error instanceof AppError && error.status === 400 ? 400 : 422,
-            );
-            rejectNavigation(navigationError);
-          }
+          if (mainNavigation) fail(error);
           await route.abort().catch(() => {});
         }
       });
       await context.routeWebSocket("**/*", (socket) => socket.close());
       await Promise.race([
         (async () => {
-          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+          const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+          status = response?.status();
           // Allow hydration without waiting for analytics that never become idle.
           await page.waitForLoadState("networkidle", { timeout: 2500 }).catch(() => {});
           return;
@@ -385,7 +442,7 @@ export async function renderPublicSelectorPage(
           "RESPONSE_TOO_LARGE",
           413,
         );
-      return { html, url: page.url() };
+      return { html, url: page.url(), status };
     } catch (error) {
       if (navigationError) throw navigationError;
       if (error instanceof AppError) throw error;
@@ -396,6 +453,7 @@ export async function renderPublicSelectorPage(
     } finally {
       clearTimeout(timer);
       await browser.close().catch(() => {});
+      await network?.close();
     }
   });
 }
@@ -524,7 +582,7 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
     const fetchPage = dependencies.fetchPage ?? fetchRemotePage;
     this.client = dependencies.client ?? new OllamaClient(config);
     this.renderPage =
-      dependencies.renderPage ?? ((url) => renderPublicSelectorPage(url, fetchPage));
+      dependencies.renderPage ?? ((url) => renderPublicSelectorPage(url, dependencies.fetchPage));
     this.rss = dependencies.rss ?? new RssService(async (url) => (await fetchPage(url)).text);
     this.limiter = new ConcurrencyLimiter(config.AI_CONCURRENCY);
   }

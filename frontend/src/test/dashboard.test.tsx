@@ -65,14 +65,8 @@ test("shows statistics and links to separate sources and journals pages", async 
     ["Sources actives", "5"],
   ])
     expect(screen.getByText(label!).closest('[data-slot="card"]')).toHaveTextContent(count!);
-  expect(screen.getByRole("link", { name: "Gérer les sources" })).toHaveAttribute(
-    "href",
-    "/sources",
-  );
-  expect(screen.getByRole("link", { name: "Gérer les journaux" })).toHaveAttribute(
-    "href",
-    "/journals",
-  );
+  expect(screen.getByRole("link", { name: "Sources" })).toHaveAttribute("href", "/sources");
+  expect(screen.getByRole("link", { name: "Journaux" })).toHaveAttribute("href", "/journals");
   expect(screen.getByRole("link", { name: "Tableau de bord" })).toHaveAttribute(
     "aria-current",
     "page",

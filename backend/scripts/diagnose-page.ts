@@ -1,6 +1,10 @@
 import { AppError, UpstreamHttpError } from "../src/errors";
 import { fetchRemotePage, RemoteConnectionError, type FetchPage } from "../src/network";
-import { renderPublicSelectorPage, type RenderSelectorPage } from "../src/selector-analysis";
+import {
+  PublicPageLoadFailure,
+  renderPublicSelectorPage,
+  type RenderSelectorPage,
+} from "../src/selector-analysis";
 
 export type PageDiagnosis = {
   label: string;
@@ -22,8 +26,8 @@ export async function diagnosePage(
     throw new AppError(400, "Une URL HTTP ou HTTPS sans identifiants est requise.", "UNSAFE_URL");
   const results: PageDiagnosis[] = [];
   for (const [label, load] of [
-    ["Téléchargement sécurisé", () => fetchPage(url)],
-    ["Chromium public", () => renderPage(url)],
+    ["HTTP du serveur", () => fetchPage(url)],
+    ["Navigation Chromium native", () => renderPage(url)],
   ] as const) {
     try {
       const page = await load();
@@ -42,11 +46,22 @@ export async function diagnosePage(
               errorCode: "UPSTREAM_ERROR",
               message: `Refus HTTP ${error.upstreamStatus}.`,
             }
-          : error instanceof RemoteConnectionError
-            ? { errorCode: error.code, networkReason: error.reason, message: error.message }
-            : error instanceof AppError
-              ? { errorCode: error.code }
-              : { errorCode: "PAGE_LOAD_FAILED" }),
+          : error instanceof PublicPageLoadFailure
+            ? {
+                errorCode: error.code,
+                ...(error.upstreamStatus !== undefined
+                  ? {
+                      httpStatus: error.upstreamStatus,
+                      message: `Refus HTTP ${error.upstreamStatus}.`,
+                    }
+                  : {}),
+                ...(error.networkReason ? { networkReason: error.networkReason } : {}),
+              }
+            : error instanceof RemoteConnectionError
+              ? { errorCode: error.code, networkReason: error.reason, message: error.message }
+              : error instanceof AppError
+                ? { errorCode: error.code }
+                : { errorCode: "PAGE_LOAD_FAILED" }),
       });
     }
   }
@@ -61,13 +76,17 @@ if (import.meta.main) {
   } else {
     try {
       console.log("Diagnostic du chargement public : aucun appel IA, connexion ou email.");
+      console.log(
+        "Chromium charge directement l'URL, exécute JavaScript et récupère le HTML rendu.",
+      );
       const results = await diagnosePage(args[0]!);
       for (const result of results) {
         console.log(
           `${result.label} : ${result.success ? "OK" : "ÉCHEC"}${result.httpStatus ? ` · HTTP ${result.httpStatus}` : ""}${result.errorCode ? ` · ${result.errorCode}` : ""}${result.networkReason ? ` · ${result.networkReason}` : ""}${result.message ? ` · ${result.message}` : ""}`,
         );
       }
-      process.exitCode = results.every((result) => result.success) ? 0 : 1;
+      // HTTP is informational; the application now analyzes the native browser page.
+      process.exitCode = results.at(-1)?.success ? 0 : 1;
     } catch {
       console.error("Adresse invalide. Utilisez une URL publique HTTP ou HTTPS sans identifiants.");
       process.exitCode = 1;

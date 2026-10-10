@@ -1,7 +1,7 @@
 import { Readability } from "@mozilla/readability";
 import { JSDOM } from "jsdom";
 import { load } from "cheerio";
-import { AppError } from "./errors";
+import { AppError, UpstreamHttpError } from "./errors";
 import { fetchRemotePage, type FetchText, type FetchPage } from "./network";
 import { plainText } from "./rss";
 import { ArticleBrowser } from "./article-browser";
@@ -281,17 +281,32 @@ export class ArticleContentService {
   async fetch(url: string | null, observer?: (message: string) => void): Promise<string> {
     return (await this.fetchWithUrl(url, observer)).content;
   }
-  private async download(url: string, allowedHostname?: string) {
-    const page = await this.fetchPage(url, allowedHostname ? { allowedHostname } : undefined);
-    return typeof page === "string"
-      ? { html: page, url }
-      : { html: page.text, url: page.url ?? url };
+  private async download(
+    url: string,
+    allowedHostname?: string,
+    linkSelector?: string,
+    observer?: (message: string) => void,
+  ) {
+    try {
+      const page = await this.fetchPage(url, allowedHostname ? { allowedHostname } : undefined);
+      return typeof page === "string"
+        ? { html: page, url }
+        : { html: page.text, url: page.url ?? url };
+    } catch (error) {
+      // A public publisher may reject the HTTP client while accepting a real browser.
+      // Keep explicit rate limits and other transport failures as errors.
+      if (error instanceof UpstreamHttpError && error.upstreamStatus === 403) {
+        observer?.("Le chargement HTTP a été refusé. Ouverture de la page dans Chromium.");
+        return this.browser.render(url, linkSelector, allowedHostname);
+      }
+      throw error;
+    }
   }
   async resolveLink(url: string | null, selector: string): Promise<string> {
     if (!url)
       throw new AppError(422, "Cet article n'a pas de lien de notice.", "ARTICLE_URL_MISSING");
     validateArticleLinkSelector(selector);
-    let page = await this.download(url);
+    let page = await this.download(url, undefined, selector);
     try {
       return extractArticleLink(page.html, page.url, selector);
     } catch (error) {
@@ -313,7 +328,12 @@ export class ArticleContentService {
         "ARTICLE_URL_MISSING",
       );
     validateArticleLinkSelector(articleLinkSelector);
-    let page = await this.download(url, allowedHostname);
+    let page = await this.download(
+      url,
+      allowedHostname,
+      articleLinkSelector ?? undefined,
+      observer,
+    );
     if (articleLinkSelector) {
       observer?.(`Recherche du lien vers l'article sur la page intermédiaire : ${page.url}`);
       let target: string;
@@ -337,7 +357,7 @@ export class ArticleContentService {
       observer?.("Téléchargement de l'article depuis le lien sélectionné.");
       // Follow exactly one configured link. The usual DNS-pinned HTTP guard still
       // checks the destination and each redirect before any article is extracted.
-      page = await this.download(target);
+      page = await this.download(target, undefined, undefined, observer);
     }
     try {
       if (allowedHostname) assertPublicArticle(page.html);

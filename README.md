@@ -178,8 +178,9 @@ ouvrir sont conservés. Un lien manquant, une page protégée,
 un texte de moins de 200 caractères ou de plus de 200 000 caractères produit une
 erreur explicite ; la description du flux ne sert pas de remplacement silencieux.
 
-Si le HTML ne contient pas de texte exploitable ou renvoie une redirection
-JavaScript, Chromium charge la page dans un contexte neuf, exécute ses scripts
+Si la requête HTTP est refusée avec un code 403, si le HTML ne contient pas de texte
+exploitable ou renvoie une redirection JavaScript, Chromium charge directement l'URL
+dans un contexte neuf, exécute ses scripts
 et conserve les cookies de cette visite avant l'extraction du HTML rendu.
 Ce recours apparaît dans le journal en direct. Le contexte et ses cookies sont
 supprimés après l'article ; aucun cookie de connexion DailyBrief n'est transmis.
@@ -194,9 +195,10 @@ ce test recharge sa page au lieu de réutiliser le texte ou le résumé en base.
 Installez le navigateur avec `bun run browser:install` (ou préparez-le avec
 `bun run browser:prepare` et `CHROMIUM_EXECUTABLE_PATH` dans le cloud).
 
-Chaque requête du navigateur passe par la validation DNS et le transport épinglé.
-Les redirections des documents ouvrent une nouvelle navigation contrôlée pour
-éviter les suivis natifs échappant à l'interception. Les adresses privées,
+Les connexions du navigateur passent par un relais TCP temporaire qui vérifie les
+destinations publiques et fixe leur adresse IP ; Chromium réalise lui-même les
+requêtes HTTP et HTTPS. Les requêtes et leurs redirections sont contrôlées avant
+l'envoi, y compris le domaine du journal lorsqu'il est imposé. Les adresses privées,
 WebSockets, service workers et mutations HTTP restent bloqués. Le recours
 est borné à 45 secondes, 8 navigations, 2 navigateurs simultanés et 2 Mio de HTML
 rendu. Une protection CAPTCHA ou un refus persistant du site reste une erreur
@@ -297,12 +299,21 @@ instructions pour traiter cette structure comme des données et éviter les sél
 inventés. L'analyse ne clique sur aucun bouton, ne se connecte pas et ne parcourt pas les pages suivantes.
 Les sites bloqués par un CAPTCHA ou imposant une interaction peuvent nécessiter une aide manuelle.
 Une iframe publicitaire indisponible ne bloque pas l'analyse de la page principale.
-Les encodages HTML déclarés dans une balise `meta` (par exemple ISO-8859-1) sont
-lus avant le rendu ; le conteneur `#main` est également reconnu pour donner la
-priorité aux articles plutôt qu'aux longs menus. Le chargement conserve la langue
-et les métadonnées autorisées de Chromium ainsi que les référents du même site.
-Les erreurs précisent le refus HTTP, le problème DNS ou HTTPS, l'encodage,
-la compression ou le délai dépassé.
+Chromium charge directement l'URL avec `page.goto()`, exécute JavaScript et conserve
+les cookies pendant cette analyse, puis le serveur lit le HTML rendu avec `page.content()`.
+La page n'est pas téléchargée à l'avance par le client HTTP du serveur. Chromium
+gère lui-même HTTPS, les redirections, les cookies, la compression et les encodages
+HTML. Le conteneur `#main` est également reconnu pour donner la priorité aux articles
+plutôt qu'aux longs menus. Les sessions sont temporaires et isolées entre analyses.
+Le scraping public et le rendu navigateur des articles utilisent le même chargement
+natif ; les appels HTTP des flux RSS conservent leur fonctionnement.
+
+Un relais TCP local, propre à chaque navigateur, résout et vérifie les destinations
+publiques puis fixe leur adresse IP. Il transmet les octets sans lire ni reconstruire
+les requêtes HTTP ou les connexions TLS de Chromium. Les adresses privées sont
+bloquées également lors des redirections, avec des limites de taille et de durée.
+L'analyse ne soumet aucun formulaire. Les erreurs précisent le refus HTTP,
+le problème DNS ou HTTPS et le délai dépassé.
 
 Pour diagnostiquer une page depuis la machine qui exécute le backend :
 
@@ -310,11 +321,15 @@ Pour diagnostiquer une page depuis la machine qui exécute le backend :
 bun run diagnose:page "https://www.lemondeinformatique.fr/le-monde-du-cloud-computing-8.html"
 ```
 
-La commande compare le téléchargement sécurisé et le rendu Chromium utilisé pour
-l'analyse. Elle affiche uniquement les statuts et les catégories d'erreur, sans
+La commande compare une requête HTTP du serveur à une navigation native de
+Chromium, utilisée par l'analyse. Les deux chargements sont indépendants : un refus
+HTTP du serveur n'empêche pas de tester le navigateur. Elle affiche uniquement
+les statuts et les catégories d'erreur, sans
 HTML ni cookies, et n'appelle ni l'IA ni SMTP. Un code HTTP 403 signifie que la
 requête du backend a été refusée : un accès réussi dans un autre navigateur ou
 avec `curl` ne garantit pas que le site accepte cette requête.
+Le statut final de la commande dépend de Chromium ; un échec du client HTTP
+simple reste informatif si le navigateur charge correctement la page.
 
 Si l'analyse échoue ou reste incomplète, « Envoyer une demande d'aide » permet
 d'envoyer un email à l'adresse configurée dans `SMTP_USER`. Aucun email n'est

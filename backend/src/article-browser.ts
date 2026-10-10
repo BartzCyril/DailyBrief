@@ -1,14 +1,25 @@
 import { chromium } from "playwright";
 import { AppError } from "./errors";
 import { ConcurrencyLimiter } from "./concurrency";
-import { fetchRemotePage, type FetchPage } from "./network";
+import type { FetchPage } from "./network";
 import { MAX_REMOTE_BYTES } from "./remote-response";
+import {
+  BrowserNetwork,
+  publicBrowserOptions,
+  watchBrowserResponseSize,
+  watchBrowserRequests,
+  type BrowserNetworkFactory,
+} from "./browser-network";
+import { UpstreamHttpError } from "./errors";
 
 // Shared across accounts: browser fallback must remain bounded.
 export const articleBrowserLimiter = new ConcurrencyLimiter(2);
 
 export class ArticleBrowser {
-  constructor(private fetchPage: FetchPage = fetchRemotePage) {}
+  constructor(
+    private fetchPage?: FetchPage,
+    private createNetwork: BrowserNetworkFactory = () => BrowserNetwork.create(),
+  ) {}
   async render(
     url: string,
     linkSelector?: string,
@@ -16,19 +27,23 @@ export class ArticleBrowser {
   ): Promise<{ html: string; url: string }> {
     return articleBrowserLimiter.run(async () => {
       let browser;
+      let network: BrowserNetwork | undefined;
       try {
+        if (!this.fetchPage) network = await this.createNetwork();
         browser = await chromium.launch({
           headless: true,
           executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+          ...network?.launchOptions,
         });
       } catch {
+        await network?.close();
         throw new AppError(
           503,
           "Le site demande JavaScript et des cookies. Le navigateur du backend est indisponible : installez Chromium avec bun run browser:install.",
           "ARTICLE_BROWSER_UNAVAILABLE",
         );
       }
-      const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
+      const context = await browser.newContext(publicBrowserOptions(browser.version()));
       let networkError: unknown;
       let failNavigation = (_error: unknown) => {};
       const navigationFailure = new Promise<never>((_resolve, reject) => {
@@ -43,6 +58,65 @@ export class ArticleBrowser {
         void context.close();
       }, 45000);
       try {
+        if (network) await network.guard(url);
+        const page = await context.newPage();
+        if (network) {
+          const nativeNetwork = network;
+          const fail = (error: AppError) => {
+            if (networkError instanceof AppError) return;
+            networkError = error;
+            failNavigation(error);
+          };
+          await watchBrowserResponseSize(page, fail);
+          await watchBrowserRequests(
+            page,
+            network,
+            (request) => {
+              if (request.method !== "GET")
+                throw new AppError(400, "Cette requête de page n'est pas autorisée.", "UNSAFE_URL");
+              if (
+                request.mainNavigation &&
+                allowedHostname &&
+                new URL(request.url).hostname.toLowerCase().replace(/\.$/, "") !== allowedHostname
+              )
+                throw new AppError(
+                  422,
+                  "L'article redirige vers un autre journal.",
+                  "JOURNAL_REDIRECT_BLOCKED",
+                );
+            },
+            (error, request) => {
+              if (request.mainNavigation) fail(error);
+            },
+          );
+          page.on("response", (response) => {
+            const request = response.request();
+            if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) return;
+            if (
+              allowedHostname &&
+              new URL(response.url()).hostname.toLowerCase().replace(/\.$/, "") !== allowedHostname
+            )
+              fail(
+                new AppError(
+                  422,
+                  "L'article redirige vers un autre journal.",
+                  "JOURNAL_REDIRECT_BLOCKED",
+                ),
+              );
+            if (++navigations > 8)
+              fail(new AppError(502, "Trop de redirections navigateur.", "REDIRECT_LIMIT"));
+            if (response.status() >= 400)
+              fail(new UpstreamHttpError(response.status(), response.url()));
+          });
+          page.on("requestfailed", (request) => {
+            if (
+              request.isNavigationRequest() &&
+              request.frame() === page.mainFrame() &&
+              !networkError
+            )
+              fail(nativeNetwork.failure(request.url(), request.failure()?.errorText));
+          });
+        }
         await context.route("**/*", async (route) => {
           const request = route.request();
           if (
@@ -63,6 +137,11 @@ export class ArticleBrowser {
                 "L'article redirige vers un autre journal.",
                 "JOURNAL_REDIRECT_BLOCKED",
               );
+            if (network) {
+              await network.guard(request.url());
+              await route.continue();
+              return;
+            }
             if (request.isNavigationRequest() && ++navigations > 8)
               throw new AppError(
                 502,
@@ -70,7 +149,7 @@ export class ArticleBrowser {
                 "REDIRECT_LIMIT",
               );
             const headers = await request.allHeaders();
-            const response = await this.fetchPage(request.url(), {
+            const response = await this.fetchPage!(request.url(), {
               userAgent: headers["user-agent"],
               cookie: headers.cookie,
               accept: headers.accept,
@@ -128,7 +207,6 @@ export class ArticleBrowser {
           }
         });
         await context.routeWebSocket("**/*", (socket) => socket.close());
-        const page = await context.newPage();
         page.setDefaultTimeout(15000);
         await Promise.race([
           (async () => {
@@ -205,6 +283,7 @@ export class ArticleBrowser {
       } finally {
         clearTimeout(timer);
         await browser.close();
+        await network?.close();
       }
     });
   }

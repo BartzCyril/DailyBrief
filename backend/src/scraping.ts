@@ -1,7 +1,14 @@
-import { chromium, errors, type Page } from "playwright";
+import { chromium, errors, type Page, type Request } from "playwright";
 import type { ArticlePreview, ScrapingConfig, SourcePreview } from "@dailybrief/shared";
 import { scrapingSchema } from "../../shared/src/scraping";
-import { fetchRemoteText, type FetchText } from "./network";
+import type { FetchText } from "./network";
+import {
+  BrowserNetwork,
+  publicBrowserOptions,
+  watchBrowserResponseSize,
+  watchBrowserRequests,
+  type BrowserNetworkFactory,
+} from "./browser-network";
 import { articleDate, articleUrl } from "./rss";
 import { AppError, UpstreamHttpError } from "./errors";
 import { ConcurrencyLimiter } from "./concurrency";
@@ -70,7 +77,10 @@ async function extract(page: Page, config: ScrapingConfig): Promise<ArticlePrevi
 }
 export class ScrapingService {
   private limiter = new ConcurrencyLimiter(2);
-  constructor(private fetchText: FetchText = fetchRemoteText) {}
+  constructor(
+    private fetchText?: FetchText,
+    private createNetwork: BrowserNetworkFactory = () => BrowserNetwork.create(),
+  ) {}
   async collect(url: string, input: ScrapingConfig): Promise<SourcePreview> {
     return this.scrape(url, input, false);
   }
@@ -84,11 +94,19 @@ export class ScrapingService {
   ): Promise<SourcePreview> {
     const config = scrapingSchema.parse(input);
     return this.limiter.run(async () => {
-      const browser = await chromium.launch({
-        headless: true,
-        executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
-      });
-      const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
+      const network = this.fetchText ? undefined : await this.createNetwork();
+      let browser;
+      try {
+        browser = await chromium.launch({
+          headless: true,
+          executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+          ...network?.launchOptions,
+        });
+      } catch (error) {
+        await network?.close();
+        throw error;
+      }
+      const context = await browser.newContext(publicBrowserOptions(browser.version()));
       let timedOut = false;
       let networkError: unknown;
       let failLoad: ((error: unknown) => void) | undefined;
@@ -106,10 +124,85 @@ export class ScrapingService {
       try {
         const page = await context.newPage();
         page.setDefaultTimeout(15000);
+        if (network) {
+          const nativeNetwork = network;
+          const tracked = new Set<Request>();
+          const fail = (error: AppError) => {
+            if (networkError instanceof AppError) return;
+            networkError = error;
+            failLoad?.(error);
+          };
+          await watchBrowserResponseSize(page, fail);
+          await watchBrowserRequests(
+            page,
+            network,
+            (request) => {
+              const post =
+                request.method === "POST" &&
+                config.mode === "LOAD_MORE" &&
+                ["XHR", "Fetch"].includes(request.resourceType);
+              if (request.method !== "GET" && !post)
+                throw new AppError(400, "Cette requête de page n'est pas autorisée.", "UNSAFE_URL");
+              if (post && new URL(request.url).origin !== new URL(page.url()).origin)
+                throw new AppError(
+                  400,
+                  "Redirection POST vers un autre site interdite.",
+                  "UNSAFE_URL",
+                );
+            },
+            (error, request) => {
+              if (
+                request.method === "POST" &&
+                new URL(request.url).origin !== new URL(page.url()).origin
+              ) {
+                if (failLoad) blockedPosts.add(request.url);
+                if (!request.redirected) return;
+              }
+              if (
+                request.mainNavigation ||
+                (failLoad && ["XHR", "Fetch"].includes(request.resourceType))
+              )
+                fail(error);
+            },
+          );
+          page.on("request", (request) => {
+            const ajax = ["xhr", "fetch"].includes(request.resourceType());
+            const externalPost =
+              request.method() === "POST" &&
+              new URL(request.url()).origin !== new URL(page.url()).origin;
+            if (failLoad && ajax && !externalPost) {
+              tracked.add(request);
+              pendingLoads++;
+              if (new URL(request.url()).origin === new URL(page.url()).origin) attemptedLoads++;
+            }
+          });
+          const finish = (request: Request) => {
+            if (tracked.delete(request)) pendingLoads--;
+          };
+          page.on("requestfinished", finish);
+          page.on("requestfailed", (request) => {
+            if (
+              (request.isNavigationRequest() && request.frame() === page.mainFrame()) ||
+              tracked.has(request)
+            )
+              fail(nativeNetwork.failure(request.url(), request.failure()?.errorText));
+            finish(request);
+          });
+          page.on("response", (response) => {
+            const request = response.request();
+            if (
+              response.status() >= 400 &&
+              ((request.isNavigationRequest() && request.frame() === page.mainFrame()) ||
+                tracked.has(request))
+            )
+              fail(new UpstreamHttpError(response.status(), response.url()));
+          });
+        }
         page.on("pageerror", (error) => {
           if (scriptErrors.size < 3) scriptErrors.add(error.message.slice(0, 300));
         });
-        // Fulfil every network request through the same DNS-pinned SSRF guard as RSS.
+        // Production continues Chromium requests through a public-address TCP relay.
+        // Explicit fetchers only supply deterministic fixture responses in tests.
         await context.route("**/*", async (route) => {
           const request = route.request();
           const ajax = ["xhr", "fetch"].includes(request.resourceType());
@@ -119,6 +212,27 @@ export class ScrapingService {
             ["image", "media", "font"].includes(request.resourceType())
           ) {
             await route.abort();
+            return;
+          }
+          if (network) {
+            try {
+              if (post && new URL(request.url()).origin !== new URL(page.url()).origin) {
+                if (failLoad) blockedPosts.add(request.url());
+                await route.abort().catch(() => {});
+                return;
+              }
+              await network.guard(request.url());
+              await route.continue();
+            } catch (error) {
+              if (
+                (request.isNavigationRequest() && request.frame() === page.mainFrame()) ||
+                (failLoad && ajax)
+              ) {
+                networkError = error;
+                failLoad?.(error);
+              }
+              await route.abort().catch(() => {});
+            }
             return;
           }
           const tracked = Boolean(failLoad && ajax);
@@ -134,7 +248,7 @@ export class ScrapingService {
             if (tracked && new URL(request.url()).origin === new URL(page.url()).origin)
               attemptedLoads++;
             const headers = request.headers();
-            const body = await this.fetchText(request.url(), {
+            const body = await this.fetchText!(request.url(), {
               method: post ? "POST" : "GET",
               ...(post
                 ? { body: request.postData() ?? undefined, contentType: headers["content-type"] }
@@ -169,6 +283,7 @@ export class ScrapingService {
         async function navigate(target: string) {
           networkError = undefined;
           try {
+            if (network) await network.guard(target);
             await page.goto(target, { waitUntil: "networkidle" });
           } catch (error) {
             if (networkError instanceof AppError) throw networkError;
@@ -413,6 +528,7 @@ export class ScrapingService {
       } finally {
         clearTimeout(timer);
         await browser.close();
+        await network?.close();
       }
     });
   }
