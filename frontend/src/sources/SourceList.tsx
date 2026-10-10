@@ -170,7 +170,6 @@ export function SourceList({
                     }
                   />
                   <Switch
-                    className="cursor-pointer"
                     title={source.enabled ? "Désactiver la source" : "Activer la source"}
                     aria-label={`Activer ${source.url}`}
                     checked={source.enabled}

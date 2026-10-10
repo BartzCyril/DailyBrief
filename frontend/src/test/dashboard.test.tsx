@@ -1,5 +1,5 @@
 import { test, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { Dashboard } from "@dailybrief/shared";
@@ -74,6 +74,33 @@ test("shows statistics and links to separate sources and journals pages", async 
   expect(screen.queryByRole("heading", { name: "Vos journaux" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Ajouter un journal" })).not.toBeInTheDocument();
 });
+test("only enables saving when collection settings differ from their saved values", async () => {
+  const mock = mockApi();
+  mount();
+  const ui = userEvent.setup();
+  const save = await screen.findByRole("button", { name: "Enregistrer les réglages" });
+  const toggle = screen.getByRole("switch", { name: "Récupération automatique" });
+  expect(toggle).toHaveClass("cursor-pointer");
+  expect(save).toBeDisabled();
+  fireEvent.submit(save.closest("form")!);
+  expect(mock.mock.calls.some(([url]) => url.endsWith("/settings/dailybrief"))).toBe(false);
+  await ui.click(toggle);
+  expect(save).toBeEnabled();
+  await ui.click(toggle);
+  expect(save).toBeDisabled();
+  const time = screen.getByLabelText("Heure quotidienne");
+  fireEvent.change(time, { target: { value: "08:45" } });
+  expect(save).toBeEnabled();
+  fireEvent.change(time, { target: { value: "07:30" } });
+  expect(save).toBeDisabled();
+  const timezone = screen.getByLabelText("Fuseau horaire");
+  await ui.clear(timezone);
+  await ui.type(timezone, "UTC");
+  expect(save).toBeEnabled();
+  await ui.clear(timezone);
+  await ui.type(timezone, "Europe/Paris");
+  expect(save).toBeDisabled();
+});
 test("saves activation, time and timezone in one explicit action", async () => {
   const mock = mockApi();
   mount();
@@ -93,6 +120,39 @@ test("saves activation, time and timezone in one explicit action", async () => {
     collectionTime: "08:45",
     timezone: "America/New_York",
   });
+  const save = screen.getByRole("button", { name: "Enregistrer les réglages" });
+  expect(save).toBeDisabled();
+  await ui.click(screen.getByRole("switch", { name: "Récupération automatique" }));
+  expect(save).toBeEnabled();
+  await ui.click(screen.getByRole("switch", { name: "Récupération automatique" }));
+  expect(save).toBeDisabled();
+});
+test("prevents duplicate settings saves and preserves changes after a failed save", async () => {
+  const normal = mockApi();
+  let resolve!: (response: Response) => void;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string, init?: RequestInit) =>
+      url.endsWith("/settings/dailybrief")
+        ? new Promise<Response>((r) => {
+            resolve = r;
+          })
+        : normal(url, init),
+    ),
+  );
+  mount();
+  const ui = userEvent.setup();
+  const toggle = await screen.findByRole("switch", { name: "Récupération automatique" });
+  await ui.click(toggle);
+  await ui.click(screen.getByRole("button", { name: "Enregistrer les réglages" }));
+  expect(screen.getByRole("button", { name: "Enregistrement…" })).toBeDisabled();
+  expect(toggle).toBeDisabled();
+  resolve(
+    new Response(JSON.stringify({ message: "Enregistrement indisponible" }), { status: 503 }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("Enregistrement indisponible");
+  expect(toggle).toBeChecked();
+  expect(screen.getByRole("button", { name: "Enregistrer les réglages" })).toBeEnabled();
 });
 test("disables automatic collection and shows no planned run", async () => {
   data.collection.enabled = true;

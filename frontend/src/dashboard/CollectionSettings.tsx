@@ -31,6 +31,8 @@ export function CollectionSettings({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const changed =
+    enabled !== collection.enabled || time !== collection.time || timezone !== collection.timezone;
   useEffect(() => {
     setEnabled(collection.enabled);
     setTime(collection.time);
@@ -38,7 +40,7 @@ export function CollectionSettings({
   }, [collection.enabled, collection.time, collection.timezone]);
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || !changed) return;
     setError("");
     setMessage("");
     try {
@@ -119,7 +121,7 @@ export function CollectionSettings({
           </div>
           <Feedback message={error} error />
           <Feedback message={message} />
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" disabled={busy || !changed}>
             {busy && <LoaderCircle className="animate-spin" />}
             {busy ? "Enregistrement…" : "Enregistrer les réglages"}
           </Button>
