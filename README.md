@@ -13,12 +13,19 @@ bun run --cwd backend playwright install --with-deps chromium
 bun run services:up
 bun run db:generate
 bun run db:migrate
-bun run dev:backend
-# Dans un second terminal :
-bun run dev:worker
-# Dans un troisième terminal :
-bun run dev:frontend
+npm run dev
 ```
+
+`npm run dev` lance uniquement le backend, le frontend et les consumers dans
+**un seul terminal**. Chaque ligne porte un préfixe coloré : `[BACK]` en cyan,
+`[FRONT]` en vert et `[CONSUMERS]`
+en magenta. Le rechargement automatique du code reste actif. `Ctrl+C` arrête les
+trois processus ; si l’un des processus se termine, les autres sont arrêtés.
+PostgreSQL, Redis et Ollama doivent être disponibles selon votre configuration ;
+cette commande ne démarre ni n’arrête Docker. Bun reste nécessaire pour les
+scripts du projet :
+installez les dépendances avec `bun install --frozen-lockfile`, même si vous
+lancez le développement avec npm.
 
 Le frontend utilise un proxy Vite `/api` vers Express (port 3000).
 `GET /health` renvoie HTTP 200. `bun run typecheck` vérifie les deux applications,
@@ -314,7 +321,13 @@ bun run db:migrate
 bun run browser:install
 ```
 
-Lancez ensuite **trois terminaux**, tous dans le projet :
+Lancez ensuite tous les processus dans **un seul terminal**, depuis le projet :
+
+```powershell
+npm run dev
+```
+
+Vous pouvez également les lancer séparément pour un diagnostic :
 
 ```powershell
 bun run dev:backend

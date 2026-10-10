@@ -9,6 +9,7 @@
     "shared"
   ],
   "scripts": {
+    "dev": "concurrently --kill-others --names BACK,FRONT,CONSUMERS --prefix-colors cyan,green,magenta \"bun run dev:backend\" \"bun run dev:frontend\" \"bun run dev:worker\"",
     "dev:backend": "bun --env-file=../.env run --cwd backend dev",
     "dev:worker": "bun --env-file=../.env run --cwd backend worker:dev",
     "start:worker": "bun --env-file=../.env run --cwd backend worker",
@@ -30,6 +31,7 @@
     "env:prepare": "bun run --cwd backend scripts/prepare-local-env.ts"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "prettier": "^3.9.9"
   }
 }
