@@ -101,7 +101,6 @@ export function CollectionSettings({
               required
               value={timezone}
               onChange={(event) => setTimezone(event.target.value)}
-              hint="Exemple : Europe/Paris"
             />
           </fieldset>
           <div className="grid sm:grid-cols-2 gap-4 rounded-lg bg-muted p-4 text-sm">

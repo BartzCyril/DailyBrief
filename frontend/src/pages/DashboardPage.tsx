@@ -58,32 +58,6 @@ export function DashboardPage() {
               />
               <ManualCollection onComplete={dashboard.refresh} />
             </section>
-            <section aria-label="Configurer votre veille" className="grid gap-5 sm:grid-cols-2">
-              {[
-                {
-                  to: "/sources",
-                  label: "Gérer les sources",
-                  description: "Ajouter, modifier et tester vos flux RSS et sites.",
-                  Icon: Globe,
-                },
-                {
-                  to: "/journals",
-                  label: "Gérer les journaux",
-                  description: "Activer les journaux et configurer leur accès.",
-                  Icon: Newspaper,
-                },
-              ].map(({ to, label, description, Icon }) => (
-                <div key={to} className="space-y-4 rounded-xl border bg-card p-5">
-                  <p className="text-sm text-muted-foreground">{description}</p>
-                  <Button asChild variant="outline">
-                    <Link to={to}>
-                      <Icon />
-                      {label}
-                    </Link>
-                  </Button>
-                </div>
-              ))}
-            </section>
           </>
         )
       )}
