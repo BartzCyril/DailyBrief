@@ -26,6 +26,29 @@ Le frontend utilise un proxy Vite `/api` vers Express (port 3000).
 sans supprimer leurs volumes. Les valeurs de `.env.example` sont réservées au
 développement local : choisissez des identifiants propres et ne versionnez jamais `.env`.
 
+## Accueil et guide d’utilisation
+
+L’accueil public se trouve sur `http://localhost:5173/` et le guide détaillé sur
+`http://localhost:5173/documentation`. Ces pages sont accessibles sans compte.
+Le guide explique la création des sources RSS et scraping, la recherche de
+sélecteurs dans Chrome/Edge, l’assistance IA et la demande d’aide, les accès aux
+journaux, les tests du workflow et le suivi des collectes. Un exercice de
+sélecteurs fonctionne localement dans le navigateur, sans requête IA.
+
+Les captures versionnées dans `frontend/public/documentation/` utilisent les
+vrais écrans avec des réponses API de démonstration. Pour les régénérer et
+vérifier l’accueil et le guide sur ordinateur et mobile :
+
+```sh
+bun run docs:capture
+```
+
+Cette commande lance temporairement Vite sur le port 5180 et nécessite Chromium
+(`bun run browser:install`, ou `browser:prepare` avec `CHROMIUM_EXECUTABLE_PATH`
+dans le cloud). Elle simule toutes les réponses API : aucune connexion à une
+base, aucun appel IA et aucun email. Les images n’exposent aucun identifiant.
+Les pages publiques et le guide n’exigent aucune nouvelle variable d’environnement.
+
 ## Authentification et sources
 
 `bun run services:up` démarre PostgreSQL et Redis. Générez un secret de session

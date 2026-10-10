@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { Mail, LoaderCircle } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/Field";
 import { Feedback } from "@/components/Feedback";
@@ -57,18 +57,18 @@ export function AuthPage({ register = false }: { register?: boolean }) {
   return (
     <main className="min-h-screen grid lg:grid-cols-2">
       <section className="hidden lg:flex bg-primary text-primary-foreground flex-col justify-between p-16">
-        <div className="flex gap-3 items-center text-2xl font-semibold">
+        <Link to="/" className="flex gap-3 items-center text-2xl font-semibold">
           <Mail /> DailyBrief
-        </div>
+        </Link>
         <div>
           <p className="text-sm uppercase tracking-widest opacity-70 mb-6">
             Votre veille, simplement
           </p>
-          <h1 className="text-5xl font-semibold leading-tight">
+          <h2 className="text-5xl font-semibold leading-tight">
             L'essentiel de vos sources.
             <br />
             Chaque matin.
-          </h1>
+          </h2>
           <p className="mt-6 text-lg opacity-80 max-w-md">
             Rassemblez les sujets qui vous intéressent et recevez un résumé clair dans votre boîte
             mail.
@@ -79,10 +79,12 @@ export function AuthPage({ register = false }: { register?: boolean }) {
       <section className="flex items-center justify-center p-6">
         <Card className="w-full max-w-md border-0 shadow-none bg-transparent">
           <CardHeader>
-            <p className="text-primary font-semibold mb-4 lg:hidden">DailyBrief</p>
-            <CardTitle className="text-3xl">
+            <Link to="/" className="text-primary font-semibold mb-4 lg:hidden">
+              DailyBrief
+            </Link>
+            <h1 className="text-3xl font-semibold leading-none">
               {register ? "Créer votre compte" : "Bienvenue"}
-            </CardTitle>
+            </h1>
             <CardDescription>
               {register
                 ? "Préparez votre première veille quotidienne."
@@ -141,6 +143,12 @@ export function AuthPage({ register = false }: { register?: boolean }) {
                 {register ? "Se connecter" : "S'inscrire"}
               </Link>
             </p>
+            <Link
+              to="/documentation"
+              className="mt-5 inline-block text-sm text-muted-foreground underline underline-offset-4"
+            >
+              Besoin d’aide ? Consulter le guide
+            </Link>
           </CardContent>
         </Card>
       </section>

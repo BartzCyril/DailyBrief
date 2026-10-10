@@ -5,12 +5,20 @@ import { ScrapingForm } from "@/sources/ScrapingForm";
 export function NewSourcePage({ scraping = false }: { scraping?: boolean }) {
   return (
     <main className="max-w-3xl mx-auto px-5 py-8 space-y-6">
-      <Link
-        to={scraping ? "/sources?type=scraping" : "/sources"}
-        className="text-sm text-primary underline"
-      >
-        ← Retour aux sources
-      </Link>
+      <div className="flex flex-wrap justify-between gap-4">
+        <Link
+          to={scraping ? "/sources?type=scraping" : "/sources"}
+          className="text-sm text-primary underline"
+        >
+          ← Retour aux sources
+        </Link>
+        <Link
+          className="text-sm text-primary underline"
+          to={scraping ? "/documentation#scraping" : "/documentation#rss"}
+        >
+          Aide à la configuration ↗
+        </Link>
+      </div>
       <Card>
         <CardHeader>
           <h1 tabIndex={-1} className="text-2xl font-semibold">

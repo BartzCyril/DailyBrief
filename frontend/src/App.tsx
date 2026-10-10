@@ -4,6 +4,14 @@ import { AuthProvider } from "./auth/AuthProvider";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { AuthPage } from "./pages/AuthPage";
 import { AppLayout } from "./components/AppLayout";
+import { PublicLayout } from "./components/PublicLayout";
+import "./public.css";
+const HomePage = lazy(() =>
+  import("./pages/HomePage").then((module) => ({ default: module.HomePage })),
+);
+const DocumentationPage = lazy(() =>
+  import("./pages/DocumentationPage").then((module) => ({ default: module.DocumentationPage })),
+);
 const SourcesPage = lazy(() =>
   import("./pages/SourcesPage").then((module) => ({ default: module.SourcesPage })),
 );
@@ -33,6 +41,10 @@ export function App() {
         }
       >
         <Routes>
+          <Route element={<PublicLayout />}>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/documentation" element={<DocumentationPage />} />
+          </Route>
           <Route path="/login" element={<AuthPage />} />
           <Route path="/register" element={<AuthPage register />} />
           <Route element={<ProtectedRoute />}>
@@ -46,7 +58,7 @@ export function App() {
               <Route path="/sources/:sourceId/workflow" element={<SourceWorkflowPage />} />
             </Route>
           </Route>
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
     </AuthProvider>

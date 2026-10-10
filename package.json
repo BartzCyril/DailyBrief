@@ -23,6 +23,7 @@
     "browser:install": "bun run --cwd backend playwright install chromium",
     "browser:prepare": "bun run --cwd backend scripts/prepare-browser.ts",
     "diagnose:page": "bun --env-file=../.env run --cwd backend scripts/diagnose-page.ts",
+    "docs:capture": "bun --env-file=../.env run --cwd backend scripts/capture-documentation.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:e2e": "bun --env-file=../.env run --cwd backend scripts/prepare-test-db.ts && bun --env-file=../.env run --cwd backend scripts/test-e2e.ts",

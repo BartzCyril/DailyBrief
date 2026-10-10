@@ -44,6 +44,7 @@ export function AppLayout() {
               ["/sources", "Sources"],
               ["/journals", "Journaux"],
               ["/jobs", "Jobs"],
+              ["/documentation", "Documentation"],
             ].map(([to, label]) => (
               <NavLink
                 key={to}
