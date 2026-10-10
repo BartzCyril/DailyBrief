@@ -11,7 +11,7 @@ import { OllamaClient } from "./ai";
 import { articleBrowserLimiter } from "./article-browser";
 import { ConcurrencyLimiter } from "./concurrency";
 import type { Config } from "./config";
-import { AppError } from "./errors";
+import { AppError, UpstreamHttpError } from "./errors";
 import { fetchRemotePage, type FetchPage } from "./network";
 import { MAX_REMOTE_BYTES } from "./remote-response";
 import { articleUrl, RssService } from "./rss";
@@ -256,8 +256,11 @@ export async function renderPublicSelectorPage(
     void navigationFailure.catch(() => {});
     const timer = setTimeout(() => void context.close().catch(() => {}), 35000);
     try {
+      const page = await context.newPage();
       await context.route("**/*", async (route) => {
         const request = route.request();
+        const mainNavigation =
+          request.isNavigationRequest() && request.frame() === page.mainFrame();
         if (
           request.method() !== "GET" ||
           ["image", "media", "font"].includes(request.resourceType())
@@ -266,7 +269,7 @@ export async function renderPublicSelectorPage(
           return;
         }
         try {
-          if (request.isNavigationRequest() && ++navigations > 8)
+          if (mainNavigation && ++navigations > 8)
             throw analysisError("La page boucle sur des redirections.", "REDIRECT_LIMIT");
           const headers = await request.allHeaders();
           const response = await fetchPage(request.url(), {
@@ -275,7 +278,7 @@ export async function renderPublicSelectorPage(
             accept: headers.accept,
             followRedirects: !request.isNavigationRequest(),
           });
-          if (response.status >= 400) throw analysisError("Le site refuse l'accès à cette page.");
+          if (response.status >= 400) throw new UpstreamHttpError(response.status, request.url());
           let body = response.text;
           let status = response.status;
           let contentType =
@@ -301,12 +304,24 @@ export async function renderPublicSelectorPage(
             },
           });
         } catch (error) {
-          if (request.isNavigationRequest()) {
+          if (mainNavigation) {
             // Transport error details can include query tokens; expose fixed messages only.
+            const message =
+              error instanceof UpstreamHttpError
+                ? `Le site a refusé le chargement de la page (HTTP ${error.upstreamStatus}). L'analyse n'a pas été envoyée à l'IA.`
+                : error instanceof AppError && error.code === "UNSAFE_URL"
+                  ? "La page utilise une adresse locale ou privée interdite."
+                  : error instanceof AppError && error.code === "NETWORK_ERROR"
+                    ? "Le serveur ne peut pas joindre le site (erreur réseau ou DNS). Vérifiez son accès à Internet et les éventuels proxy ou pare-feu."
+                    : error instanceof AppError && error.code === "TIMEOUT"
+                      ? "Le site n'a pas répondu dans le délai de chargement. Réessayez dans quelques instants."
+                      : error instanceof AppError && error.code === "REDIRECT_LIMIT"
+                        ? "Le site effectue trop de redirections pour être analysé."
+                        : error instanceof AppError && error.code === "RESPONSE_TOO_LARGE"
+                          ? "La page dépasse la taille maximale autorisée pour l'analyse."
+                          : "Impossible de charger la page publique à analyser.";
             navigationError = analysisError(
-              error instanceof AppError && error.code === "UNSAFE_URL"
-                ? "La page utilise une adresse locale ou privée interdite."
-                : "Impossible de charger la page publique à analyser.",
+              message,
               error instanceof AppError ? error.code : "SELECTOR_PAGE_UNAVAILABLE",
               error instanceof AppError && error.status === 400 ? 400 : 422,
             );
@@ -316,7 +331,6 @@ export async function renderPublicSelectorPage(
         }
       });
       await context.routeWebSocket("**/*", (socket) => socket.close());
-      const page = await context.newPage();
       await Promise.race([
         (async () => {
           await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });

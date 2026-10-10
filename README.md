@@ -296,6 +296,8 @@ limitée, sans scripts, valeurs des champs ni paramètres d'URL privés, avec de
 instructions pour traiter cette structure comme des données et éviter les sélecteurs
 inventés. L'analyse ne clique sur aucun bouton, ne se connecte pas et ne parcourt pas les pages suivantes.
 Les sites bloqués par un CAPTCHA ou imposant une interaction peuvent nécessiter une aide manuelle.
+Une iframe publicitaire indisponible ne bloque pas l'analyse de la page principale.
+Les erreurs de cette page précisent le refus HTTP, le problème réseau ou le délai dépassé.
 
 Si l'analyse échoue ou reste incomplète, « Envoyer une demande d'aide » permet
 d'envoyer un email à l'adresse configurée dans `SMTP_USER`. Aucun email n'est

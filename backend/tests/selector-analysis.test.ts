@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import type { SelectorAnalysisInput, SourcePreview } from "@dailybrief/shared";
 import { OllamaClient } from "../src/ai";
 import { readConfig } from "../src/config";
-import { AppError } from "../src/errors";
+import { AppError, UpstreamHttpError } from "../src/errors";
 import type { FetchPage, RemotePageOptions } from "../src/network";
 import {
   compactSelectorDom,
@@ -633,6 +633,65 @@ test("public browser redirects remain protected by the shared private-address gu
   await assert.rejects(renderPublicSelectorPage("https://publisher.example/public", fetchPage), {
     code: "UNSAFE_URL",
   });
+}, 45000);
+
+test("unavailable advertising frames do not discard the main page or bypass private URL guards", async () => {
+  const fetched: string[] = [];
+  const fetchPage: FetchPage = async (url) => {
+    fetched.push(url);
+    if (url === "https://publisher.example/public")
+      return {
+        status: 200,
+        cookies: [],
+        contentType: "text/html",
+        text: '<main><article><h2>Article accessible</h2><a href="/article">Lire</a></article></main><iframe src="https://ads.example/denied"></iframe><iframe src="https://ads.example/offline"></iframe><iframe src="http://127.0.0.1/private"></iframe>',
+      };
+    if (url === "https://ads.example/denied") throw new UpstreamHttpError(403, url);
+    if (url === "https://ads.example/offline")
+      throw new AppError(502, "Site inaccessible.", "NETWORK_ERROR");
+    const { fetchRemotePage } = await import("../src/network");
+    return fetchRemotePage(url);
+  };
+  const result = await renderPublicSelectorPage("https://publisher.example/public", fetchPage);
+  expect(result.html).toContain("Article accessible");
+  expect(fetched).toContain("https://ads.example/denied");
+  expect(fetched).toContain("https://ads.example/offline");
+  expect(fetched).toContain("http://127.0.0.1/private");
+}, 45000);
+
+test("independent iframe loads do not consume the main page redirect limit", async () => {
+  const fetchPage: FetchPage = async (url) => ({
+    status: 200,
+    cookies: [],
+    contentType: "text/html",
+    text:
+      url === "https://publisher.example/public"
+        ? `<main><h1>Liste publique</h1></main>${Array.from({ length: 12 }, (_, i) => `<iframe src="https://ads.example/frame-${i}"></iframe>`).join("")}`
+        : "<html><body>Publicité</body></html>",
+  });
+  const result = await renderPublicSelectorPage("https://publisher.example/public", fetchPage);
+  expect(result.html).toContain("Liste publique");
+}, 45000);
+
+test("main page failures expose HTTP, network and timeout causes without private URLs", async () => {
+  const url = "https://publisher.example/public?token=private-token";
+  for (const [error, code, message] of [
+    [new UpstreamHttpError(403, url), "UPSTREAM_ERROR", "HTTP 403"],
+    [new UpstreamHttpError(429, url), "UPSTREAM_ERROR", "HTTP 429"],
+    [new AppError(502, `Unreachable ${url}`, "NETWORK_ERROR"), "NETWORK_ERROR", "réseau ou DNS"],
+    [new AppError(504, `Timeout ${url}`, "TIMEOUT"), "TIMEOUT", "délai de chargement"],
+  ] as const)
+    await assert.rejects(
+      renderPublicSelectorPage(url, async () => {
+        throw error;
+      }),
+      (failure: unknown) => {
+        expect(failure).toMatchObject({ code });
+        expect(String(failure)).toContain(message);
+        expect(String(failure)).not.toContain("private-token");
+        return true;
+      },
+    );
 }, 45000);
 
 test("the real public browser prevents private URL reads without exposing sensitive error details", async () => {
