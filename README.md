@@ -15,6 +15,8 @@ bun run db:generate
 bun run db:migrate
 bun run dev:backend
 # Dans un second terminal :
+bun run dev:worker
+# Dans un troisième terminal :
 bun run dev:frontend
 ```
 
@@ -166,7 +168,7 @@ directement le JSON final. Un contenu de raisonnement seul ne sert jamais de ré
 Les réponses vides, interrompues par la limite de génération ou mal formatées sont
 signalées séparément dans le journal de collecte ; les articles restent réessayables.
 
-`POST /collection/run` et le scheduler appellent le même pipeline. GUID, URL
+`POST /collection/run` et le scheduler mettent la collecte dans la même queue Redis. GUID, URL
 canonique sans tracking et hash détectent les doublons. Le fingerprint déterministe
 identifie les articles connus ; les relations vers les newsletters envoyées
 déterminent ceux déjà livrés. Avant le résumé, la page liée de chaque article
@@ -229,17 +231,93 @@ page de chaque article et nombre de caractères extraits, portions envoyées à
 Ollama et résultat du résumé, préparation de la newsletter et envoi SMTP.
 Les erreurs identifient l'étape qui échoue, notamment l'absence d'Ollama ou du
 modèle configuré. Les URLs des sources sont affichées par hôte pour préserver les
-paramètres privés. Une panne globale d'Ollama suspend les résumés restants ; les
+paramètres privés. Une panne d'Ollama est visible sur les jobs concernés ; les
 articles sont conservés pour une nouvelle tentative.
 
-Le frontend demande `Accept: application/x-ndjson` sur `POST /collection/run`.
-Le backend transmet les événements `progress`, puis un `result` final (ou une
-erreur de démarrage `error`), avec un heartbeat toutes les 15 secondes. Sans cet
-en-tête, l'endpoint conserve sa réponse JSON. Le proxy doit permettre le streaming
-sans mise en tampon (`X-Accel-Buffering: no`). Fermer la page interrompt le suivi,
-mais la collecte continue côté serveur ; aucune relance automatique n'est faite.
-Le journal est visible pendant la session de la page. Le bilan et les erreurs
-restent enregistrés dans l'historique serveur.
+### Queue Redis et consommateurs
+
+L'API répond immédiatement avec HTTP **202** et l'identifiant de la collecte.
+Le processus `bun run dev:worker` récupère les sources, enregistre les entrées,
+puis crée **un job `scraping-summary` par article restant à traiter**, RSS comme
+scraping. Par exemple, 10 articles uniques dans la première source et 5 dans la
+seconde créent 15 jobs. Les doublons et les articles déjà envoyés ne créent pas de
+nouveaux jobs. Les articles anciens encore en attente sont également repris.
+Le worker extrait le contenu complet, appelle l'IA si aucun résumé valide n'est
+déjà sauvegardé et enregistre le résultat en PostgreSQL. Les journaux désactivés
+restent recensés ; leurs jobs sont indiqués comme ignorés sans extraction ni IA.
+La newsletter est préparée une fois les jobs terminés, avec les articles autorisés
+et résumés avec succès. Les tests « A à Z » gardent leur fonctionnement indépendant.
+
+L'organisation reprend le gestionnaire et les consommateurs des exemples fournis,
+adaptés à **BullMQ** : `backend/src/queue/jobs-manager.ts`, `consumers.ts` et
+`scraping-summary.ts`. API et workers peuvent être démarrés séparément. Le worker
+ne lance pas le scheduler ; celui de l'API dépose les collectes quotidiennes.
+Une collecte active par utilisateur est autorisée, même après rechargement ou
+lorsqu'une collecte manuelle et le scheduler se déclenchent simultanément.
+
+La bannière **« Récupération en cours »** apparaît sur toutes les pages connectées.
+Elle affiche le nombre d'articles traités et une barre de progression, puis reste
+visible pendant la préparation et l'envoi. Le suivi interroge Redis via l'API ;
+fermer ou recharger la page ne supprime pas les jobs. La page
+**[http://localhost:5173/jobs](http://localhost:5173/jobs)** présente les 20 dernières
+collectes et leurs jobs, paginés par 10 : état, tentatives, étape et erreur.
+Chaque utilisateur accède uniquement à ses propres collectes et articles.
+Les endpoints sont `GET /collection/current`, `/collection/runs`,
+`/collection/runs/:id` et `/collection/runs/:id/jobs?page=1`.
+
+Les jobs et leurs événements sont conservés 30 jours dans Redis ; les 100 derniers
+événements de chaque collecte sont affichés. Le bilan reste en PostgreSQL après
+expiration. Redis utilise déjà AOF et un volume persistant dans Compose : ne
+supprimez pas `redis_data` pour conserver les queues après redémarrage.
+Les jobs interrompus sont repris par BullMQ après expiration de leur verrou.
+Si l’API s’interrompt entre la sauvegarde de la collecte et sa mise en file, le
+scheduler restaure le job au redémarrage ou à son prochain passage (60 secondes),
+sans créer une seconde collecte. Ce contrôle respecte `QUEUE_PREFIX`.
+Un contenu ou résumé déjà sauvegardé est réutilisé. Les erreurs transitoires sont
+retentées jusqu'à trois fois, avec délais de 5 puis 10 secondes ; les erreurs
+permanentes telles qu'un modèle manquant restent visibles. « Récupérer maintenant »
+permet de lancer une nouvelle collecte pour les articles encore non envoyés.
+Un envoi SMTP au résultat incertain reste `SENDING` et n'est pas renvoyé
+automatiquement : vérifiez sa réception avant toute réconciliation manuelle.
+
+Après mise à jour, depuis la racine du projet sous Windows/PowerShell :
+
+```powershell
+git pull origin main
+bun install --frozen-lockfile
+bun run services:up
+bun run db:generate
+bun run db:migrate
+bun run browser:install
+```
+
+Lancez ensuite **trois terminaux**, tous dans le projet :
+
+```powershell
+bun run dev:backend
+```
+
+```powershell
+bun run dev:worker
+```
+
+```powershell
+bun run dev:frontend
+```
+
+En production, le consommateur utilise `bun run start:worker`. Sans worker, les
+collectes restent en attente et la bannière l'indique.
+
+Dans `.env`, aucune nouvelle clé secrète n'est nécessaire. Vérifiez `REDIS_URL`
+(`redis://127.0.0.1:6379` en local) et utilisez les mêmes variables pour l'API et le
+worker : `DATABASE_URL`, `JOURNAL_ENCRYPTION_KEY`, les réglages Ollama et SMTP.
+Les nouvelles options facultatives sont `QUEUE_PREFIX=dailybrief` (identique dans
+les deux processus) et `COLLECTION_CONCURRENCY=2`. Gardez **`AI_CONCURRENCY=1`**
+pour ne traiter qu'un article à la fois sur votre machine ; cette limite est
+appliquée à la queue même avec plusieurs workers. La queue déplace le traitement
+hors de l'API et régule la charge ; elle ne rend pas le modèle Ollama plus rapide.
+Les contenus d'articles, mots de passe et cookies ne figurent pas dans les données
+des jobs : les consommateurs lisent les données et accès protégés côté serveur.
 
 ### Modifier une source
 

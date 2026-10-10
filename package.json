@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "dev:backend": "bun --env-file=../.env run --cwd backend dev",
+    "dev:worker": "bun --env-file=../.env run --cwd backend worker:dev",
+    "start:worker": "bun --env-file=../.env run --cwd backend worker",
     "dev:frontend": "bun run --cwd frontend dev",
     "typecheck": "bun run --cwd backend typecheck && bun run --cwd frontend typecheck",
     "build": "bun run --cwd frontend build",

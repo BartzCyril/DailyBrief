@@ -1,50 +1,31 @@
-import { useEffect, useRef, useState } from "react";
-import type { CollectionProgress as Progress } from "@dailybrief/shared";
+import { useEffect, useRef } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Feedback } from "@/components/Feedback";
-import { streamCollection } from "./collection-stream";
+import { useCollection } from "@/collection/CollectionProvider";
 import { CollectionProgress } from "./CollectionProgress";
-import { errorMessage } from "@/lib/api";
 export function ManualCollection({ onComplete }: { onComplete: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  const [events, setEvents] = useState<Progress[]>([]);
-  const controller = useRef<AbortController | null>(null);
-  useEffect(() => () => controller.current?.abort(), []);
-  async function run() {
-    if (busy) return;
-    setBusy(true);
-    setMessage("");
-    setError("");
-    setEvents([]);
-    controller.current = new AbortController();
-    try {
-      const result = await streamCollection(
-        (progress) => setEvents((previous) => [...previous, progress]),
-        controller.current.signal,
-      );
-      if (result.status === "FAILED")
-        setError(
-          result.failure?.message ??
-            "La collecte n'a pas pu aboutir. Consultez les étapes ci-dessous.",
-        );
-      else
-        setMessage(
-          result.status === "NO_NEW_ARTICLES"
-            ? "Aucun nouvel article à envoyer."
-            : "Votre newsletter a été envoyée.",
-        );
-      await onComplete();
-    } catch (error) {
-      if (controller.current?.signal.aborted) return;
-      setError(errorMessage(error));
-    } finally {
-      setBusy(false);
+  const { run, busy, error, start } = useCollection();
+  const lastCompleted = useRef<string | null>(null);
+  useEffect(() => {
+    if (run && !run.active && run.finishedAt && lastCompleted.current !== run.id) {
+      lastCompleted.current = run.id;
+      void onComplete().catch(() => {});
     }
-  }
+  }, [run, onComplete]);
+  const failure =
+    run?.result?.status === "FAILED"
+      ? (run.result.failure?.message ?? "La collecte n'a pas pu aboutir. Consultez les jobs.")
+      : !run?.active
+        ? run?.error
+        : null;
+  const message =
+    run?.result?.status === "SENT"
+      ? "Votre newsletter a été envoyée."
+      : run?.result?.status === "NO_NEW_ARTICLES"
+        ? "Aucun nouvel article à envoyer."
+        : "";
   return (
     <Card className="shadow-none">
       <CardHeader>
@@ -54,12 +35,12 @@ export function ManualCollection({ onComplete }: { onComplete: () => Promise<voi
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Button onClick={() => void run()} disabled={busy} className="w-full">
+        <Button onClick={() => void start()} disabled={busy} className="w-full">
           <RefreshCw className={busy ? "animate-spin" : ""} />
           {busy ? "Collecte en cours…" : "Récupérer maintenant"}
         </Button>
-        <CollectionProgress events={events} busy={busy} />
-        <Feedback message={error} error />
+        <CollectionProgress events={run?.events ?? []} busy={busy} />
+        <Feedback message={error || failure || ""} error />
         <Feedback message={message} />
         <p className="text-xs text-muted-foreground">
           Les articles déjà envoyés sont exclus de votre prochain brief.

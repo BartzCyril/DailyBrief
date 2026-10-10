@@ -2,12 +2,36 @@ import { test, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import type { Dashboard } from "@dailybrief/shared";
+import type { Dashboard, CollectionRunSnapshot, RunResult } from "@dailybrief/shared";
 import { App } from "../App";
 import { emptyDashboard } from "./fixtures";
 let data: Dashboard;
 let failLoad = false;
 let failRun = false;
+let currentRun: CollectionRunSnapshot | null = null;
+const completedRun = (status: RunResult["status"]): CollectionRunSnapshot => ({
+  id: "run-1",
+  trigger: "manual",
+  state: status === "FAILED" ? "failed" : "completed",
+  active: false,
+  startedAt: "2026-10-06T08:00:00Z",
+  finishedAt: "2026-10-06T08:01:00Z",
+  total: 0,
+  completed: 0,
+  failed: 0,
+  skipped: 0,
+  events: [],
+  error: null,
+  result: {
+    status,
+    sourcesProcessed: 0,
+    sourcesFailed: 0,
+    articlesCollected: 0,
+    newArticles: 0,
+    articlesSummarized: 0,
+    emailSent: status === "SENT",
+  },
+});
 function mockApi() {
   const mock = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/auth/me"))
@@ -20,6 +44,7 @@ function mockApi() {
       return new Response(JSON.stringify(failLoad ? { message: "Dashboard indisponible" } : data), {
         status: failLoad ? 503 : 200,
       });
+    if (url.endsWith("/collection/current")) return new Response(JSON.stringify(currentRun));
     if (url.endsWith("/sources")) return new Response("[]");
     if (url.endsWith("/settings/dailybrief")) {
       const body = JSON.parse(String(init?.body));
@@ -34,7 +59,8 @@ function mockApi() {
     }
     if (url.endsWith("/collection/run")) {
       data.collection.lastRunAt = "2026-10-06T06:00:00Z";
-      return new Response(JSON.stringify({ status: failRun ? "FAILED" : "NO_NEW_ARTICLES" }));
+      currentRun = completedRun(failRun ? "FAILED" : "NO_NEW_ARTICLES");
+      return new Response(JSON.stringify(currentRun), { status: 202 });
     }
     return new Response("{}");
   });
@@ -52,6 +78,7 @@ beforeEach(() => {
   data = structuredClone(emptyDashboard);
   failLoad = false;
   failRun = false;
+  currentRun = null;
   mockApi();
 });
 test("shows statistics and links to separate sources and journals pages", async () => {
@@ -201,7 +228,8 @@ test("keeps manual collection disabled while a run is pending", async () => {
   mount();
   await userEvent.click(await screen.findByRole("button", { name: "Récupérer maintenant" }));
   expect(screen.getByRole("button", { name: "Collecte en cours…" })).toBeDisabled();
-  resolve(new Response(JSON.stringify({ status: "SENT" })));
+  currentRun = completedRun("SENT");
+  resolve(new Response(JSON.stringify(currentRun)));
   expect(await screen.findByText("Votre newsletter a été envoyée.")).toBeInTheDocument();
 });
 test("reports failed pipeline results and loading errors", async () => {
@@ -210,67 +238,49 @@ test("reports failed pipeline results and loading errors", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "Récupérer maintenant" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("n'a pas pu aboutir");
 });
-test("shows live article progress before completion and displays the precise AI error", async () => {
-  const normal = mockApi();
-  let controller!: ReadableStreamDefaultController;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((url: string, init?: RequestInit) =>
-      url.endsWith("/collection/run")
-        ? Promise.resolve(
-            new Response(
-              new ReadableStream({
-                start(c) {
-                  controller = c;
-                },
-              }),
-              { headers: { "Content-Type": "application/x-ndjson" } },
-            ),
-          )
-        : normal(url, init),
-    ),
-  );
-  mount();
-  await userEvent.click(await screen.findByRole("button", { name: "Récupérer maintenant" }));
+test("restores a running collection after reload and updates its progress independently of the original request", async () => {
   const message = "Envoi à l'IA : Article de la bibliothèque";
-  controller.enqueue(
-    new TextEncoder().encode(
-      JSON.stringify({
-        type: "progress",
-        progress: {
-          stage: "ai",
-          status: "running",
-          message,
-          at: "2026-10-06T08:00:00Z",
-          completed: 0,
-          total: 10,
-        },
-      }) + "\n",
-    ),
+  currentRun = {
+    ...completedRun("NO_NEW_ARTICLES"),
+    state: "active",
+    active: true,
+    result: null,
+    finishedAt: null,
+    total: 15,
+    completed: 4,
+    events: [{ stage: "ai", status: "running", message, at: "2026-10-06T08:00:00Z" }],
+  };
+  const mock = mockApi();
+  mount();
+  expect(await screen.findByText("Récupération en cours")).toBeInTheDocument();
+  expect(screen.getByRole("progressbar", { name: "Articles traités" })).toHaveAttribute(
+    "aria-valuenow",
+    "4",
   );
-  expect(await screen.findByText(message)).toBeInTheDocument();
-  expect(screen.getByText("Résumé IA en cours · 0/10")).toBeInTheDocument();
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuemax", "15");
   expect(screen.getByRole("button", { name: "Collecte en cours…" })).toBeDisabled();
-  controller.enqueue(
-    new TextEncoder().encode(
-      JSON.stringify({
-        type: "result",
-        result: {
-          status: "FAILED",
-          failure: {
-            stage: "ai",
-            code: "MODEL_MISSING",
-            message: "Le modèle IA qwen3:4b n'est pas installé.",
-          },
-        },
-      }) + "\n",
-    ),
-  );
-  controller.close();
+  expect(mock.mock.calls.some(([url]) => url.endsWith("/collection/run"))).toBe(false);
+  expect(await screen.findByText(message)).toBeInTheDocument();
+  currentRun = {
+    ...completedRun("FAILED"),
+    total: 15,
+    completed: 15,
+    failed: 1,
+    events: currentRun.events,
+    result: {
+      ...completedRun("FAILED").result!,
+      failure: {
+        stage: "ai",
+        code: "MODEL_MISSING",
+        message: "Le modèle IA qwen3:4b n'est pas installé.",
+      },
+    },
+  };
+  window.dispatchEvent(new Event("focus"));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Le modèle IA qwen3:4b n'est pas installé.",
   );
-  expect(screen.getByRole("log", { name: "Étapes de la collecte" })).toHaveTextContent(message);
+  expect(screen.queryByText("Récupération en cours")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Récupérer maintenant" })).toBeEnabled();
 });
 test("can retry initial dashboard errors", async () => {

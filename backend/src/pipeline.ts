@@ -18,23 +18,17 @@ import type { CollectionFailure, CollectionStage, RunResult } from "@dailybrief/
 import { reportProgress, type ProgressObserver } from "./progress";
 import { ArticleContentService } from "./article-content";
 import { JournalAccessService, journalAccessVersion } from "./journal-access";
+import { failureFor } from "./queue/failure";
+import { ScrapingSummaryProcessor } from "./queue/scraping-summary";
+import type { ArticleJobResult } from "@dailybrief/shared";
+export type ArticleDispatcher = (
+  userId: string,
+  runId: string,
+  articleIds: string[],
+  observer?: ProgressObserver,
+) => Promise<ArticleJobResult[]>;
 export type DailyBriefRunResult = RunResult;
 
-function failureFor(error: unknown, stage: CollectionStage): CollectionFailure {
-  const fallback =
-    stage === "ai"
-      ? "Échec du résumé IA."
-      : stage === "email"
-        ? "L'envoi SMTP a échoué. Vérifiez la configuration du serveur mail."
-        : stage === "content"
-          ? "La récupération du contenu complet de l'article a échoué."
-          : "Échec du pipeline DailyBrief.";
-  return {
-    stage,
-    code: error instanceof AppError ? error.code : "PIPELINE_FAILED",
-    message: error instanceof AppError ? error.message : fallback,
-  };
-}
 export class DailyBriefPipelineService implements CollectionRunner {
   constructor(
     private db: Db,
@@ -44,6 +38,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
     private email: NewsletterSender,
     private articleContent = new ArticleContentService(),
     private journals = new JournalAccessService(db, articleContent),
+    private dispatch?: ArticleDispatcher,
   ) {}
   private async persist(userId: string, article: CollectedArticle): Promise<boolean> {
     const identity = articleIdentity(article);
@@ -82,20 +77,96 @@ export class DailyBriefPipelineService implements CollectionRunner {
       throw error;
     }
   }
+  private async finish(runId: string, userId: string, trigger: RunTrigger, result: RunResult) {
+    const now = new Date();
+    const currentSettings = await getSettings(this.db, userId);
+    const { newsletterId, failure, ...runData } = result;
+    await this.db.$transaction([
+      this.db.dailyBriefRun.update({
+        where: { id: runId },
+        data: {
+          ...runData,
+          ...(newsletterId ? { newsletterId } : {}),
+          error: failure?.message ?? null,
+          finishedAt: now,
+        },
+      }),
+      this.db.dailyBriefSettings.update({
+        where: { userId },
+        data: {
+          lastCollectionAt: now,
+          ...(trigger === "scheduled"
+            ? {
+                nextCollectionAt: currentSettings.collectionEnabled
+                  ? nextCollection(currentSettings.collectionTime, currentSettings.timezone, now)
+                  : null,
+              }
+            : {}),
+        },
+      }),
+    ]);
+  }
   async run(
     userId: string,
     trigger: RunTrigger = "manual",
     observer?: ProgressObserver,
+    queuedRunId?: string,
   ): Promise<DailyBriefRunResult> {
     return this.lock.run(userId, async (assertOwned) => {
       const user = await this.db.user.findUniqueOrThrow({ where: { id: userId } });
       const settings = await getSettings(this.db, userId);
+      const previous = queuedRunId
+        ? await this.db.dailyBriefRun.findFirstOrThrow({ where: { id: queuedRunId, userId } })
+        : null;
+      const restored = (): RunResult => ({
+        status: previous!.status as RunResult["status"],
+        sourcesProcessed: previous!.sourcesProcessed,
+        sourcesFailed: previous!.sourcesFailed,
+        articlesCollected: previous!.articlesCollected,
+        newArticles: previous!.newArticles,
+        articlesSummarized: previous!.articlesSummarized,
+        emailSent: previous!.emailSent,
+        ...(previous!.newsletterId ? { newsletterId: previous!.newsletterId } : {}),
+        ...(previous!.error
+          ? {
+              failure: { stage: "collection", code: "COLLECTION_FAILED", message: previous!.error },
+            }
+          : {}),
+      });
+      if (previous?.finishedAt) return restored();
+      // A worker may stop after SMTP accepted the email but before finishing the root job.
+      if (previous?.newsletterId) {
+        const delivery = await this.db.newsletter.findFirst({
+          where: { id: previous.newsletterId, userId },
+        });
+        if (delivery?.status === "SENT" || delivery?.status === "SENDING") {
+          const sent = delivery.status === "SENT";
+          const error = sent
+            ? null
+            : "L'envoi précédent est incertain. Vérifiez sa réception avant toute nouvelle tentative.";
+          const recovered: RunResult = {
+            ...restored(),
+            status: sent ? "SENT" : "FAILED",
+            emailSent: sent,
+            ...(error
+              ? { failure: { stage: "email", code: "SMTP_UNCERTAIN", message: error } }
+              : {}),
+          };
+          await this.finish(previous.id, userId, trigger, recovered);
+          return recovered;
+        }
+      }
       if (
         trigger === "scheduled" &&
         (!settings.collectionEnabled ||
           !settings.nextCollectionAt ||
           settings.nextCollectionAt > new Date())
-      )
+      ) {
+        if (previous)
+          await this.db.dailyBriefRun.update({
+            where: { id: previous.id },
+            data: { status: "NO_NEW_ARTICLES", finishedAt: new Date() },
+          });
         return {
           status: "NO_NEW_ARTICLES",
           sourcesProcessed: 0,
@@ -105,7 +176,13 @@ export class DailyBriefPipelineService implements CollectionRunner {
           articlesSummarized: 0,
           emailSent: false,
         };
-      const run = await this.db.dailyBriefRun.create({ data: { userId } });
+      }
+      const run = previous
+        ? await this.db.dailyBriefRun.update({
+            where: { id: previous.id },
+            data: { status: "RUNNING" },
+          })
+        : await this.db.dailyBriefRun.create({ data: { userId, trigger } });
       const result: DailyBriefRunResult = {
         status: "FAILED",
         sourcesProcessed: 0,
@@ -151,12 +228,22 @@ export class DailyBriefPipelineService implements CollectionRunner {
           status: "running",
           message: "Détection des doublons et sauvegarde des articles.",
         });
-        for (const article of articles)
-          if (await this.persist(userId, article)) result.newArticles++;
+        let newArticles = 0;
+        for (const article of articles) if (await this.persist(userId, article)) newArticles++;
+        result.newArticles = (previous?.newArticles ?? 0) + newArticles;
         report({
           stage,
           status: "completed",
-          message: `${result.newArticles} nouveaux articles sauvegardés ; ${articles.length - result.newArticles} doublons ignorés.`,
+          message: `${newArticles} nouveaux articles sauvegardés ; ${articles.length - newArticles} doublons ignorés.`,
+        });
+        await this.db.dailyBriefRun.update({
+          where: { id: run.id },
+          data: {
+            sourcesProcessed: result.sourcesProcessed,
+            sourcesFailed: result.sourcesFailed,
+            articlesCollected: result.articlesCollected,
+            newArticles: result.newArticles,
+          },
         });
         const pending = await this.db.article.findMany({
           where: {
@@ -166,247 +253,90 @@ export class DailyBriefPipelineService implements CollectionRunner {
           },
           include: { source: true },
           orderBy: { createdAt: "asc" },
-          // Disabled selector journals must not fill the delivery batch and starve active ones.
-          take: (await this.db.source.count({
-            where: { userId, enabled: true, type: "RSS", articleLinkSelector: { not: null } },
-          }))
-            ? undefined
-            : 100,
         });
         const included: typeof pending = [];
         let summaryFailure: CollectionFailure | undefined;
-        let processed = 0;
-        let eligible = 0;
-        for (let article of pending) {
-          stage = "content";
-          const articleLinkSelector =
-            article.source.type === "RSS" ? article.source.articleLinkSelector : null;
-          let externalUrl: string | undefined;
-          let accessVersion: string | null = null;
-          if (articleLinkSelector) {
-            try {
-              const collected = articles.find(
-                (item) =>
-                  item.sourceId === article.sourceId &&
-                  (article.guid ? item.guid === article.guid : item.url === article.url),
-              );
-              if (collected?.resolutionError)
-                throw new AppError(422, collected.resolutionError, "ARTICLE_LINK_UNRESOLVED");
-              externalUrl =
-                collected?.externalUrl ??
-                (await this.articleContent.resolveLink(article.url, articleLinkSelector));
-              accessVersion = journalAccessVersion(
-                await this.journals.assertAccessible(userId, externalUrl),
-              );
-            } catch (error) {
-              processed++;
-              const failure = failureFor(error, "content");
-              if (failure.code !== "JOURNAL_DISABLED") summaryFailure ??= failure;
-              report({
-                stage: "content",
-                status: failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed",
-                message: `${article.title} : ${failure.message}`,
-              });
-              continue;
-            }
-          }
-          if (++eligible > 100) break;
-          if (
-            !article.contentFetchedAt ||
-            article.contentLinkSelector !== articleLinkSelector ||
-            (externalUrl && article.contentAccessVersion !== accessVersion) ||
-            (externalUrl && article.contentUrl !== externalUrl)
-          ) {
-            report({
-              stage,
-              status: "running",
-              message: `Téléchargement de la page complète : ${article.title}`,
-              completed: processed,
-              total: pending.length,
-            });
-            try {
-              const contentProgress = (message: string) =>
-                report({
-                  stage: "content",
-                  status: "running",
-                  message: `${article.title} : ${message}`,
-                  completed: processed,
-                  total: pending.length,
-                });
-              const fetched = externalUrl
-                ? await this.journals.fetchArticle(userId, externalUrl, contentProgress)
-                : await this.articleContent.fetchWithUrl(
-                    article.url,
-                    contentProgress,
-                    articleLinkSelector,
-                  );
-              const { content, url } = fetched;
-              article = {
-                ...article,
-                ...(await this.db.article.update({
-                  where: { id: article.id },
-                  data: {
-                    content,
-                    contentFetchedAt: new Date(),
-                    contentUrl: url,
-                    contentLinkSelector: articleLinkSelector,
-                    contentAccessVersion:
-                      "accessVersion" in fetched ? (fetched.accessVersion as string) : null,
-                    contentError: null,
-                    // Old summaries based on feed excerpts must be regenerated before delivery.
-                    summaryTitle: null,
-                    summary: null,
-                    keyPoints: [],
-                    summarizedAt: null,
-                    summaryError: null,
-                  },
-                })),
-              };
-              report({
-                stage,
-                status: "completed",
-                message: `Texte de l'article extrait et sauvegardé : ${article.title} (${content.length} caractères).`,
-                completed: processed,
-                total: pending.length,
-              });
-            } catch (error) {
-              const failure = failureFor(error, stage);
-              summaryFailure ??= failure;
-              await this.db.article.update({
-                where: { id: article.id },
-                data: { contentError: failure.message },
-              });
-              processed++;
-              report({
-                stage,
-                status: "failed",
-                message: `${article.title} : ${failure.message}`,
-                completed: processed,
-                total: pending.length,
-              });
-              continue;
-            }
-          } else {
-            report({
-              stage,
-              status: "skipped",
-              message: `Texte complet déjà sauvegardé : ${article.title}`,
-              completed: processed,
-              total: pending.length,
-            });
-          }
-          if (externalUrl) {
-            try {
-              const currentAccess = await this.journals.assertAccessible(userId, externalUrl);
-              if (journalAccessVersion(currentAccess) !== article.contentAccessVersion)
-                throw new AppError(
-                  409,
-                  "L'accès au journal a changé. Relancez la récupération.",
-                  "JOURNAL_ACCESS_CHANGED",
-                );
-            } catch (error) {
-              processed++;
-              const failure = failureFor(error, "content");
-              if (failure.code !== "JOURNAL_DISABLED") summaryFailure ??= failure;
-              report({
-                stage: "content",
-                status: failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed",
-                message: `${article.title} : ${failure.message}`,
-              });
-              continue;
-            }
-          }
+        const processor = new ScrapingSummaryProcessor(
+          this.db,
+          this.summary,
+          this.articleContent,
+          this.journals,
+        );
+        let outcomes: ArticleJobResult[];
+        if (this.dispatch) {
           stage = "ai";
-          if (!article.summary || !article.summarizedAt) {
-            report({
-              stage,
-              status: "running",
-              message: `Envoi à l'IA : ${article.title}`,
-              completed: processed,
-              total: pending.length,
-            });
-            try {
-              const summary = await this.summary.summarize(
-                {
-                  title: article.title,
-                  content: article.content!,
-                  url: article.contentUrl ?? article.url,
-                },
-                (message) =>
-                  report({
-                    stage: "ai",
-                    status: "running",
-                    message: `${article.title} : ${message}`,
-                    completed: processed,
-                    total: pending.length,
-                  }),
-              );
-              article = {
-                ...article,
-                ...(await this.db.article.update({
-                  where: { id: article.id },
-                  data: {
-                    summaryTitle: summary.title,
-                    summary: summary.summary,
-                    keyPoints: summary.keyPoints,
-                    summarizedAt: new Date(),
-                    summaryError: null,
-                  },
-                })),
-              };
-              result.articlesSummarized++;
-              report({
-                stage,
-                status: "completed",
-                message: `Résumé enregistré : ${article.title}`,
-                completed: processed + 1,
-                total: pending.length,
-              });
-            } catch (error) {
-              const failure = failureFor(error, "ai");
-              summaryFailure ??= failure;
-              await this.db.article.update({
-                where: { id: article.id },
-                data: {
-                  summaryError: failure.message,
-                },
-              });
-              processed++;
-              report({
-                stage,
-                status: "failed",
-                message: `${article.title} : ${failure.message}`,
-                completed: processed,
-                total: pending.length,
-              });
-              // Infrastructure failures affect every article; retain all pending articles for retry.
-              if (["MODEL_MISSING", "AI_UNAVAILABLE"].includes(failure.code)) {
-                report({
-                  stage,
-                  status: "skipped",
-                  message: "Résumés restants suspendus jusqu'au rétablissement du service IA.",
-                  completed: processed,
-                  total: pending.length,
-                });
-                break;
-              }
-              continue;
-            }
-          } else {
-            report({
-              stage,
-              status: "skipped",
-              message: `Résumé déjà disponible : ${article.title}`,
-              completed: processed + 1,
-              total: pending.length,
-            });
+          outcomes = await this.dispatch(
+            userId,
+            run.id,
+            pending.map((article) => article.id),
+            observer,
+          );
+        } else {
+          outcomes = [];
+          for (const article of pending) {
+            const collected = articles.find(
+              (item) =>
+                item.sourceId === article.sourceId &&
+                (article.guid ? item.guid === article.guid : item.url === article.url),
+            );
+            const outcome = await processor.run(
+              userId,
+              article.id,
+              observer,
+              collected,
+              assertOwned,
+            );
+            outcomes.push(outcome);
+            if (
+              outcome.failure &&
+              ["MODEL_MISSING", "AI_UNAVAILABLE"].includes(outcome.failure.code)
+            )
+              break;
           }
-          processed++;
-          included.push(article);
         }
+        for (const outcome of outcomes) {
+          if (outcome.newSummary) result.articlesSummarized++;
+          summaryFailure ??= outcome.failure;
+          if (outcome.status === "completed") {
+            const article = await this.db.article.findFirst({
+              where: { id: outcome.articleId, userId, source: { enabled: true } },
+              include: { source: true },
+            });
+            if (article?.summary && article.summarizedAt) included.push(article);
+          }
+        }
+        if (this.dispatch)
+          result.articlesSummarized = await this.db.article.count({
+            where: {
+              userId,
+              id: { in: outcomes.map((outcome) => outcome.articleId) },
+              summarizedAt: { gte: run.startedAt },
+            },
+          });
         // Recheck persisted settings after potentially long downloads/AI calls.
         for (let index = included.length - 1; index >= 0; index--) {
           const article = included[index]!;
+          const source = await this.db.source.findFirst({
+            where: { id: article.sourceId, userId, enabled: true },
+          });
+          if (!source) {
+            included.splice(index, 1);
+            report({
+              stage: "newsletter",
+              status: "skipped",
+              message: `${article.title} : source désactivée ou supprimée.`,
+            });
+            continue;
+          }
+          if (source.type === "RSS" && source.articleLinkSelector !== article.contentLinkSelector) {
+            included.splice(index, 1);
+            summaryFailure ??= {
+              stage: "content",
+              code: "SOURCE_CHANGED",
+              message: "La source a changé. Relancez la récupération.",
+            };
+            continue;
+          }
           if (
             article.source.type !== "RSS" ||
             !article.source.articleLinkSelector ||
@@ -478,6 +408,17 @@ export class DailyBriefPipelineService implements CollectionRunner {
         });
         newsletterId = newsletter.id;
         result.newsletterId = newsletterId;
+        await this.db.dailyBriefRun.update({
+          where: { id: run.id },
+          data: {
+            newsletterId,
+            sourcesProcessed: result.sourcesProcessed,
+            sourcesFailed: result.sourcesFailed,
+            articlesCollected: result.articlesCollected,
+            newArticles: result.newArticles,
+            articlesSummarized: result.articlesSummarized,
+          },
+        });
         report({ stage, status: "completed", message: "Newsletter préparée et sauvegardée." });
         await assertOwned();
         stage = "email";
@@ -510,32 +451,9 @@ export class DailyBriefPipelineService implements CollectionRunner {
           });
         return result;
       } finally {
-        const now = new Date();
-        const currentSettings = await getSettings(this.db, userId);
-        const { newsletterId: _newsletterId, failure, ...runData } = result;
-        await this.db.$transaction([
-          this.db.dailyBriefRun.update({
-            where: { id: run.id },
-            data: { ...runData, error: failure?.message ?? null, finishedAt: now },
-          }),
-          this.db.dailyBriefSettings.update({
-            where: { userId },
-            data: {
-              lastCollectionAt: now,
-              ...(trigger === "scheduled"
-                ? {
-                    nextCollectionAt: currentSettings.collectionEnabled
-                      ? nextCollection(
-                          currentSettings.collectionTime,
-                          currentSettings.timezone,
-                          now,
-                        )
-                      : null,
-                  }
-                : {}),
-            },
-          }),
-        ]);
+        // A stalled worker must not overwrite the run now owned by its replacement.
+        if (queuedRunId) await assertOwned();
+        await this.finish(run.id, userId, trigger, result);
       }
     });
   }

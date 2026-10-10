@@ -19,6 +19,11 @@ const envSchema = z.object({
   OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(1800000),
   AI_MAX_INPUT_CHARS: z.coerce.number().int().min(100).default(16000),
   AI_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
+  QUEUE_PREFIX: z
+    .string()
+    .regex(/^[a-zA-Z0-9_-]+$/)
+    .default("dailybrief"),
+  COLLECTION_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
   AI_LANGUAGE: z.string().default("français"),
   SMTP_HOST: z.string().default("127.0.0.1"),
   SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(1025),

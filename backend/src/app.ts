@@ -25,6 +25,7 @@ import type { JournalLoginBrowser } from "./journal-login";
 import { OllamaSelectorAnalysisProvider, type SelectorAnalysisProvider } from "./selector-analysis";
 import { SelectorHelpService, type SelectorHelpSender } from "./selector-support";
 import { selectorAssistanceRouter } from "./selector-assistance";
+import type { JobsManager } from "./queue/jobs-manager";
 export function createApp(
   db: Db,
   redis: Redis,
@@ -33,6 +34,7 @@ export function createApp(
     rss?: RssService;
     scraping?: ScrapingService;
     runner?: CollectionRunner;
+    collections?: JobsManager;
     summary?: SummaryProvider;
     email?: NewsletterSender;
     articleContent?: ArticleContentService;
@@ -103,7 +105,7 @@ export function createApp(
     sourceWorkflowRouter(db, redis, rss, scraping, articleContent, summary, journals),
   );
   app.use("/journals", journalAccessRouter(db, cipher, journals));
-  app.use(settingsRouter(db, runner));
+  app.use(settingsRouter(db, runner, services.collections));
   const aiClient = new OllamaClient(config);
   app.use("/ai", aiRouter(summary, aiClient));
   app.use(

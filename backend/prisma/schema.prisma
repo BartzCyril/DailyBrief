@@ -133,6 +133,10 @@ model NewsletterArticle {
 }
 model DailyBriefRun {
   id String @id @default(cuid())
+  queueJobId String? @unique
+  queuePrefix String?
+  trigger String @default("manual")
+  newsletterId String?
   userId String
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   startedAt DateTime @default(now())
@@ -147,4 +151,5 @@ model DailyBriefRun {
   error String?
   sourceResults Json?
   @@index([userId, startedAt])
+  @@index([queuePrefix, finishedAt])
 }

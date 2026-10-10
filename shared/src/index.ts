@@ -91,6 +91,45 @@ export type CollectionEvent =
   | { type: "progress"; progress: CollectionProgress }
   | { type: "result"; result: RunResult }
   | { type: "error"; message: string; code: string };
+export type QueueState = "waiting" | "active" | "delayed" | "completed" | "failed";
+export type ArticleJobResult = {
+  articleId: string;
+  status: "completed" | "skipped" | "failed";
+  newSummary: boolean;
+  failure?: CollectionFailure;
+};
+export type CollectionRunSnapshot = {
+  id: string;
+  trigger: "manual" | "scheduled";
+  state: QueueState;
+  active: boolean;
+  startedAt: string;
+  finishedAt: string | null;
+  total: number | null;
+  completed: number;
+  failed: number;
+  skipped: number;
+  events: CollectionProgress[];
+  result: RunResult | null;
+  error: string | null;
+};
+export type ArticleJobSnapshot = {
+  id: string;
+  articleId: string;
+  title: string;
+  sourceUrl: string;
+  state: QueueState;
+  attempts: number;
+  skipped: boolean;
+  progress: CollectionProgress | null;
+  error: string | null;
+};
+export type ArticleJobsPage = {
+  jobs: ArticleJobSnapshot[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
 export type WorkflowPreview = {
   id: string;
   source: Pick<Source, "id" | "url" | "type">;

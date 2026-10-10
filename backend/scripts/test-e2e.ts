@@ -1,10 +1,17 @@
 import { strict as assert } from "node:assert";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import nodemailer from "nodemailer";
 import { chromium } from "playwright";
 import { createApp } from "../src/app";
+import { JobsManager } from "../src/queue/jobs-manager";
+import { startConsumers } from "../src/queue/consumers";
+import { ScrapingSummaryProcessor } from "../src/queue/scraping-summary";
+import { SourceCollector } from "../src/collection";
+import { DailyBriefPipelineService } from "../src/pipeline";
+import { UserCollectionLock } from "../src/lock";
+import { JournalAccessService, JournalSecretCipher } from "../src/journal-access";
 import { ArticleContentService } from "../src/article-content";
 import { JournalLoginBrowser } from "../src/journal-login";
 import { journalFixture, loginConfig, fullText } from "../tests/fixtures/journal-login";
@@ -30,7 +37,9 @@ const config = readConfig({
   PORT: "3001",
   FRONTEND_ORIGIN: "http://127.0.0.1:5174",
   NODE_ENV: "test",
+  QUEUE_PREFIX: `test-e2e-${randomUUID()}`,
   SMTP_USER: "selector-help@example.test",
+  JOURNAL_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
 });
 const db = createDb(url);
 const redis = createRedis(config.REDIS_URL);
@@ -108,7 +117,7 @@ const helpSender = new SmtpSelectorHelpSender(
   config,
   nodemailer.createTransport({ jsonTransport: true }),
 );
-const app = createApp(db, redis, config, {
+const services = {
   selectorAnalysis: new OllamaSelectorAnalysisProvider(config, {
     client: selectorClient,
     fetchPage: selectorPage,
@@ -169,6 +178,34 @@ const app = createApp(db, redis, config, {
       messages.push(message);
     },
   },
+} satisfies NonNullable<Parameters<typeof createApp>[3]>;
+const manager = new JobsManager(db, config);
+const journals = new JournalAccessService(
+  db,
+  services.articleContent,
+  new JournalSecretCipher(config.JOURNAL_ENCRYPTION_KEY),
+  services.journalLogin,
+);
+const consumers = await startConsumers(
+  db,
+  manager,
+  (dispatch) =>
+    new DailyBriefPipelineService(
+      db,
+      new SourceCollector(db, services.rss, services.scraping, services.articleContent),
+      new UserCollectionLock(redis, 30000),
+      services.summary,
+      services.email,
+      services.articleContent,
+      journals,
+      dispatch,
+    ),
+  new ScrapingSummaryProcessor(db, services.summary, services.articleContent, journals),
+);
+const app = createApp(db, redis, config, {
+  ...services,
+  collections: manager,
+  journalAccess: journals,
 });
 const server = app.listen(config.PORT, "127.0.0.1");
 const frontend = spawn(
@@ -726,6 +763,19 @@ try {
   assert.equal(messages.length, 0, "Live AI progress must be visible before SMTP runs");
   assert(await page.getByRole("button", { name: "Collecte en cours…" }).isDisabled());
   await page.screenshot({ path: "/tmp/dailybrief-collection-live.png", fullPage: true });
+  // Reload and navigate while the worker is blocked in AI: progression is durable.
+  await page.reload();
+  await page.getByLabel("Récupération en cours", { exact: true }).waitFor();
+  assert(await page.getByRole("button", { name: "Collecte en cours…" }).isDisabled());
+  assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuemax"), "2");
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  await page.getByRole("heading", { name: "Jobs de récupération" }).waitFor();
+  await page.getByRole("cell", { name: "Article RSS", exact: false }).first().waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.screenshot({ path: "/tmp/dailybrief-jobs-mobile.png", fullPage: true });
+  await page.getByRole("link", { name: "Tableau de bord", exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 1000 });
   releaseSummary();
   await page.getByText("Votre newsletter a été envoyée.").waitFor();
   await page
@@ -905,10 +955,16 @@ try {
   );
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: RSS, scraping and journal selector autofill through public Chromium and structured AI; partial login and failed AI help on explicit click only, SMTP retry, no credentials in AI, mobile and keyboard assistance; register, login, separate sources and journals navigation, modal journal addition and domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: RSS, scraping and journal selector autofill through public Chromium and structured AI; partial login and failed AI help on explicit click only, SMTP retry, no credentials in AI, mobile and keyboard assistance; register, login, separate sources and journals navigation, modal journal addition and domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, Redis article jobs with progress restored after reload, mobile jobs monitoring, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();
+  await consumers.close();
+  await manager.collections.obliterate({ force: true });
+  await manager.summaries.obliterate({ force: true });
+  const queueKeys = await manager.connection.keys(`${config.QUEUE_PREFIX}:*`);
+  if (queueKeys.length) await manager.connection.del(...queueKeys);
+  await manager.close();
   await browser.close();
   frontend.kill("SIGTERM");
   await new Promise<void>((resolve) => server.close(() => resolve()));

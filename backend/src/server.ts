@@ -12,6 +12,7 @@ import { OllamaSummaryProvider } from "./ai";
 import { NewsletterEmailService } from "./email";
 import { ArticleContentService } from "./article-content";
 import { JournalAccessService, JournalSecretCipher } from "./journal-access";
+import { JobsManager } from "./queue/jobs-manager";
 const config = readConfig();
 const db = createDb(config.DATABASE_URL);
 const redis = createClient({ url: config.REDIS_URL });
@@ -32,15 +33,25 @@ const runner = new DailyBriefPipelineService(
   articleContent,
   journals,
 );
-const stopScheduler = startScheduler(db, runner);
+const collections = new JobsManager(db, config);
+await collections.connection.ping();
+const stopScheduler = startScheduler(db, {
+  recover: () => collections.recover(),
+  run: (userId, trigger) => collections.enqueue(userId, trigger),
+});
 const server = createApp(db, redis, config, {
   runner,
   articleContent,
   journalAccess: journals,
+  collections,
 }).listen(config.PORT, () => console.info(`DailyBrief listening on port ${config.PORT}`));
+let stopping = false;
 async function shutdown() {
+  if (stopping) return;
+  stopping = true;
   stopScheduler();
   server.close();
+  await collections.close();
   await Promise.all([db.$disconnect(), redis.quit()]);
   process.exit(0);
 }

@@ -5,6 +5,8 @@ import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "./ui/button";
 import { Feedback } from "./Feedback";
 import { errorMessage } from "@/lib/api";
+import { CollectionProvider } from "@/collection/CollectionProvider";
+import { CollectionBanner } from "@/collection/CollectionBanner";
 
 export function AppLayout() {
   const auth = useAuth();
@@ -22,7 +24,7 @@ export function AppLayout() {
     }
   }
   return (
-    <>
+    <CollectionProvider>
       <header className="border-b bg-card">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-5 px-5 py-5">
           <Link to="/dashboard" className="flex items-center gap-2 text-xl font-semibold">
@@ -41,6 +43,7 @@ export function AppLayout() {
               ["/dashboard", "Tableau de bord"],
               ["/sources", "Sources"],
               ["/journals", "Journaux"],
+              ["/jobs", "Jobs"],
             ].map(([to, label]) => (
               <NavLink
                 key={to}
@@ -56,7 +59,8 @@ export function AppLayout() {
           {error && <Feedback error message={error} />}
         </div>
       </header>
+      <CollectionBanner />
       <Outlet />
-    </>
+    </CollectionProvider>
   );
 }

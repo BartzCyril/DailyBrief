@@ -1,6 +1,10 @@
 import type { Db } from "./db";
-import type { CollectionRunner } from "./collection";
-export async function runDueCollections(db: Db, runner: CollectionRunner, now = new Date()) {
+import type { RunTrigger } from "./collection";
+type ScheduledRunner = {
+  run(userId: string, trigger?: RunTrigger): Promise<unknown>;
+  recover?: () => Promise<void>;
+};
+export async function runDueCollections(db: Db, runner: ScheduledRunner, now = new Date()) {
   const due = await db.dailyBriefSettings.findMany({
     where: { collectionEnabled: true, nextCollectionAt: { lte: now } },
     take: 100,
@@ -14,12 +18,13 @@ export async function runDueCollections(db: Db, runner: CollectionRunner, now = 
     }
   }
 }
-export function startScheduler(db: Db, runner: CollectionRunner) {
+export function startScheduler(db: Db, runner: ScheduledRunner) {
   let running = false;
   const tick = async () => {
     if (running) return;
     running = true;
     try {
+      await runner.recover?.();
       await runDueCollections(db, runner);
     } catch {
       console.error("Scheduler tick failed");

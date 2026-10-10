@@ -10,6 +10,9 @@ const SourcesPage = lazy(() =>
 const JournalsPage = lazy(() =>
   import("./pages/JournalsPage").then((module) => ({ default: module.JournalsPage })),
 );
+const JobsPage = lazy(() =>
+  import("./pages/JobsPage").then((module) => ({ default: module.JobsPage })),
+);
 const DashboardPage = lazy(() =>
   import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })),
 );
@@ -37,6 +40,7 @@ export function App() {
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/sources" element={<SourcesPage />} />
               <Route path="/journals" element={<JournalsPage />} />
+              <Route path="/jobs" element={<JobsPage />} />
               <Route path="/sources/new/rss" element={<NewSourcePage />} />
               <Route path="/sources/new/scraping" element={<NewSourcePage scraping />} />
               <Route path="/sources/:sourceId/workflow" element={<SourceWorkflowPage />} />
