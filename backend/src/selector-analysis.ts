@@ -12,7 +12,7 @@ import { articleBrowserLimiter } from "./article-browser";
 import { ConcurrencyLimiter } from "./concurrency";
 import type { Config } from "./config";
 import { AppError, UpstreamHttpError } from "./errors";
-import { fetchRemotePage, type FetchPage } from "./network";
+import { fetchRemotePage, RemoteConnectionError, type FetchPage } from "./network";
 import { MAX_REMOTE_BYTES } from "./remote-response";
 import { articleUrl, RssService } from "./rss";
 
@@ -151,7 +151,7 @@ export function compactSelectorDom(
     );
     roots = forms.length ? forms : [document.body];
   } else if (kind === "SCRAPING") {
-    const main = document.querySelector('main, [role="main"]');
+    const main = document.querySelector('main, [role="main"], #main');
     roots = main ? [main] : [document.body];
   } else roots = [document.body];
   const lines: string[] = [];
@@ -246,7 +246,18 @@ export async function renderPublicSelectorPage(
         503,
       );
     }
-    const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
+    const platform =
+      process.platform === "win32"
+        ? "Windows NT 10.0; Win64; x64"
+        : process.platform === "darwin"
+          ? "Macintosh; Intel Mac OS X 10_15_7"
+          : "X11; Linux x86_64";
+    const context = await browser.newContext({
+      serviceWorkers: "block",
+      acceptDownloads: false,
+      locale: "fr-FR",
+      userAgent: `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${browser.version()} Safari/537.36`,
+    });
     let navigationError: AppError | undefined;
     let navigations = 0;
     let rejectNavigation = (_error: unknown) => {};
@@ -276,6 +287,8 @@ export async function renderPublicSelectorPage(
             userAgent: headers["user-agent"],
             cookie: headers.cookie,
             accept: headers.accept,
+            referer: headers.referer,
+            browserHeaders: headers,
             followRedirects: !request.isNavigationRequest(),
           });
           if (response.status >= 400) throw new UpstreamHttpError(response.status, request.url());
@@ -309,17 +322,29 @@ export async function renderPublicSelectorPage(
             const message =
               error instanceof UpstreamHttpError
                 ? `Le site a refusé le chargement de la page (HTTP ${error.upstreamStatus}). L'analyse n'a pas été envoyée à l'IA.`
-                : error instanceof AppError && error.code === "UNSAFE_URL"
-                  ? "La page utilise une adresse locale ou privée interdite."
-                  : error instanceof AppError && error.code === "NETWORK_ERROR"
-                    ? "Le serveur ne peut pas joindre le site (erreur réseau ou DNS). Vérifiez son accès à Internet et les éventuels proxy ou pare-feu."
-                    : error instanceof AppError && error.code === "TIMEOUT"
-                      ? "Le site n'a pas répondu dans le délai de chargement. Réessayez dans quelques instants."
-                      : error instanceof AppError && error.code === "REDIRECT_LIMIT"
-                        ? "Le site effectue trop de redirections pour être analysé."
-                        : error instanceof AppError && error.code === "RESPONSE_TOO_LARGE"
-                          ? "La page dépasse la taille maximale autorisée pour l'analyse."
-                          : "Impossible de charger la page publique à analyser.";
+                : error instanceof RemoteConnectionError
+                  ? error.message
+                  : error instanceof AppError && error.code === "UNSAFE_URL"
+                    ? "La page utilise une adresse locale ou privée interdite."
+                    : error instanceof AppError && error.code === "NETWORK_ERROR"
+                      ? "Le serveur ne peut pas joindre le site (erreur réseau ou DNS). Vérifiez son accès à Internet et les éventuels proxy ou pare-feu."
+                      : error instanceof AppError && error.code === "TIMEOUT"
+                        ? "Le site n'a pas répondu dans le délai de chargement. Réessayez dans quelques instants."
+                        : error instanceof AppError && error.code === "REDIRECT_LIMIT"
+                          ? "Le site effectue trop de redirections pour être analysé."
+                          : error instanceof AppError && error.code === "RESPONSE_TOO_LARGE"
+                            ? "La page dépasse la taille maximale autorisée pour l'analyse."
+                            : error instanceof AppError &&
+                                ["INVALID_TEXT_ENCODING", "UNSUPPORTED_TEXT_ENCODING"].includes(
+                                  error.code,
+                                )
+                              ? "La page a été reçue, mais son encodage de caractères ne peut pas être lu par le serveur."
+                              : error instanceof AppError &&
+                                  ["DECOMPRESSION_FAILED", "UNSUPPORTED_CONTENT_ENCODING"].includes(
+                                    error.code,
+                                  )
+                                ? "La page a été reçue, mais sa compression HTTP est invalide ou non prise en charge."
+                                : "Impossible de charger la page publique à analyser.";
             navigationError = analysisError(
               message,
               error instanceof AppError ? error.code : "SELECTOR_PAGE_UNAVAILABLE",

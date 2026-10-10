@@ -8,6 +8,7 @@ import {
   createZstdDecompress,
 } from "node:zlib";
 import { AppError } from "./errors";
+import { JSDOM } from "jsdom";
 
 export const MAX_REMOTE_BYTES = 2 * 1024 * 1024;
 function tooLarge() {
@@ -73,13 +74,39 @@ function decodeText(body: Buffer, contentType?: string): string {
     .subarray(0, 512)
     .toString("latin1")
     .match(/^\s*<\?xml\b[^>]*\bencoding\s*=\s*["']([^"']+)["']/i)?.[1];
+  const prefix = body.subarray(0, 1024).toString("latin1");
+  const html =
+    /^text\/html(?:\s*;|$)/i.test(contentType ?? "") ||
+    (!contentType && /^\s*(?:<!doctype\s+html\b|<html\b|<head\b|<meta\b)/i.test(prefix));
+  let htmlCharset: string | undefined;
+  if (!charset && !declaration && html) {
+    // HTML encodings are often declared only in <meta>, not the HTTP headers.
+    // A bounded inert fragment ignores comments and script text and loads no resources.
+    const fragment = JSDOM.fragment(prefix);
+    for (const meta of fragment.querySelectorAll("meta")) {
+      const candidate =
+        meta.getAttribute("charset")?.trim() ||
+        (meta.getAttribute("http-equiv")?.trim().toLowerCase() === "content-type"
+          ? meta.getAttribute("content")?.match(/\bcharset\s*=\s*["']?([^;\s"']+)/i)?.[1]
+          : undefined);
+      if (candidate) {
+        // HTML's encoding prescan treats UTF-16 meta labels as UTF-8; a BOM still wins.
+        htmlCharset = /^utf-16(?:le|be)?$/i.test(candidate)
+          ? "utf-8"
+          : candidate.toLowerCase() === "x-user-defined"
+            ? "windows-1252"
+            : candidate;
+        break;
+      }
+    }
+  }
   const encoding = utf16le
     ? "utf-16le"
     : utf16be
       ? "utf-16be"
       : utf8Bom
         ? "utf-8"
-        : (charset ?? declaration ?? "utf-8");
+        : (charset ?? declaration ?? htmlCharset ?? "utf-8");
   let decoder: TextDecoder;
   try {
     decoder = new TextDecoder(encoding, { fatal: true });
@@ -95,7 +122,7 @@ function decodeText(body: Buffer, contentType?: string): string {
   } catch {
     throw new AppError(
       502,
-      "La réponse du site ne peut pas être décodée dans l'encodage annoncé. Vérifiez sa compression et son encodage ; le problème précède la lecture du XML.",
+      "La réponse du site ne peut pas être décodée dans l'encodage annoncé. Vérifiez sa compression et son encodage ; le problème précède l'analyse de la page ou du flux.",
       "INVALID_TEXT_ENCODING",
     );
   }

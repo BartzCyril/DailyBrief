@@ -5,6 +5,58 @@ import ipaddr from "ipaddr.js";
 import { AppError, UpstreamHttpError } from "./errors";
 import { readRemoteResponse } from "./remote-response";
 
+export class RemoteConnectionError extends AppError {
+  constructor(public readonly reason: "DNS" | "TLS" | "CONNECT" | "RESET" | "UNKNOWN") {
+    const messages = {
+      DNS: "Le serveur ne peut pas résoudre le nom du site (DNS).",
+      TLS: "Le serveur ne peut pas vérifier la connexion HTTPS du site (certificat ou négociation TLS).",
+      CONNECT:
+        "Le serveur ne peut pas établir une connexion avec le site (connexion refusée ou adresse IP inaccessible).",
+      RESET: "Le site ou un intermédiaire a interrompu la connexion du serveur.",
+      UNKNOWN: "Le serveur ne peut pas joindre le site (erreur réseau).",
+    };
+    super(502, messages[reason], "NETWORK_ERROR");
+  }
+}
+
+export function remoteConnectionError(error: unknown): RemoteConnectionError {
+  const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+  if (
+    /^(?:ERR_(?:TLS|SSL)_|CERT_|DEPTH_ZERO_SELF_SIGNED_CERT$|SELF_SIGNED_CERT_IN_CHAIN$|UNABLE_TO_(?:VERIFY_LEAF_SIGNATURE|GET_ISSUER_CERT_LOCALLY)$)/.test(
+      code,
+    )
+  )
+    return new RemoteConnectionError("TLS");
+  if (["ENOTFOUND", "EAI_AGAIN"].includes(code)) return new RemoteConnectionError("DNS");
+  if (["ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EADDRNOTAVAIL"].includes(code))
+    return new RemoteConnectionError("CONNECT");
+  if (["ECONNRESET", "EPIPE"].includes(code)) return new RemoteConnectionError("RESET");
+  return new RemoteConnectionError("UNKNOWN");
+}
+
+const browserHeaderNames = new Set([
+  "accept-language",
+  "sec-fetch-dest",
+  "sec-fetch-mode",
+  "sec-fetch-site",
+  "sec-fetch-user",
+  "sec-ch-ua",
+  "sec-ch-ua-mobile",
+  "sec-ch-ua-platform",
+  "upgrade-insecure-requests",
+]);
+
+/** Forward browser metadata only; credentials and transport headers use explicit options. */
+export function browserRequestHeaders(
+  headers: Record<string, string> = {},
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers)
+      .filter(([name]) => browserHeaderNames.has(name.toLowerCase()))
+      .map(([name, value]) => [name.toLowerCase(), value]),
+  );
+}
+
 export function isPublicAddress(address: string): boolean {
   try {
     return ipaddr.process(address).range() === "unicast";
@@ -36,7 +88,7 @@ export async function validateRemoteUrl(
       ? [{ address: host, family: ipaddr.parse(host).kind() === "ipv4" ? 4 : 6 }]
       : await lookup(host, { all: true });
   } catch {
-    throw new AppError(502, "Domaine inaccessible.", "NETWORK_ERROR");
+    throw new RemoteConnectionError("DNS");
   }
   if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address)))
     throw new AppError(400, "Adresses privées et locales interdites.", "UNSAFE_URL");
@@ -62,6 +114,7 @@ export type RemotePageOptions = {
   accept?: string;
   followRedirects?: boolean;
   allowedHostname?: string;
+  browserHeaders?: Record<string, string>;
 };
 export type FetchPage = (url: string, options?: RemotePageOptions) => Promise<RemotePage>;
 export const fetchRemotePage: FetchPage = async (value, options = {}) => {
@@ -96,6 +149,7 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
         {
           method,
           headers: {
+            ...browserRequestHeaders(options.browserHeaders),
             "User-Agent": options.userAgent ?? "DailyBrief/1.0",
             "Accept-Encoding": "identity",
             ...(options.accept ? { Accept: options.accept } : {}),
@@ -150,11 +204,7 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
       );
       req.on("close", () => clearTimeout(timer));
       req.on("error", (error) =>
-        reject(
-          error instanceof AppError
-            ? error
-            : new AppError(502, "Site inaccessible.", "NETWORK_ERROR"),
-        ),
+        reject(error instanceof AppError ? error : remoteConnectionError(error)),
       );
       req.end(method === "POST" ? options.body : undefined);
     });

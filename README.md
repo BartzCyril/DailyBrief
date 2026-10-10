@@ -297,7 +297,24 @@ instructions pour traiter cette structure comme des données et éviter les sél
 inventés. L'analyse ne clique sur aucun bouton, ne se connecte pas et ne parcourt pas les pages suivantes.
 Les sites bloqués par un CAPTCHA ou imposant une interaction peuvent nécessiter une aide manuelle.
 Une iframe publicitaire indisponible ne bloque pas l'analyse de la page principale.
-Les erreurs de cette page précisent le refus HTTP, le problème réseau ou le délai dépassé.
+Les encodages HTML déclarés dans une balise `meta` (par exemple ISO-8859-1) sont
+lus avant le rendu ; le conteneur `#main` est également reconnu pour donner la
+priorité aux articles plutôt qu'aux longs menus. Le chargement conserve la langue
+et les métadonnées autorisées de Chromium ainsi que les référents du même site.
+Les erreurs précisent le refus HTTP, le problème DNS ou HTTPS, l'encodage,
+la compression ou le délai dépassé.
+
+Pour diagnostiquer une page depuis la machine qui exécute le backend :
+
+```bash
+bun run diagnose:page "https://www.lemondeinformatique.fr/le-monde-du-cloud-computing-8.html"
+```
+
+La commande compare le téléchargement sécurisé et le rendu Chromium utilisé pour
+l'analyse. Elle affiche uniquement les statuts et les catégories d'erreur, sans
+HTML ni cookies, et n'appelle ni l'IA ni SMTP. Un code HTTP 403 signifie que la
+requête du backend a été refusée : un accès réussi dans un autre navigateur ou
+avec `curl` ne garantit pas que le site accepte cette requête.
 
 Si l'analyse échoue ou reste incomplète, « Envoyer une demande d'aide » permet
 d'envoyer un email à l'adresse configurée dans `SMTP_USER`. Aucun email n'est

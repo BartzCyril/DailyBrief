@@ -4,7 +4,7 @@ import type { SelectorAnalysisInput, SourcePreview } from "@dailybrief/shared";
 import { OllamaClient } from "../src/ai";
 import { readConfig } from "../src/config";
 import { AppError, UpstreamHttpError } from "../src/errors";
-import type { FetchPage, RemotePageOptions } from "../src/network";
+import { RemoteConnectionError, type FetchPage, type RemotePageOptions } from "../src/network";
 import {
   compactSelectorDom,
   OllamaSelectorAnalysisProvider,
@@ -622,6 +622,46 @@ test("public browser renders JavaScript while blocking POSTs and excluding invis
   expect(requests.every((request) => !request.options?.body)).toBe(true);
 }, 45000);
 
+test("public selector requests preserve browser language, user agent and same-site referrers", async () => {
+  const requests: { url: string; options?: RemotePageOptions }[] = [];
+  const fetchPage: FetchPage = async (url, options) => {
+    requests.push({ url, options });
+    if (
+      !options?.userAgent?.includes("Chrome/") ||
+      options.userAgent.includes("HeadlessChrome/") ||
+      !options.browserHeaders?.["accept-language"]?.startsWith("fr-FR")
+    )
+      throw new UpstreamHttpError(403, url);
+    return {
+      status: 200,
+      cookies: [],
+      contentType: "text/html",
+      text: url.endsWith("/public")
+        ? '<main><h1>Liste accessible</h1></main><script src="/app.js"></script>'
+        : "",
+    };
+  };
+  const result = await renderPublicSelectorPage("https://publisher.example/public", fetchPage);
+  expect(result.html).toContain("Liste accessible");
+  const navigation = requests.find((item) => item.url.endsWith("/public"));
+  expect(navigation?.options?.browserHeaders?.["accept-language"]).toContain("fr-FR");
+  expect(navigation?.options?.userAgent).toMatch(/Chrome\/\d+\./);
+  expect(requests.find((item) => item.url.endsWith("/app.js"))?.options?.referer).toBe(
+    "https://publisher.example/public",
+  );
+}, 45000);
+
+test("scraping snapshots prioritize legacy main containers over long navigation menus", () => {
+  const page =
+    "<header>" +
+    '<a href="/menu">Navigation</a>'.repeat(200) +
+    '</header><div id="main"><div class="list-large"><article class="item"><h2><a class="title" href="/article">Données du cloud en été</a></h2></article></div></div>';
+  const snapshot = compactSelectorDom(page, "https://publisher.example/public", "SCRAPING", 1500);
+  expect(snapshot).toContain("Données du cloud en été");
+  expect(snapshot).toContain('"id":"main"');
+  expect(snapshot).not.toContain("Navigation");
+});
+
 test("public browser redirects remain protected by the shared private-address guard", async () => {
   const fetchPage: FetchPage = async (url) => {
     if (url === "https://publisher.example/public")
@@ -680,6 +720,17 @@ test("main page failures expose HTTP, network and timeout causes without private
     [new UpstreamHttpError(429, url), "UPSTREAM_ERROR", "HTTP 429"],
     [new AppError(502, `Unreachable ${url}`, "NETWORK_ERROR"), "NETWORK_ERROR", "réseau ou DNS"],
     [new AppError(504, `Timeout ${url}`, "TIMEOUT"), "TIMEOUT", "délai de chargement"],
+    [new RemoteConnectionError("TLS"), "NETWORK_ERROR", "certificat"],
+    [
+      new AppError(502, "invalid text", "INVALID_TEXT_ENCODING"),
+      "INVALID_TEXT_ENCODING",
+      "encodage de caractères",
+    ],
+    [
+      new AppError(502, "invalid compression", "DECOMPRESSION_FAILED"),
+      "DECOMPRESSION_FAILED",
+      "compression HTTP",
+    ],
   ] as const)
     await assert.rejects(
       renderPublicSelectorPage(url, async () => {
