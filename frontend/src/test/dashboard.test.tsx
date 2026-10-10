@@ -311,7 +311,7 @@ test("navigates between sources and journals without loading unrelated features"
   );
   expect(mock.mock.calls.some(([url]) => url.endsWith("/journals"))).toBe(false);
   await user.click(screen.getByRole("link", { name: "Journaux" }));
-  expect(await screen.findByRole("heading", { name: "Vos journaux" })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "Journaux", level: 1 })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Ajouter un journal" })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Ajouter un flux RSS" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Journaux" })).toHaveAttribute("aria-current", "page");

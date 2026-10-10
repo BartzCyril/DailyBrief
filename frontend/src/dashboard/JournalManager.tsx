@@ -53,9 +53,6 @@ export function JournalManager({ refreshKey = 0 }: { refreshKey?: number }) {
   }
   const actions = (
     <div className="flex flex-wrap gap-3">
-      <Button variant="outline" disabled={loading} onClick={() => void refresh()}>
-        Actualiser les journaux
-      </Button>
       <Modal
         open={adding}
         onOpenChange={(open) => {
@@ -147,11 +144,15 @@ export function JournalManager({ refreshKey = 0 }: { refreshKey?: number }) {
         </p>
       )}
       <Feedback message={error} error />
-      {data && (
+      {error && (
+        <Button variant="outline" disabled={loading} onClick={() => void refresh()}>
+          Réessayer
+        </Button>
+      )}
+      {data && !data.lastInventoriedAt && (
         <p className="text-sm text-muted-foreground">
-          {data.lastInventoriedAt
-            ? "Les comptes additionnent le dernier recensement de chaque flux RSS avec sélecteur. Ils ne correspondent pas au total historique des articles."
-            : "Aucun recensement disponible. Récupérez les articles dans le workflow d'un flux RSS avec sélecteur pour afficher ses comptes ici."}
+          Aucun recensement disponible. Récupérez les articles dans le workflow d'un flux RSS avec
+          sélecteur pour afficher ses comptes ici.
         </p>
       )}
       {Boolean(data?.unresolvedCount) && (

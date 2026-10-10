@@ -13,7 +13,7 @@ export function ConfirmDelete({
 }: {
   trigger: ReactNode;
   itemType: string;
-  description: string;
+  description?: string;
   onConfirm: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
@@ -59,7 +59,7 @@ export function ConfirmDelete({
           <AlertDialog.Description asChild>
             <div className="space-y-3 text-sm">
               <p>Êtes-vous sûr de vouloir supprimer {itemType} ?</p>
-              <p className="break-words text-muted-foreground">{description}</p>
+              {description && <p className="break-words text-muted-foreground">{description}</p>}
             </div>
           </AlertDialog.Description>
           <Feedback error message={error} />

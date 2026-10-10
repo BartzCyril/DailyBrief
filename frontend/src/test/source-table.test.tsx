@@ -110,10 +110,8 @@ test("paginates at five sources and combines case-insensitive URL search and sta
   await ui.click(screen.getByRole("button", { name: "Page suivante" }));
   expect(urlLinks()).toHaveLength(1);
   expect(screen.getByRole("button", { name: "Page suivante" })).toBeDisabled();
-  await ui.type(
-    screen.getByRole("searchbox", { name: "Rechercher une URL" }),
-    "  NEWS.EXAMPLE/feeds/1  ",
-  );
+  await ui.click(screen.getByRole("searchbox", { name: "Rechercher une URL" }));
+  await ui.paste("  NEWS.EXAMPLE/feeds/1  ");
   expect(urlLinks()).toHaveLength(3);
   expect(screen.getByText("Page 1 sur 1")).toBeInTheDocument();
   await ui.selectOptions(screen.getByRole("combobox", { name: "Statut des sources" }), "active");
@@ -125,7 +123,7 @@ test("paginates at five sources and combines case-insensitive URL search and sta
   expect(urlLinks()).toHaveLength(1);
   expect(screen.getByRole("img", { name: "Inactive" })).toBeInTheDocument();
   await ui.clear(screen.getByRole("searchbox", { name: "Rechercher une URL" }));
-  await ui.type(screen.getByRole("searchbox", { name: "Rechercher une URL" }), "no-match");
+  await ui.paste("no-match");
   expect(urlLinks()).toHaveLength(0);
   expect(screen.getByText(/Aucune source ne correspond/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Page suivante" })).toBeDisabled();

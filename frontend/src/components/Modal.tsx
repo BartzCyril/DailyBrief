@@ -26,7 +26,7 @@ export function Modal({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
-  description: string;
+  description?: string;
   trigger: ReactNode;
   busy?: boolean;
   children: ReactNode;
@@ -46,6 +46,7 @@ export function Modal({
         <Dialog.Overlay className={modalOverlay} />
         <Dialog.Content
           className={modalContent}
+          {...(!description ? { "aria-describedby": undefined } : {})}
           onEscapeKeyDown={(event) => {
             if (busy) event.preventDefault();
           }}
@@ -56,9 +57,11 @@ export function Modal({
         >
           <div className="mb-6 space-y-2 pr-10">
             <Dialog.Title className="break-words text-xl font-semibold">{title}</Dialog.Title>
-            <Dialog.Description className="text-sm text-muted-foreground">
-              {description}
-            </Dialog.Description>
+            {description && (
+              <Dialog.Description className="text-sm text-muted-foreground">
+                {description}
+              </Dialog.Description>
+            )}
           </div>
           {children}
           <Dialog.Close asChild>

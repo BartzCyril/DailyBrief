@@ -7,7 +7,17 @@ import { JournalManager } from "../dashboard/JournalManager";
 let journals: JournalPreview[];
 let failLoad = false,
   failDelete = false;
+let connectionTests = 0;
 const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+  if (url.endsWith("/test")) {
+    connectionTests++;
+    return new Response(
+      JSON.stringify({
+        authenticated: true,
+        message: "Connexion vérifiée. La session de test a été fermée.",
+      }),
+    );
+  }
   if (url === "/api/journals" && init?.method === "GET")
     return new Response(
       JSON.stringify(
@@ -49,7 +59,11 @@ const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
         loginConfig: null,
         authenticationSupported: false,
       }
-    : { ...previous, ...body };
+    : {
+        ...previous,
+        ...body,
+        ...(body.clearCredentials ? { email: null, hasCredentials: false } : {}),
+      };
   journals = journals.map((journal) => (journal === previous ? saved : journal));
   return new Response(JSON.stringify(saved));
 });
@@ -65,8 +79,95 @@ beforeEach(() => {
     },
   ];
   failLoad = failDelete = false;
+  connectionTests = 0;
   fetcher.mockClear();
   vi.stubGlobal("fetch", fetcher);
+});
+
+test("shows a compact journal table with three icon actions and no removed descriptions", async () => {
+  const user = userEvent.setup();
+  render(<JournalManager />);
+  const link = await screen.findByRole("link", { name: "paper.example" });
+  expect(screen.getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+    "Domaine du journal",
+    "Nombre d'articles",
+    "Statut",
+    "Accès",
+    "Actions",
+  ]);
+  expect(screen.queryByRole("heading", { name: "Vos journaux" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Les comptes additionnent/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Les nouveaux journaux sont désactivés/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Actualiser les journaux" })).not.toBeInTheDocument();
+  const row = link.closest("tr")!;
+  const cells = within(row).getAllByRole("cell");
+  const actions = within(cells.at(-1)!).getAllByRole("button");
+  expect(actions).toHaveLength(3);
+  for (const action of actions) expect(action.textContent).toBe("");
+  expect(actions[0]).toHaveAccessibleName("Configurer l'accès");
+  expect(actions[0]).toBeDisabled();
+  expect(within(cells[1]!).getByRole("button")).toHaveAttribute("aria-pressed", "false");
+  expect(within(cells[2]!).getByRole("img", { name: "Non configuré" })).toHaveClass("bg-red-600");
+  await user.hover(actions[1]!);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Modifier le domaine");
+  await user.unhover(actions[1]!);
+});
+
+test("distinguishes partial access from configured access and keeps connection controls inside the modal", async () => {
+  journals = [
+    { ...journals[0]!, enabled: true, email: "reader@example.com", hasCredentials: true },
+    {
+      ...journals[0]!,
+      domain: "ready.example",
+      enabled: true,
+      email: "reader@example.com",
+      hasCredentials: true,
+      authenticationSupported: true,
+      loginConfig: {
+        loginUrl: "https://ready.example/login",
+        emailSelector: "#email",
+        passwordSelector: "#password",
+        submitSelector: "#submit",
+        successSelector: ".account",
+        articleContentSelector: null,
+      },
+    },
+  ];
+  const user = userEvent.setup();
+  render(<JournalManager />);
+  const partial = await screen.findByRole("link", { name: "paper.example" });
+  const ready = screen.getByRole("link", { name: "ready.example" });
+  expect(
+    within(partial.closest("tr")!).getByRole("img", {
+      name: "Identifiants enregistrés · formulaire à configurer",
+    }),
+  ).toHaveClass("bg-red-600");
+  expect(
+    within(ready.closest("tr")!).getByRole("img", {
+      name: "Formulaire configuré · connexion à vérifier",
+    }),
+  ).toHaveClass("bg-green-600");
+  expect(screen.queryByText("reader@example.com")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Tester la connexion" })).not.toBeInTheDocument();
+  const trigger = within(ready.closest("tr")!).getByRole("button", { name: "Configurer l'accès" });
+  await user.click(trigger);
+  const dialog = screen.getByRole("dialog", { name: "Configurer l'accès à ready.example" });
+  expect(within(dialog).getByLabelText("Email pour ready.example")).toHaveValue(
+    "reader@example.com",
+  );
+  expect(within(dialog).getByLabelText("Nouveau mot de passe (vide : conserver)")).toHaveValue("");
+  await user.click(within(dialog).getByRole("button", { name: "Tester la connexion" }));
+  expect(await within(dialog).findByText(/Connexion vérifiée/)).toBeInTheDocument();
+  expect(connectionTests).toBe(1);
+  await user.click(within(dialog).getByRole("button", { name: "Supprimer les identifiants" }));
+  await user.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(within(ready.closest("tr")!).getByRole("img", { name: "Non configuré" })).toHaveClass(
+    "bg-red-600",
+  );
+  expect(screen.queryByRole("button", { name: "Tester la connexion" })).not.toBeInTheDocument();
 });
 
 test("shows saved journal counts and supports keyboard addition, activation, renaming and deletion", async () => {
@@ -102,7 +203,10 @@ test("shows saved journal counts and supports keyboard addition, activation, ren
   await user.click(remove);
   expect(fetcher.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
   expect(screen.getByRole("alertdialog")).toHaveTextContent(
-    "Êtes-vous sûr de vouloir supprimer ce journal ?",
+    "Êtes-vous sûr de vouloir supprimer le journal corrected.example ?",
+  );
+  expect(screen.getByRole("alertdialog")).not.toHaveTextContent(
+    "Les réglages d'accès seront supprimés",
   );
   expect(screen.getByRole("button", { name: "Annuler" })).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "Annuler" }));
@@ -123,7 +227,7 @@ test("keeps a journal visible after a deletion error and allows list loading to 
   render(<JournalManager />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Journaux indisponibles");
   failLoad = false;
-  await user.click(screen.getByRole("button", { name: "Actualiser les journaux" }));
+  await user.click(screen.getByRole("button", { name: "Réessayer" }));
   await screen.findByRole("link", { name: "paper.example" });
   failDelete = true;
   await user.click(screen.getByRole("button", { name: "Supprimer le journal paper.example" }));
@@ -171,6 +275,9 @@ test("opens domain editing in a modal, cancels with Escape and restores focus wi
   edit.focus();
   await user.keyboard("{Enter}");
   const dialog = screen.getByRole("dialog", { name: "Modifier le domaine du journal" });
+  expect(dialog).not.toHaveAttribute("aria-describedby");
+  expect(within(dialog).queryByRole("link")).not.toBeInTheDocument();
+  expect(dialog).not.toHaveTextContent("Les hôtes avec et sans www sont distincts.");
   const input = within(dialog).getByLabelText("Nouveau domaine pour paper.example");
   expect(input).toHaveFocus();
   await user.clear(input);

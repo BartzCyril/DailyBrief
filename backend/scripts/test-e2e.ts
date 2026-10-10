@@ -250,6 +250,7 @@ try {
   await page
     .getByLabel("Nouveau domaine pour manual-journal.example")
     .fill("corrected-journal.example");
+  assert.equal(await page.getByRole("dialog").getAttribute("aria-describedby"), null);
   await page.getByRole("dialog").screenshot({ path: "/tmp/dailybrief-domain-modal-mobile.png" });
   await page.getByRole("button", { name: "Enregistrer le domaine", exact: true }).click();
   await page
@@ -266,7 +267,7 @@ try {
   const journalConfirmation = page.getByRole("alertdialog");
   assert(
     (await journalConfirmation.innerText()).includes(
-      "Êtes-vous sûr de vouloir supprimer ce journal ?",
+      "Êtes-vous sûr de vouloir supprimer le journal corrected-journal.example ?",
     ),
   );
   await journalConfirmation.getByRole("button", { name: "Annuler", exact: true }).click();
@@ -655,12 +656,39 @@ try {
   await page.waitForURL("**/sources");
   await page.getByRole("link", { name: "Journaux", exact: true }).click();
   const savedJournalRow = page
-    .getByRole("region", { name: "Vos journaux", exact: true })
+    .getByRole("region", { name: "Journaux", exact: true })
     .getByRole("row")
     .filter({ hasText: "publisher.example" });
   await savedJournalRow.getByRole("link", { name: "publisher.example", exact: true }).waitFor();
   assert.equal(await savedJournalRow.getByRole("cell").first().textContent(), "1");
-  await savedJournalRow.getByRole("button", { name: "Configurer l'accès", exact: true }).click();
+  assert.equal(await page.getByRole("columnheader", { name: "Email", exact: true }).count(), 0);
+  const journalActions = savedJournalRow.getByRole("cell").last().getByRole("button");
+  assert.equal(await journalActions.count(), 3);
+  for (const action of await journalActions.all()) {
+    assert.equal((await action.textContent())?.trim(), "");
+    assert.equal(await action.evaluate((element) => getComputedStyle(element).cursor), "pointer");
+  }
+  assert.equal(
+    await savedJournalRow.getByRole("img", { name: "Non configuré", exact: true }).count(),
+    1,
+  );
+  assert.equal(await page.getByRole("button", { name: "Actualiser les journaux" }).count(), 0);
+  const accessIcon = savedJournalRow.getByRole("button", {
+    name: "Configurer l'accès",
+    exact: true,
+  });
+  assert(!(await accessIcon.isDisabled()));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await accessIcon.focus();
+  await page.getByRole("tooltip").waitFor();
+  assert((await page.getByRole("tooltip").innerText()).includes("Configurer l'accès"));
+  await page.keyboard.press("Escape");
+  await page.screenshot({ path: "/tmp/dailybrief-journals-compact-desktop.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await page.screenshot({ path: "/tmp/dailybrief-journals-compact-mobile.png", fullPage: true });
+  await accessIcon.focus();
+  await page.keyboard.press("Enter");
   assert.equal(
     await page.getByRole("dialog").getByLabel("URL du formulaire de connexion").inputValue(),
     loginConfig.loginUrl,
