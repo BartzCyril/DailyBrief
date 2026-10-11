@@ -1,6 +1,7 @@
 import type { ErrorRequestHandler } from "express";
 import { Prisma } from "@prisma/client";
 import { ZodError } from "zod";
+import { logger } from "./logger";
 export class AppError extends Error {
   constructor(
     public status: number,
@@ -28,6 +29,13 @@ export const errorHandler: ErrorRequestHandler = (error: unknown, _req, res, _ne
     return;
   }
   if (error instanceof AppError) {
+    if (error.status >= 500)
+      logger.error("http.service_failed", "Un service nécessaire à la requête est indisponible.", {
+        status: error.status,
+        error,
+      });
+    else
+      logger.debug("http.rejected", "Requête refusée.", { status: error.status, code: error.code });
     res.status(error.status).json({
       message: error.message,
       code: error.code,
@@ -45,6 +53,6 @@ export const errorHandler: ErrorRequestHandler = (error: unknown, _req, res, _ne
     res.status(400).json({ message: "JSON invalide." });
     return;
   }
-  console.error("Request failed", error instanceof Error ? error.name : "UnknownError");
+  logger.error("http.failed", "Erreur interne pendant une requête HTTP.", { error });
   res.status(500).json({ message: "Une erreur interne est survenue.", code: "INTERNAL_ERROR" });
 };

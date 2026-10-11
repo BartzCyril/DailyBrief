@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import nodemailer, { type Transporter } from "nodemailer";
+import type { Transporter } from "nodemailer";
 import { z } from "zod";
 import type { SelectorAnalysisInput, SelectorAnalysisKind } from "@dailybrief/shared";
 import type { Config } from "./config";
 import { AppError } from "./errors";
 import type { Redis } from "./redis";
+import { createSmtpTransport } from "./smtp";
 
 export type SelectorHelpMessage = {
   to: string;
@@ -25,19 +26,7 @@ export class SmtpSelectorHelpSender implements SelectorHelpSender {
     private config: Config,
     transport?: Transporter,
   ) {
-    this.transport =
-      transport ??
-      nodemailer.createTransport({
-        host: config.SMTP_HOST,
-        port: config.SMTP_PORT,
-        secure: config.SMTP_SECURE,
-        connectionTimeout: 15000,
-        greetingTimeout: 15000,
-        socketTimeout: 30000,
-        ...(config.SMTP_USER && config.SMTP_PASSWORD
-          ? { auth: { user: config.SMTP_USER, pass: config.SMTP_PASSWORD } }
-          : {}),
-      });
+    this.transport = transport ?? createSmtpTransport(config);
   }
 
   async send(message: SelectorHelpMessage): Promise<void> {

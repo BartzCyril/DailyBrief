@@ -9,6 +9,7 @@ import { ArticleContentService } from "./article-content";
 import { JournalAccessService } from "./journal-access";
 import { recordJournalInventory } from "./journal-inventory";
 import { filterRecentArticles, type RecentArticleWindow } from "./recent-articles";
+import { logger } from "./logger";
 
 export type CollectedArticle = ArticlePreview & { sourceId: string };
 export type SourceResult = {
@@ -36,6 +37,10 @@ export class SourceCollector {
       orderBy: { createdAt: "asc" },
     });
     const results: SourceResult[] = [];
+    logger.info("sources.started", "Récupération des sources actives.", {
+      userId,
+      sources: sources.length,
+    });
     for (const source of sources) {
       const label = `${source.type} · ${new URL(source.url).hostname}`;
       reportProgress(observer, {
@@ -46,6 +51,12 @@ export class SourceCollector {
         total: sources.length,
       });
       const start = Date.now();
+      logger.debug("source.started", "Lecture d'une source.", {
+        userId,
+        sourceId: source.id,
+        type: source.type,
+        domain: new URL(source.url).hostname,
+      });
       try {
         const options = window ? { window, newestFirst: source.newestFirst } : undefined;
         const preview =
@@ -90,6 +101,12 @@ export class SourceCollector {
           articles: preview.articles.map((article) => ({ ...article, sourceId: source.id })),
           ...(preview.warnings?.length ? { warnings: preview.warnings } : {}),
         });
+        logger.info("source.completed", "Source récupérée.", {
+          userId,
+          sourceId: source.id,
+          articles: preview.articles.length,
+          durationMs: Date.now() - start,
+        });
         for (const warning of preview.warnings ?? [])
           reportProgress(observer, {
             stage: "source",
@@ -104,6 +121,11 @@ export class SourceCollector {
           total: sources.length,
         });
       } catch (error) {
+        logger.error(
+          "source.failed",
+          "La récupération d'une source a échoué ; les autres sources continuent.",
+          { userId, sourceId: source.id, durationMs: Date.now() - start, error },
+        );
         const message =
           error instanceof AppError ? error.message : "Échec de récupération de la source.";
         results.push({

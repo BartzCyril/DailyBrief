@@ -841,3 +841,68 @@ invalide le contenu et le résumé réutilisables des articles encore en attente
 Après mise à jour, exécutez `bun run db:generate`, `bun run db:migrate` puis
 redémarrez le backend. Aucune nouvelle variable d'environnement n'est nécessaire :
 conservez `JOURNAL_ENCRYPTION_KEY` et assurez-vous que Chromium est installé.
+
+## Logs et alertes email
+
+Le backend et les consommateurs utilisent un logger commun avec `info`, `debug`
+et `error`. Chaque message contient une date UTC, le service (`backend` ou
+`consumers`), un nom d'événement et un contexte structuré. Les collectes et les jobs
+sont suivis avec `runId`, `jobId`, `sourceId`, le numéro de tentative, les comptes
+et les durées. Les requêtes HTTP reçoivent un `X-Request-Id` généré par le serveur,
+présent dans les logs d'erreur pour faciliter un diagnostic.
+
+`LOG_LEVEL=info` affiche les démarrages, les collectes, les jobs et leurs résultats.
+`LOG_LEVEL=debug` ajoute les requêtes HTTP et les nouvelles tentatives.
+`LOG_LEVEL=error` conserve uniquement les erreurs et les erreurs fatales.
+Le format est lisible dans le terminal en développement et JSON en production.
+`LOG_FORMAT=pretty` ou `LOG_FORMAT=json` permet de choisir explicitement.
+
+```text
+2026-10-11T12:00:00.000Z INFO [consumers] job.completed — Job terminé. {"queue":"article-summaries","jobId":"…","runId":"…","status":"completed","durationMs":2500}
+```
+
+Toutes les erreurs de niveau `error`, y compris les erreurs fatales, sont ajoutées
+au fichier **`.error` à la racine du projet**, en JSON, une erreur par ligne.
+`LOG_ERROR_FILE` accepte un autre chemin ; un chemin relatif part toujours de la
+racine du projet, même sur Windows. Le fichier est créé à la première erreur,
+ignoré par Git et restreint au propriétaire sur les systèmes qui gèrent les
+permissions POSIX. Le backend et les consommateurs ajoutent leurs lignes au même
+fichier. Prévoir sa rotation ou son archivage dans un déploiement de longue durée.
+
+Avec `ERROR_EMAIL_ENABLED=true` (valeur par défaut), les erreurs sont aussi envoyées
+par SMTP à **`ERROR_EMAIL_TO`**, ou à **`SMTP_USER`** si l'adresse de remplacement
+est vide. Renseignez les paramètres `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`,
+`SMTP_FROM`, `SMTP_USER` et `SMTP_PASSWORD` selon votre serveur. Si l'identifiant
+SMTP n'est pas une adresse email, renseignez `ERROR_EMAIL_TO`. Sans destinataire
+valide, un message au démarrage signale que les alertes email sont indisponibles ;
+les erreurs restent dans la console et dans `.error`.
+
+Seule la première occurrence d'un même événement/code d'erreur par processus
+déclenche un email pendant `ERROR_EMAIL_COOLDOWN_MS` (cinq minutes par défaut).
+Une limite de dix alertes ordinaires par période protège contre une panne en
+boucle ; **toutes les occurrences restent enregistrées dans `.error`**. Une erreur
+fatale a une priorité d'envoi et contourne cette limite. Les nouvelles tentatives
+de jobs et les erreurs attendues de validation utilisateur ne déclenchent pas
+d'alerte ; les échecs définitifs de jobs, de sources, de pipelines, de Redis ou du
+planificateur sont signalés.
+
+Les exceptions non interceptées, les promesses rejetées sans traitement et les
+échecs de démarrage ou d'arrêt sont marqués `fatal: true`. Le processus attend
+l'écriture du log et l'envoi des alertes, avec un délai maximal de quinze secondes,
+puis sort avec le code `1`. Un arrêt normal par `Ctrl+C` ou `SIGTERM` ne déclenche
+pas d'alerte. Si SMTP échoue, cet échec est écrit localement sans envoyer une
+nouvelle alerte en boucle. Les alertes ne sont pas une file de livraison durable :
+une indisponibilité SMTP laisse la trace locale mais ne garantit pas l'email.
+L'arrêt normal attend les tâches actives pendant trente secondes au maximum ;
+les jobs Redis interrompus sont repris par les consommateurs au redémarrage.
+
+Les mots de passe, identifiants, cookies, sessions, corps HTTP, HTML et prompts
+sont masqués. Les messages bruts des exceptions externes sont exclus : leurs
+codes et leurs emplacements d'appel permettent le diagnostic sans exposer une
+réponse de fournisseur ou des secrets. Les logs HTTP utilisent les modèles de
+routes, sans paramètres d'URL, en-têtes ni champs du formulaire.
+
+Pour tester localement, mettez `LOG_LEVEL=debug` dans `.env`, configurez le SMTP et
+son destinataire, puis redémarrez avec **`npm run dev`**. Aucune migration ni nouvelle
+dépendance n'est nécessaire. Les tests du logger utilisent un transport SMTP
+simulé ; `NODE_ENV=test` désactive les alertes réelles.

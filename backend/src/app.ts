@@ -26,6 +26,7 @@ import { OllamaSelectorAnalysisProvider, type SelectorAnalysisProvider } from ".
 import { SelectorHelpService, type SelectorHelpSender } from "./selector-support";
 import { selectorAssistanceRouter } from "./selector-assistance";
 import type { JobsManager } from "./queue/jobs-manager";
+import { requestLogging } from "./logger";
 export function createApp(
   db: Db,
   redis: Redis,
@@ -66,6 +67,7 @@ export function createApp(
     );
   const app = express();
   app.disable("x-powered-by");
+  app.use(requestLogging);
   if (config.NODE_ENV === "production") app.set("trust proxy", 1);
   app.use(helmet());
   app.use(cors({ origin: config.FRONTEND_ORIGIN, credentials: true }));

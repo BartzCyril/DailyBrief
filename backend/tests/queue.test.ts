@@ -18,6 +18,7 @@ import { articleIdentity } from "../src/fingerprint";
 import type { BriefInput, SummaryProvider } from "../src/ai";
 import { recentArticleWindow } from "../src/recent-articles";
 import { config, db, redis, connect, disconnect } from "./helpers";
+import { logger } from "../src/logger";
 
 async function until<T>(read: () => Promise<T>, ready: (value: T) => boolean): Promise<T> {
   const deadline = Date.now() + 20000;
@@ -357,60 +358,91 @@ describe("durable collection queue", () => {
   queueTest(
     "permanent AI failures remain visible and preserve unsummarized articles for the next run",
     async () => {
-      const owner = await user();
-      summaryFailure = "MODEL_MISSING";
-      const before = calls;
-      const queued = await manager.enqueue(owner.id);
-      const failed = await until(
-        () => manager.snapshot(owner.id, queued.id),
-        (value) => !value.active,
-      );
-      expect(failed.state).toBe("failed");
-      expect(failed.failed).toBe(15);
-      expect(failed.completed).toBe(15);
-      expect(calls - before).toBe(15);
-      const rows = await manager.jobs(owner.id, queued.id);
-      expect(rows.jobs.every((job) => job.state === "failed" && job.attempts === 1)).toBe(true);
-      expect(rows.jobs.every((job) => job.summary === null)).toBe(true);
-      const failures = await manager.jobs(owner.id, queued.id, 2, "failed");
-      expect(failures.total).toBe(15);
-      expect(failures.jobs).toHaveLength(5);
-      expect(failures.jobs.every((job) => job.state === "failed")).toBe(true);
-      summaryFailure = null;
-      const retry = await manager.enqueue(owner.id);
-      expect(
-        (
-          await until(
-            () => manager.snapshot(owner.id, retry.id),
-            (value) => !value.active,
-          )
-        ).result?.status,
-      ).toBe("SENT");
-      // A later successful run must not make the failed run appear to have produced a summary.
-      expect(
-        (await manager.jobs(owner.id, queued.id)).jobs.every((job) => job.summary === null),
-      ).toBe(true);
-      expect(
-        (await manager.jobs(owner.id, retry.id)).jobs.every((job) => job.summary !== null),
-      ).toBe(true);
+      const logs = spyOn(logger, "error").mockImplementation(() => {});
+      try {
+        const owner = await user();
+        summaryFailure = "MODEL_MISSING";
+        const before = calls;
+        const queued = await manager.enqueue(owner.id);
+        const failed = await until(
+          () => manager.snapshot(owner.id, queued.id),
+          (value) => !value.active,
+        );
+        expect(failed.state).toBe("failed");
+        expect(failed.failed).toBe(15);
+        expect(failed.completed).toBe(15);
+        expect(calls - before).toBe(15);
+        const rows = await manager.jobs(owner.id, queued.id);
+        expect(rows.jobs.every((job) => job.state === "failed" && job.attempts === 1)).toBe(true);
+        expect(rows.jobs.every((job) => job.summary === null)).toBe(true);
+        expect(
+          logs.mock.calls.some(
+            ([event, , context]) =>
+              event === "job.failed" &&
+              context?.runId === queued.id &&
+              context?.userId === owner.id &&
+              context?.failureCode === "MODEL_MISSING",
+          ),
+        ).toBe(true);
+        const failures = await manager.jobs(owner.id, queued.id, 2, "failed");
+        expect(failures.total).toBe(15);
+        expect(failures.jobs).toHaveLength(5);
+        expect(failures.jobs.every((job) => job.state === "failed")).toBe(true);
+        summaryFailure = null;
+        const retry = await manager.enqueue(owner.id);
+        expect(
+          (
+            await until(
+              () => manager.snapshot(owner.id, retry.id),
+              (value) => !value.active,
+            )
+          ).result?.status,
+        ).toBe("SENT");
+        // A later successful run must not make the failed run appear to have produced a summary.
+        expect(
+          (await manager.jobs(owner.id, queued.id)).jobs.every((job) => job.summary === null),
+        ).toBe(true);
+        expect(
+          (await manager.jobs(owner.id, retry.id)).jobs.every((job) => job.summary !== null),
+        ).toBe(true);
+      } finally {
+        logs.mockRestore();
+      }
     },
   );
   queueTest("a transient article failure retries only that job", async () => {
-    const owner = await user();
-    transientFailures = 1;
-    const before = calls;
-    const queued = await manager.enqueue(owner.id);
-    const done = await until(
-      () => manager.snapshot(owner.id, queued.id),
-      (value) => !value.active,
-    );
-    expect(done.result?.status).toBe("SENT");
-    expect(done.completed).toBe(15);
-    expect(done.failed).toBe(0);
-    expect(calls - before).toBe(16);
-    expect((await manager.jobs(owner.id, queued.id)).jobs.some((job) => job.attempts === 2)).toBe(
-      true,
-    );
+    const details = spyOn(logger, "debug").mockImplementation(() => {});
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const owner = await user();
+      transientFailures = 1;
+      const before = calls;
+      const queued = await manager.enqueue(owner.id);
+      const done = await until(
+        () => manager.snapshot(owner.id, queued.id),
+        (value) => !value.active,
+      );
+      expect(done.result?.status).toBe("SENT");
+      expect(done.completed).toBe(15);
+      expect(done.failed).toBe(0);
+      expect(calls - before).toBe(16);
+      expect((await manager.jobs(owner.id, queued.id)).jobs.some((job) => job.attempts === 2)).toBe(
+        true,
+      );
+      expect(
+        details.mock.calls.some(
+          ([event, , context]) => event === "job.retry" && context?.runId === queued.id,
+        ),
+      ).toBe(true);
+      expect(
+        errors.mock.calls.some(
+          ([event, , context]) => event === "job.failed" && context?.runId === queued.id,
+        ),
+      ).toBe(false);
+    } finally {
+      details.mockRestore();
+      errors.mockRestore();
+    }
   });
   queueTest(
     "filters skipped jobs separately from completed articles and never exposes their old summaries",

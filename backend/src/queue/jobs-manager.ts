@@ -17,6 +17,7 @@ import type { RunTrigger } from "../collection";
 import type { ProgressObserver } from "../progress";
 import { AppError } from "../errors";
 import { briefSnapshot } from "../daily-brief";
+import { logger } from "../logger";
 
 export type CollectionJobData = {
   userId: string;
@@ -52,7 +53,13 @@ export function queueConnection(config: Config, worker = false) {
     maxRetriesPerRequest: worker ? null : 1,
     enableReadyCheck: false,
   });
-  connection.on("error", () => {});
+  connection.on("error", (error) =>
+    logger.error(
+      "queue.connection_failed",
+      "Connexion à la file Redis indisponible ; reconnexion automatique.",
+      { worker, error },
+    ),
+  );
   return connection;
 }
 const retention = { age: 30 * 24 * 60 * 60 };
@@ -77,7 +84,10 @@ export class JobsManager {
     this.summaries = new Queue("article-summaries", options);
     // One temporary completion listener per article is intentional; BullMQ removes it afterwards.
     this.summaries.setMaxListeners(0);
-    for (const queue of [this.collections, this.summaries]) queue.on("error", () => {});
+    for (const queue of [this.collections, this.summaries])
+      queue.on("error", (error) =>
+        logger.error("queue.failed", "Erreur de la file Redis.", { queue: queue.name, error }),
+      );
   }
   private activeKey(userId: string) {
     return `${this.config.QUEUE_PREFIX}:collection-active:${userId}`;
@@ -159,6 +169,12 @@ export class JobsManager {
             backoff: { type: "exponential", delay: 5000 },
           },
         );
+        logger.info("collection.queued", "Collecte ajoutée à la file.", {
+          userId,
+          runId,
+          jobId,
+          trigger,
+        });
         return await this.snapshot(userId, runId);
       } catch (error) {
         // If add succeeded but the response was lost, retain the live job and its ownership key.

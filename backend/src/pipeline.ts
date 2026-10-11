@@ -16,6 +16,7 @@ import { nextCollection } from "./schedule";
 import { AppError } from "./errors";
 import type { CollectionFailure, CollectionStage, RunResult } from "@dailybrief/shared";
 import { reportProgress, type ProgressObserver } from "./progress";
+import { logger } from "./logger";
 import { ArticleContentService } from "./article-content";
 import { JournalAccessService, journalAccessVersion } from "./journal-access";
 import { failureFor } from "./queue/failure";
@@ -343,6 +344,14 @@ export class DailyBriefPipelineService implements CollectionRunner {
           }
         }
         for (const outcome of outcomes) {
+          if (!this.dispatch && outcome.status === "failed")
+            logger.error("article.failed", "La récupération ou le résumé d'un article a échoué.", {
+              userId,
+              runId: run.id,
+              articleId: outcome.articleId,
+              stage: outcome.failure?.stage,
+              failureCode: outcome.failure?.code,
+            });
           if (outcome.newSummary) result.articlesSummarized++;
           summaryFailure ??= outcome.failure;
           if (outcome.status === "completed") {
@@ -432,6 +441,12 @@ export class DailyBriefPipelineService implements CollectionRunner {
           )
             throw error;
           result.briefStatus = "FAILED";
+          if (!this.dispatchBrief)
+            logger.error(
+              "brief.failed",
+              "La synthèse finale a échoué ; les résumés d'articles sont conservés.",
+              { userId, runId: run.id, error },
+            );
           report({ stage, status: "failed", message: failureFor(error, "brief").message });
           // Keep successful article summaries and the existing newsletter delivery path usable.
         }
@@ -512,6 +527,15 @@ export class DailyBriefPipelineService implements CollectionRunner {
         return result;
       } catch (error) {
         result.failure = failureFor(error, stage);
+        const context = {
+          userId,
+          runId: run.id,
+          stage,
+          error,
+        };
+        if (queuedRunId)
+          logger.debug("collection.attempt_failed", "La tentative de collecte a échoué.", context);
+        else logger.error("collection.failed", "Le pipeline de collecte a échoué.", context);
         report({ stage, status: "failed", message: result.failure.message });
         if (
           newsletterId &&
@@ -527,6 +551,17 @@ export class DailyBriefPipelineService implements CollectionRunner {
         // A stalled worker must not overwrite the run now owned by its replacement.
         if (queuedRunId) await assertOwned();
         await this.finish(run.id, userId, trigger, result);
+        logger.info("collection.finished", "Pipeline de collecte terminé.", {
+          userId,
+          runId: run.id,
+          trigger,
+          status: result.status,
+          sourcesProcessed: result.sourcesProcessed,
+          sourcesFailed: result.sourcesFailed,
+          articlesCollected: result.articlesCollected,
+          articlesSummarized: result.articlesSummarized,
+          emailSent: result.emailSent,
+        });
       }
     });
   }
