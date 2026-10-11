@@ -311,7 +311,14 @@ export class JobsManager {
           this.summaries.getJob(`${run.queueJobId}-${articleId}`),
           this.db.article.findFirst({
             where: { id: articleId, userId },
-            select: { title: true, source: { select: { url: true } } },
+            select: {
+              title: true,
+              source: { select: { url: true } },
+              summaryTitle: true,
+              summary: true,
+              keyPoints: true,
+              summarizedAt: true,
+            },
           }),
         ]);
         if (job && job.data.userId !== userId)
@@ -319,6 +326,7 @@ export class JobsManager {
         const state = job ? queueState(await job.getState()) : "completed";
         const progress =
           job && typeof job.progress === "object" ? (job.progress as CollectionProgress) : null;
+        const skipped = job?.returnvalue?.status === "skipped";
         return {
           id: `${run.queueJobId}-${articleId}`,
           articleId,
@@ -326,11 +334,19 @@ export class JobsManager {
           sourceUrl: article?.source.url ?? "",
           state,
           attempts: job?.attemptsMade ?? 0,
-          skipped: job?.returnvalue?.status === "skipped",
+          skipped,
           progress,
           error:
             state === "failed"
               ? (progress?.message ?? "Le traitement de l'article a échoué.")
+              : null,
+          summary:
+            state === "completed" && !skipped && article?.summary && article.summarizedAt
+              ? {
+                  title: article.summaryTitle ?? article.title,
+                  summary: article.summary,
+                  keyPoints: article.keyPoints,
+                }
               : null,
         };
       }),

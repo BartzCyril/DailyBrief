@@ -135,6 +135,7 @@ export type ArticleJobSnapshot = {
   skipped: boolean;
   progress: CollectionProgress | null;
   error: string | null;
+  summary: { title: string; summary: string; keyPoints: string[] } | null;
 };
 export type ArticleJobsPage = {
   jobs: ArticleJobSnapshot[];

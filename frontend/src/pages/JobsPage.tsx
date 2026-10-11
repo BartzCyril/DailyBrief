@@ -6,6 +6,7 @@ import { useCollection } from "@/collection/CollectionProvider";
 import { CollectionProgress } from "@/dashboard/CollectionProgress";
 import { Button } from "@/components/ui/button";
 import { Feedback } from "@/components/Feedback";
+import { ArticleSummaryDialog } from "@/collection/ArticleSummaryDialog";
 
 const labels: Record<QueueState, string> = {
   waiting: "En attente",
@@ -68,7 +69,9 @@ export function JobsPage() {
     <main className="mx-auto max-w-6xl space-y-7 px-5 py-9">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-2">
-          <h1 className="text-3xl font-semibold">Jobs de récupération</h1>
+          <h1 className="text-3xl font-semibold" tabIndex={-1}>
+            Historique d’exécutions
+          </h1>
           <p className="text-muted-foreground">
             Suivez l'extraction, les résumés IA et l'envoi de votre brief.
           </p>
@@ -85,7 +88,7 @@ export function JobsPage() {
         </Button>
       </div>
       <Feedback error message={error || collectionError} />
-      {loading && <p role="status">Chargement des jobs…</p>}
+      {loading && <p role="status">Chargement de l’historique…</p>}
       {!loading && !history.length && !error && (
         <p>
           Aucune récupération.{" "}
@@ -136,7 +139,7 @@ export function JobsPage() {
         </section>
       )}
       {jobs && (
-        <section className="space-y-4" aria-label="Jobs des articles">
+        <section className="space-y-4" aria-label="Traitement des articles">
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-left text-sm">
               <thead className="border-b bg-muted/40">
@@ -156,6 +159,9 @@ export function JobsPage() {
                   <th scope="col" className="px-4 py-3">
                     Étape
                   </th>
+                  <th scope="col" className="px-4 py-3">
+                    Résumé IA
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -163,9 +169,6 @@ export function JobsPage() {
                   <tr key={job.id} className="border-b last:border-0">
                     <td className="min-w-44 px-4 py-4">
                       <p className="font-medium">{job.title}</p>
-                      <span className="text-xs text-muted-foreground">
-                        {job.articleId.slice(-8)}
-                      </span>
                     </td>
                     <td className="px-4 py-4">
                       {job.sourceUrl && (
@@ -194,6 +197,15 @@ export function JobsPage() {
                     <td className="min-w-52 px-4 py-4">
                       {job.error ?? job.progress?.message ?? "—"}
                     </td>
+                    <td className="px-4 py-4">
+                      {job.summary ? (
+                        <ArticleSummaryDialog articleTitle={job.title} summary={job.summary} />
+                      ) : (
+                        <span className="text-muted-foreground" aria-label="Résumé indisponible">
+                          —
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -201,14 +213,14 @@ export function JobsPage() {
             {!jobs.jobs.length && (
               <p className="p-4 text-muted-foreground">
                 {run?.active
-                  ? "Les jobs seront créés après le recensement des articles."
-                  : "Aucun job d'article pour cette récupération."}
+                  ? "Les articles apparaîtront après le recensement."
+                  : "Aucun article à traiter pour cette récupération."}
               </p>
             )}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
-              {jobs.total} jobs · Page {page}/{pages}
+              {jobs.total} {jobs.total === 1 ? "article" : "articles"} · Page {page}/{pages}
             </p>
             <div className="flex gap-3">
               <Button

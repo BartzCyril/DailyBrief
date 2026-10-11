@@ -304,7 +304,12 @@ Elle affiche le nombre d'articles traités et une barre de progression, puis res
 visible pendant la préparation et l'envoi. Le suivi interroge Redis via l'API ;
 fermer ou recharger la page ne supprime pas les jobs. La page
 **[http://localhost:5173/jobs](http://localhost:5173/jobs)** présente les 20 dernières
-collectes et leurs jobs, paginés par 10 : état, tentatives, étape et erreur.
+collectes dans **« Historique d’exécutions »**, avec leurs articles paginés par 10 : état,
+tentatives, étape, erreur et résumé IA. **« Voir le résumé »** ouvre une fenêtre avec
+le titre généré, le texte enregistré et les points clés, sans nouvel appel à l'IA.
+Les résumés deviennent visibles automatiquement après la fin du traitement. Les tâches
+en attente, ignorées ou en échec n'affichent pas de résumé, y compris si une collecte
+ultérieure a résumé l'article. L'API lit uniquement les articles de la page et du propriétaire.
 Chaque utilisateur accède uniquement à ses propres collectes et articles.
 Les endpoints sont `GET /collection/current`, `/collection/runs`,
 `/collection/runs/:id` et `/collection/runs/:id/jobs?page=1`.

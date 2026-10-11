@@ -818,8 +818,8 @@ try {
   await page.getByLabel("Récupération en cours", { exact: true }).waitFor();
   assert(await page.getByRole("button", { name: "Collecte en cours…" }).isDisabled());
   assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuemax"), "2");
-  await page.getByRole("link", { name: "Jobs", exact: true }).click();
-  await page.getByRole("heading", { name: "Jobs de récupération" }).waitFor();
+  await page.getByRole("link", { name: "Historique d’exécutions", exact: true }).click();
+  await page.getByRole("heading", { name: "Historique d’exécutions" }).waitFor();
   await page.getByRole("cell", { name: "Article RSS", exact: false }).first().waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
@@ -851,6 +851,39 @@ try {
     "Live journal must fit mobile viewport",
   );
   await page.screenshot({ path: "/tmp/dailybrief-collection-mobile.png", fullPage: true });
+  await page.getByRole("link", { name: "Historique d’exécutions", exact: true }).click();
+  const savedSummary = page.getByRole("button", {
+    name: "Voir le résumé de Article RSS",
+    exact: true,
+  });
+  await savedSummary.waitFor();
+  await savedSummary.focus();
+  await page.keyboard.press("Enter");
+  const summaryDialog = page.getByRole("dialog", { name: "Résumé IA", exact: true });
+  await summaryDialog.waitFor();
+  assert((await summaryDialog.innerText()).includes("Information finale conservée."));
+  assert((await summaryDialog.innerText()).includes("Point clé de test"));
+  assert(!(await summaryDialog.innerText()).includes("Notice de bibliothèque à ne pas résumer"));
+  assert(
+    await summaryDialog.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return (
+        rect.left >= 0 &&
+        rect.right <= window.innerWidth &&
+        rect.top >= 0 &&
+        rect.bottom <= window.innerHeight
+      );
+    }),
+    "The saved summary modal must fit the mobile viewport",
+  );
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  await summaryDialog.screenshot({ path: "/tmp/dailybrief-history-summary-mobile.png" });
+  await page.keyboard.press("Escape");
+  assert(await savedSummary.evaluate((element) => element === document.activeElement));
+  await page.reload();
+  await page.getByRole("button", { name: "Voir le résumé de Article RSS", exact: true }).waitFor();
+  assert.equal(messages.length, 1, "Reading a saved summary must not send another newsletter");
+  await page.getByRole("link", { name: "Tableau de bord", exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "Récupérer maintenant" }).click();
   await page.getByRole("status").filter({ hasText: "Aucun nouvel article à envoyer." }).waitFor();

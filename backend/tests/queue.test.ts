@@ -136,6 +136,7 @@ describe("durable collection queue", () => {
       const rows = await manager.jobs(owner.id, waiting.id);
       expect(rows.total).toBe(15);
       expect(rows.jobs).toHaveLength(10);
+      expect(rows.jobs.every((job) => job.summary === null)).toBe(true);
       expect((await manager.jobs(owner.id, waiting.id, 2)).jobs).toHaveLength(5);
       expect((await manager.enqueue(owner.id)).id).toBe(waiting.id);
       const reconnected = new JobsManager(db, queueConfig);
@@ -159,6 +160,25 @@ describe("durable collection queue", () => {
       expect(await db.article.count({ where: { userId: owner.id, summary: { not: null } } })).toBe(
         15,
       );
+      const completedJobs = await manager.jobs(owner.id, waiting.id);
+      expect(completedJobs.jobs).toHaveLength(10);
+      for (const job of completedJobs.jobs) {
+        expect(job.summary).toEqual({
+          title: job.title,
+          summary: `Résumé ${job.title}`,
+          keyPoints: ["Point"],
+        });
+        expect(job).not.toHaveProperty("content");
+      }
+      const secondPage = await manager.jobs(owner.id, waiting.id, 2);
+      expect(secondPage.jobs).toHaveLength(5);
+      expect(secondPage.jobs.every((job) => job.summary?.summary === `Résumé ${job.title}`)).toBe(
+        true,
+      );
+      const otherOwner = await user(false);
+      await expect(manager.jobs(otherOwner.id, waiting.id)).rejects.toMatchObject({
+        code: "NOT_FOUND",
+      });
       const again = await manager.enqueue(owner.id);
       expect(
         (
@@ -250,6 +270,7 @@ describe("durable collection queue", () => {
       expect(calls - before).toBe(15);
       const rows = await manager.jobs(owner.id, queued.id);
       expect(rows.jobs.every((job) => job.state === "failed" && job.attempts === 1)).toBe(true);
+      expect(rows.jobs.every((job) => job.summary === null)).toBe(true);
       summaryFailure = null;
       const retry = await manager.enqueue(owner.id);
       expect(
@@ -260,6 +281,13 @@ describe("durable collection queue", () => {
           )
         ).result?.status,
       ).toBe("SENT");
+      // A later successful run must not make the failed run appear to have produced a summary.
+      expect(
+        (await manager.jobs(owner.id, queued.id)).jobs.every((job) => job.summary === null),
+      ).toBe(true);
+      expect(
+        (await manager.jobs(owner.id, retry.id)).jobs.every((job) => job.summary !== null),
+      ).toBe(true);
     },
   );
   queueTest("a transient article failure retries only that job", async () => {

@@ -289,7 +289,7 @@ export function HomePage() {
             ],
             [
               "Que se passe-t-il si je ferme la page ?",
-              "Une collecte lancée continue côté serveur. Retrouvez sa progression à votre retour et le détail de chaque article dans la page Jobs.",
+              "Une collecte lancée continue côté serveur. Retrouvez sa progression à votre retour, le détail des articles et leurs résumés IA dans l’Historique d’exécutions.",
             ],
             [
               "Comment vérifier le résultat avant de recevoir un email ?",

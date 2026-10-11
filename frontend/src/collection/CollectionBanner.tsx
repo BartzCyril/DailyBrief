@@ -16,7 +16,7 @@ export function CollectionBanner() {
             Récupération en cours
           </p>
           <Link to="/jobs" className="text-sm underline underline-offset-4">
-            Voir les jobs
+            Voir l’historique
           </Link>
         </div>
         <div
@@ -44,7 +44,7 @@ export function CollectionBanner() {
         <p className="text-sm text-muted-foreground">
           {error ||
             (run?.state === "waiting"
-              ? "En attente d'un worker disponible."
+              ? "En attente de traitement."
               : total === null || total === undefined
                 ? "Recensement des articles…"
                 : `${run!.completed}/${total} articles traités${run!.failed ? ` · ${run!.failed} en échec` : ""}${run!.skipped ? ` · ${run!.skipped} ignorés` : ""}`)}

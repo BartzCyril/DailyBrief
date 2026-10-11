@@ -242,7 +242,7 @@ export function DocumentationPage() {
                 <strong>Lancez votre première collecte.</strong> Sur le{" "}
                 <Link to="/dashboard">Tableau de bord</Link>, cliquez sur{" "}
                 <b>Récupérer maintenant</b>. Retrouvez la progression dans la bannière et le détail
-                dans <Link to="/jobs">Jobs</Link>.
+                dans l’<Link to="/jobs">Historique d’exécutions</Link>.
               </li>
             </Steps>
             <Screenshot
@@ -540,8 +540,8 @@ export function DocumentationPage() {
             <p>
               Quand les sélecteurs sont remplis, une notification confirme le résultat et le bouton
               d’aide reste masqué. Les confirmations et erreurs s’affichent dans des notifications
-              que vous pouvez fermer. Les avertissements des aperçus et les détails des jobs restent
-              consultables sur leur page.
+              que vous pouvez fermer. Les avertissements des aperçus et les détails des traitements
+              restent consultables sur leur page.
             </p>
             <Screenshot
               name="assistance"
@@ -727,24 +727,30 @@ export function DocumentationPage() {
               alt="Tableau de bord montrant l’heure quotidienne locale et la collecte manuelle"
               caption="Programmez l’heure qui vous convient ou déclenchez un brief immédiatement."
             />
-            <h3>Le détail dans Jobs</h3>
+            <h3>Le détail dans l’Historique d’exécutions</h3>
             <p>
-              La page <Link to="/jobs">Jobs</Link> affiche les dernières récupérations de votre
-              compte. Sélectionnez une récupération pour voir les articles, leurs étapes et les
-              tentatives. Pendant le recensement, le nombre total n’est pas encore connu. Il est
-              fixé quand les articles à traiter ont été identifiés.
+              La page <Link to="/jobs">Historique d’exécutions</Link> affiche les dernières
+              récupérations de votre compte. Sélectionnez une récupération pour voir les articles,
+              leurs étapes et les tentatives. Pendant le recensement, le nombre total n’est pas
+              encore connu. Il est fixé quand les articles à traiter ont été identifiés.
             </p>
             <p>
-              Chaque article à traiter correspond à un job de récupération du contenu et de résumé
-              IA. Si deux sources apportent 10 et 5 articles distincts à traiter, la collecte
-              comporte 15 jobs. Les doublons et les résumés déjà disponibles peuvent réduire le
+              Dans la colonne <b>Résumé IA</b>, cliquez sur <b>Voir le résumé</b> pour lire le texte
+              enregistré et ses points clés. Le bouton apparaît automatiquement quand le traitement
+              de l’article est terminé. Les articles en attente, ignorés ou en échec n’affichent pas
+              de résumé.
+            </p>
+            <p>
+              Chaque article à traiter correspond à une tâche de récupération du contenu et de
+              résumé IA. Si deux sources apportent 10 et 5 articles distincts à traiter, la collecte
+              comporte 15 tâches. Les doublons et les résumés déjà disponibles peuvent réduire le
               nombre de nouveaux travaux.
             </p>
             <Screenshot
               name="jobs"
               height={720}
-              alt="Progression d’une récupération et tableau de jobs terminés, en cours et en attente"
-              caption="La progression et les états des articles restent consultables après rechargement."
+              alt="Historique d’exécutions avec progression, états des articles et boutons pour consulter les résumés IA"
+              caption="La progression, les états des articles et les résumés IA restent consultables après rechargement."
             />
             <Table
               headings={["État", "Ce qu’il signifie"]}
@@ -782,11 +788,11 @@ export function DocumentationPage() {
               ],
               [
                 "La collecte reste en attente",
-                "Consultez Jobs pour distinguer une attente de traitement d’un échec. Si aucun job ne démarre durablement, demandez à l’administrateur de vérifier Redis et le processus worker de l’instance.",
+                "Consultez l’Historique d’exécutions pour distinguer une attente de traitement d’un échec. Si aucun article n’est traité durablement, demandez à l’administrateur de vérifier Redis et le processus worker de l’instance.",
               ],
               [
                 "Je n’ai pas reçu de newsletter",
-                "Vérifiez le résultat de la collecte dans Jobs, les sources actives, les journaux activés et votre dossier spam. « Aucun nouvel article à envoyer » signifie qu’aucun email n’était prévu. Une erreur d’envoi doit être vérifiée avec l’administrateur.",
+                "Vérifiez le résultat de la collecte dans l’Historique d’exécutions, les sources actives, les journaux activés et votre dossier spam. « Aucun nouvel article à envoyer » signifie qu’aucun email n’était prévu. Une erreur d’envoi doit être vérifiée avec l’administrateur.",
               ],
               [
                 "La connexion au journal échoue",

@@ -182,6 +182,18 @@ try {
               ? { stage: "ai", status: "running", message: "Résumé IA en cours", at: day }
               : null,
           error: null,
+          summary:
+            i < 2
+              ? {
+                  title: titles[i % titles.length],
+                  summary:
+                    "Les acteurs du secteur présentent de nouvelles solutions. Cet exemple illustre le résumé IA enregistré après la récupération complète de l’article.",
+                  keyPoints: [
+                    "Les informations essentielles sont conservées.",
+                    "Le résumé peut être consulté sans relancer l’IA.",
+                  ],
+                }
+              : null,
         })),
       });
     if (path === "/sources") {

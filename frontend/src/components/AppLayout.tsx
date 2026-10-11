@@ -43,7 +43,7 @@ export function AppLayout() {
               ["/dashboard", "Tableau de bord"],
               ["/sources", "Sources"],
               ["/journals", "Journaux"],
-              ["/jobs", "Jobs"],
+              ["/jobs", "Historique d’exécutions"],
               ["/documentation", "Documentation"],
             ].map(([to, label]) => (
               <NavLink
