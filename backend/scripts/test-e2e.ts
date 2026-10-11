@@ -235,7 +235,10 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   assert(ready, "Vite should start");
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const page = await browser.newPage({
+    viewport: { width: 1440, height: 1000 },
+    timezoneId: "America/New_York",
+  });
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto("http://127.0.0.1:5174/register");
@@ -784,9 +787,16 @@ try {
   await page.waitForURL("**/dashboard");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("switch", { name: "Récupération automatique", exact: true }).click();
+  assert.equal(await page.getByLabel("Fuseau horaire", { exact: true }).count(), 0);
   await page.getByLabel("Heure quotidienne").fill("08:45");
   await page.getByRole("button", { name: "Enregistrer les réglages" }).click();
   await page.getByText("Réglages enregistrés.").waitFor();
+  const automaticSettings = await db.dailyBriefSettings.findUniqueOrThrow({
+    where: { userId: tableOwnerId },
+  });
+  assert.equal(automaticSettings.timezone, "America/New_York");
+  assert.equal(automaticSettings.collectionTime, "08:45");
+  assert.equal(automaticSettings.collectionEnabled, true);
   scrapingRequests.length = 0;
   await page.getByRole("button", { name: "Récupérer maintenant" }).click();
   await page.getByText("Envoi à l'IA : Article RSS", { exact: true }).waitFor();

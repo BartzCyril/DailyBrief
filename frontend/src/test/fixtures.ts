@@ -20,7 +20,7 @@ export const emptyDashboard: Dashboard = {
   collection: {
     enabled: false,
     time: "07:30",
-    timezone: "Europe/Paris",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     lastRunAt: null,
     nextRunAt: null,
   },

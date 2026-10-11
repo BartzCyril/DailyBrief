@@ -156,8 +156,15 @@ avec un transport contrôlé, jamais des sites publics instables.
 
 ## Collecte, IA et newsletter
 
-L'heure quotidienne (`HH:mm`) et le fuseau IANA sont configurés via
-`GET/PATCH /settings/dailybrief`. Le scheduler vérifie les échéances chaque minute.
+L'utilisateur règle uniquement l'heure quotidienne (`HH:mm`). Le navigateur détecte
+son fuseau IANA avec `Intl.DateTimeFormat().resolvedOptions().timeZone` et le
+synchronise automatiquement à l'ouverture ou à l'actualisation du tableau de bord,
+via `GET /dashboard` et `PATCH /settings/dailybrief` uniquement s'il a changé.
+Le serveur conserve ce fuseau et recalcule la prochaine échéance sans modifier
+l'heure ni l'activation. La programmation reste valable lorsque le navigateur est
+fermé. Après un changement de fuseau, ouvrir le tableau de bord actualise le planning.
+Si la détection est indisponible, le dernier fuseau enregistré est conservé.
+Le scheduler vérifie les échéances chaque minute.
 Les heures absentes au printemps sont décalées vers l'avant ; les heures
 doubles à l'automne s'exécutent une seule fois à leur première occurrence.
 Le déclenchement manuel conserve la prochaine échéance quotidienne.

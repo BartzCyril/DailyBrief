@@ -5,6 +5,14 @@ import { MemoryRouter } from "react-router-dom";
 import type { Dashboard, CollectionRunSnapshot, RunResult } from "@dailybrief/shared";
 import { App } from "../App";
 import { emptyDashboard } from "./fixtures";
+const resolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
+function detectTimezone(timezone = "Europe/Paris") {
+  return vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockImplementation(function (
+    this: Intl.DateTimeFormat,
+  ) {
+    return { ...resolvedOptions.call(this), timeZone: timezone };
+  });
+}
 let data: Dashboard;
 let failLoad = false;
 let failRun = false;
@@ -51,10 +59,11 @@ function mockApi() {
       const body = JSON.parse(String(init?.body));
       data.collection = {
         ...data.collection,
-        enabled: body.collectionEnabled,
-        time: body.collectionTime,
-        timezone: body.timezone,
-        nextRunAt: body.collectionEnabled ? "2026-10-07T05:30:00Z" : null,
+        enabled: body.collectionEnabled ?? data.collection.enabled,
+        time: body.collectionTime ?? data.collection.time,
+        timezone: body.timezone ?? data.collection.timezone,
+        nextRunAt:
+          (body.collectionEnabled ?? data.collection.enabled) ? "2026-10-07T05:30:00Z" : null,
       };
       return new Response("{}");
     }
@@ -76,7 +85,9 @@ function mount() {
   );
 }
 beforeEach(() => {
+  detectTimezone();
   data = structuredClone(emptyDashboard);
+  data.collection.timezone = "Europe/Paris";
   failLoad = false;
   failRun = false;
   currentRun = null;
@@ -121,15 +132,11 @@ test("only enables saving when collection settings differ from their saved value
   expect(save).toBeEnabled();
   fireEvent.change(time, { target: { value: "07:30" } });
   expect(save).toBeDisabled();
-  const timezone = screen.getByLabelText("Fuseau horaire");
-  await ui.clear(timezone);
-  await ui.type(timezone, "UTC");
-  expect(save).toBeEnabled();
-  await ui.clear(timezone);
-  await ui.type(timezone, "Europe/Paris");
-  expect(save).toBeDisabled();
+  expect(screen.queryByLabelText("Fuseau horaire")).toBeNull();
 });
-test("saves activation, time and timezone in one explicit action", async () => {
+test("saves activation and local time with the automatically detected timezone", async () => {
+  detectTimezone("America/New_York");
+  data.collection.timezone = "America/New_York";
   const mock = mockApi();
   mount();
   const ui = userEvent.setup();
@@ -137,9 +144,6 @@ test("saves activation, time and timezone in one explicit action", async () => {
   const time = screen.getByLabelText("Heure quotidienne");
   await ui.clear(time);
   await ui.type(time, "08:45");
-  const timezone = screen.getByLabelText("Fuseau horaire");
-  await ui.clear(timezone);
-  await ui.type(timezone, "America/New_York");
   await ui.click(screen.getByRole("button", { name: "Enregistrer les réglages" }));
   expect(await screen.findByText("Réglages enregistrés.")).toBeInTheDocument();
   const call = mock.mock.calls.find((call) => call[0].endsWith("/settings/dailybrief"));
@@ -191,10 +195,11 @@ test("disables automatic collection and shows no planned run", async () => {
   await screen.findByText("Réglages enregistrés.");
   expect(screen.getByText("Non planifiée")).toBeInTheDocument();
 });
-test("displays backend collection dates in the saved timezone", async () => {
+test("displays backend collection dates in the detected browser timezone", async () => {
   data.collection = {
     ...data.collection,
     enabled: true,
+    timezone: "America/New_York",
     lastRunAt: "2026-10-06T05:30:00Z",
     nextRunAt: "2026-10-07T05:30:00Z",
   };
@@ -292,16 +297,67 @@ test("can retry initial dashboard errors", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Réessayer" }));
   expect(await screen.findByText("Sources totales")).toBeInTheDocument();
 });
-test("validates unknown timezones before saving", async () => {
-  const mock = mockApi();
+test.each(["America/New_York", "UTC"])(
+  "automatically persists the browser timezone %s without changing activation or local time",
+  async (timezone) => {
+    detectTimezone(timezone);
+    data.collection.enabled = true;
+    const mock = mockApi();
+    mount();
+    const save = await screen.findByRole("button", { name: "Enregistrer les réglages" });
+    expect(screen.queryByLabelText("Fuseau horaire")).toBeNull();
+    const writes = mock.mock.calls.filter(([url]) => url.endsWith("/settings/dailybrief"));
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(String(writes[0]?.[1]?.body))).toEqual({ timezone });
+    expect(data.collection).toMatchObject({
+      enabled: true,
+      time: "07:30",
+      timezone,
+    });
+    expect(save).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Récupérer maintenant" }));
+    await screen.findByText("Aucun nouvel article à envoyer.");
+    expect(mock.mock.calls.filter(([url]) => url.endsWith("/settings/dailybrief"))).toHaveLength(1);
+  },
+);
+
+test.each(["", "Unknown/Zone"])(
+  "preserves the saved timezone if browser detection returns %j",
+  async (zone) => {
+    detectTimezone(zone);
+    const mock = mockApi();
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("switch", { name: "Récupération automatique" }));
+    expect(mock.mock.calls.some((call) => call[0].endsWith("/settings/dailybrief"))).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Enregistrer les réglages" }));
+    await screen.findByText("Réglages enregistrés.");
+    expect(data.collection.timezone).toBe("Europe/Paris");
+  },
+);
+
+test("shows a synchronization failure and retries without treating it as a settings edit", async () => {
+  detectTimezone("America/New_York");
+  const normal = mockApi();
+  let fail = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string, init?: RequestInit) =>
+      fail && url.endsWith("/settings/dailybrief")
+        ? Promise.resolve(
+            new Response(JSON.stringify({ message: "Synchronisation indisponible" }), {
+              status: 503,
+            }),
+          )
+        : normal(url, init),
+    ),
+  );
   mount();
-  const ui = userEvent.setup();
-  const timezone = await screen.findByLabelText("Fuseau horaire");
-  await ui.clear(timezone);
-  await ui.type(timezone, "Unknown/Zone");
-  await ui.click(screen.getByRole("button", { name: "Enregistrer les réglages" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("fuseau horaire");
-  expect(mock.mock.calls.some((call) => call[0].endsWith("/settings/dailybrief"))).toBe(false);
+  await screen.findByText("Synchronisation indisponible");
+  fail = false;
+  await userEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+  expect(await screen.findByRole("button", { name: "Enregistrer les réglages" })).toBeDisabled();
+  expect(data.collection.timezone).toBe("America/New_York");
 });
 
 test("navigates between sources and journals without loading unrelated features", async () => {

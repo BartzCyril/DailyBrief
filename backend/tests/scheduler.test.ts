@@ -98,6 +98,22 @@ describe("collection settings, source isolation and Redis lock", () => {
     expect(enabled.status).toBe(200);
     expect(enabled.body.nextCollectionAt).not.toBeNull();
     expect(enabled.body.collectionTime).toBe("08:45");
+    const detected = await agent.patch("/settings/dailybrief").send({ timezone: "Europe/Paris" });
+    expect(detected.status).toBe(200);
+    expect(detected.body).toMatchObject({
+      collectionEnabled: true,
+      collectionTime: "08:45",
+      timezone: "Europe/Paris",
+    });
+    expect(detected.body.nextCollectionAt).not.toBe(enabled.body.nextCollectionAt);
+    expect(
+      new Intl.DateTimeFormat("fr-FR", {
+        timeZone: "Europe/Paris",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(new Date(detected.body.nextCollectionAt)),
+    ).toBe("08:45");
     const disabled = await agent.patch("/settings/dailybrief").send({ collectionEnabled: false });
     expect(disabled.body.nextCollectionAt).toBeNull();
     expect((await request(app).get("/settings/dailybrief")).status).toBe(401);

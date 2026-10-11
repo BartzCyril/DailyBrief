@@ -9,6 +9,7 @@ import { Field } from "@/components/Field";
 import { Feedback } from "@/components/Feedback";
 import { dashboardApi } from "./api";
 import { errorMessage } from "@/lib/api";
+import { browserTimezone } from "@/lib/timezone";
 export function dateLabel(value: string | null, timezone: string): string {
   return value
     ? new Intl.DateTimeFormat("fr-FR", {
@@ -27,27 +28,22 @@ export function CollectionSettings({
 }) {
   const [enabled, setEnabled] = useState(collection.enabled);
   const [time, setTime] = useState(collection.time);
-  const [timezone, setTimezone] = useState(collection.timezone);
+  const timezone = browserTimezone() ?? collection.timezone;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const changed =
-    enabled !== collection.enabled || time !== collection.time || timezone !== collection.timezone;
+  const changed = enabled !== collection.enabled || time !== collection.time;
   useEffect(() => {
     setEnabled(collection.enabled);
     setTime(collection.time);
-    setTimezone(collection.timezone);
-  }, [collection.enabled, collection.time, collection.timezone]);
+  }, [collection.enabled, collection.time]);
   async function save(event: FormEvent) {
     event.preventDefault();
     if (busy || !changed) return;
     setError("");
     setMessage("");
-    try {
-      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error("Choisissez une heure valide.");
-      new Intl.DateTimeFormat("fr-FR", { timeZone: timezone }).format();
-    } catch {
-      setError("Vérifiez l'heure et le fuseau horaire IANA.");
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+      setError("Choisissez une heure valide.");
       return;
     }
     setBusy(true);
@@ -90,33 +86,26 @@ export function CollectionSettings({
               disabled={busy}
             />
           </div>
-          <fieldset disabled={busy} className="grid sm:grid-cols-2 gap-4">
+          <fieldset disabled={busy}>
             <Field
               label="Heure quotidienne"
-              hint="Heure de lancement de la collecte, dans le fuseau horaire indiqué."
+              hint="Heure locale de lancement. Le fuseau horaire est détecté automatiquement."
               type="time"
               required
               value={time}
               onChange={(event) => setTime(event.target.value)}
             />
-            <Field
-              label="Fuseau horaire"
-              hint="Nom du fuseau horaire, par exemple Europe/Paris."
-              required
-              value={timezone}
-              onChange={(event) => setTimezone(event.target.value)}
-            />
           </fieldset>
           <div className="grid sm:grid-cols-2 gap-4 rounded-lg bg-muted p-4 text-sm">
             <div>
               <p className="text-muted-foreground mb-1">Dernière collecte</p>
-              <p>{dateLabel(collection.lastRunAt, collection.timezone)}</p>
+              <p>{dateLabel(collection.lastRunAt, timezone)}</p>
             </div>
             <div>
               <p className="text-muted-foreground mb-1">Prochaine collecte</p>
               <p>
                 {collection.enabled && collection.nextRunAt
-                  ? dateLabel(collection.nextRunAt, collection.timezone)
+                  ? dateLabel(collection.nextRunAt, timezone)
                   : "Non planifiée"}
               </p>
             </div>

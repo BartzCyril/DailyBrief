@@ -708,8 +708,9 @@ export function DocumentationPage() {
                 Dans <b>Collecte automatique</b>, activez <b>Récupération automatique</b>.
               </li>
               <li>
-                Choisissez l’heure quotidienne et le fuseau horaire, par exemple{" "}
-                <code>Europe/Paris</code>.
+                Choisissez l’heure quotidienne dans votre heure locale. Votre fuseau horaire est
+                détecté automatiquement par le navigateur et enregistré à l’ouverture du tableau de
+                bord.
               </li>
               <li>
                 Cliquez sur <b>Enregistrer les réglages</b>. Le bouton reste désactivé tant qu’aucun
@@ -722,7 +723,7 @@ export function DocumentationPage() {
             </Steps>
             <Screenshot
               name="dashboard"
-              alt="Tableau de bord montrant l’heure quotidienne, le fuseau et la collecte manuelle"
+              alt="Tableau de bord montrant l’heure quotidienne locale et la collecte manuelle"
               caption="Programmez l’heure qui vous convient ou déclenchez un brief immédiatement."
             />
             <h3>Le détail dans Jobs</h3>
