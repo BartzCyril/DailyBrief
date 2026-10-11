@@ -5,6 +5,7 @@ import { requireAuth } from "./auth";
 import { nextCollection, settingsSchema } from "./schedule";
 import { getSettings, type CollectionRunner } from "./collection";
 import type { CollectionEvent } from "@dailybrief/shared";
+import { articleJobStatuses } from "@dailybrief/shared";
 import { AppError } from "./errors";
 import { startEventStream } from "./event-stream";
 import type { JobsManager } from "./queue/jobs-manager";
@@ -96,13 +97,16 @@ export function settingsRouter(db: Db, runner: CollectionRunner, collections?: J
   router.get("/collection/runs/:runId/jobs", async (req, res) => {
     if (!collections)
       throw new AppError(503, "La file de collecte n'est pas disponible.", "QUEUE_UNAVAILABLE");
-    const page = z.coerce
-      .number()
-      .int()
-      .min(1)
-      .max(100000)
-      .parse(req.query.page ?? 1);
-    res.json(await collections.jobs(req.session.userId!, req.params.runId!, page));
+    const input = z
+      .object({
+        page: z.coerce.number().int().min(1).max(100000).default(1),
+        status: z.enum(articleJobStatuses).default("all"),
+      })
+      .strict()
+      .parse(req.query);
+    res.json(
+      await collections.jobs(req.session.userId!, req.params.runId!, input.page, input.status),
+    );
   });
   return router;
 }

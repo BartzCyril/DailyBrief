@@ -4,6 +4,7 @@ import IORedis from "ioredis";
 import type {
   ArticleJobResult,
   ArticleJobsPage,
+  ArticleJobStatus,
   CollectionProgress,
   CollectionRunSnapshot,
   QueueState,
@@ -299,14 +300,60 @@ export class JobsManager {
     if (!run) throw new AppError(404, "Collecte introuvable.", "NOT_FOUND");
     return run;
   }
-  async jobs(userId: string, runId: string, page = 1): Promise<ArticleJobsPage> {
+  async jobs(
+    userId: string,
+    runId: string,
+    requestedPage = 1,
+    status: ArticleJobStatus = "all",
+  ): Promise<ArticleJobsPage> {
     const run = await this.ownedRun(userId, runId);
     const root = await this.collections.getJob(run.queueJobId!);
     const ids = root?.data.articleIds ?? [];
-    const pageSize = 10;
+    const pageSize = 5;
+    type Selection = { articleId: string; state?: QueueState; skipped?: boolean };
+    let matching: Selection[] = ids.map((articleId) => ({ articleId }));
+    if (status !== "all") {
+      matching = [];
+      // Read only queue metadata for filtering, in bounded batches. Article bodies and
+      // summaries are fetched from PostgreSQL only for the five selected rows.
+      for (let offset = 0; offset < ids.length; offset += 100) {
+        const batch = await Promise.all(
+          ids.slice(offset, offset + 100).map(async (articleId) => {
+            const jobId = `${run.queueJobId}-${articleId}`;
+            const rawState = await this.summaries.getJobState(jobId);
+            const state =
+              rawState === "unknown"
+                ? run.finishedAt
+                  ? "completed"
+                  : "waiting"
+                : queueState(rawState);
+            let skipped = false;
+            if (state === "completed" && (status === "completed" || status === "skipped")) {
+              const job = await this.summaries.getJob(jobId);
+              if (job && job.data.userId !== userId)
+                throw new AppError(404, "Job introuvable.", "NOT_FOUND");
+              skipped = job?.returnvalue?.status === "skipped";
+            }
+            const matches =
+              status === "waiting"
+                ? state === "waiting" || state === "delayed"
+                : status === "skipped"
+                  ? state === "completed" && skipped
+                  : status === "completed"
+                    ? state === "completed" && !skipped
+                    : state === status;
+            return matches ? { articleId, state, skipped } : null;
+          }),
+        );
+        for (const item of batch) if (item) matching.push(item);
+      }
+    }
+    const total = matching.length;
+    const page = Math.min(requestedPage, Math.max(1, Math.ceil(total / pageSize)));
     const offset = (page - 1) * pageSize;
     const rows = await Promise.all(
-      ids.slice(offset, offset + pageSize).map(async (articleId) => {
+      matching.slice(offset, offset + pageSize).map(async (selection) => {
+        const { articleId } = selection;
         const [job, article] = await Promise.all([
           this.summaries.getJob(`${run.queueJobId}-${articleId}`),
           this.db.article.findFirst({
@@ -323,10 +370,12 @@ export class JobsManager {
         ]);
         if (job && job.data.userId !== userId)
           throw new AppError(404, "Job introuvable.", "NOT_FOUND");
-        const state = job ? queueState(await job.getState()) : "completed";
+        const state =
+          selection.state ??
+          (job ? queueState(await job.getState()) : run.finishedAt ? "completed" : "waiting");
         const progress =
           job && typeof job.progress === "object" ? (job.progress as CollectionProgress) : null;
-        const skipped = job?.returnvalue?.status === "skipped";
+        const skipped = selection.skipped ?? job?.returnvalue?.status === "skipped";
         return {
           id: `${run.queueJobId}-${articleId}`,
           articleId,
@@ -351,7 +400,7 @@ export class JobsManager {
         };
       }),
     );
-    return { jobs: rows, total: ids.length, page, pageSize };
+    return { jobs: rows, total, page, pageSize };
   }
   async dispatch(
     root: Job<CollectionJobData, RunResult>,

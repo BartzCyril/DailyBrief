@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import type { ArticleJobsPage, CollectionRunSnapshot, QueueState } from "@dailybrief/shared";
+import { Link, useSearchParams } from "react-router-dom";
+import type {
+  ArticleJobsPage,
+  ArticleJobStatus,
+  CollectionRunSnapshot,
+  QueueState,
+} from "@dailybrief/shared";
+import { articleJobStatuses } from "@dailybrief/shared";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
 import { useCollection } from "@/collection/CollectionProvider";
 import { CollectionProgress } from "@/dashboard/CollectionProgress";
 import { Button } from "@/components/ui/button";
 import { Feedback } from "@/components/Feedback";
 import { ArticleSummaryDialog } from "@/collection/ArticleSummaryDialog";
+import { Label } from "@/components/ui/label";
 
 const labels: Record<QueueState, string> = {
   waiting: "En attente",
@@ -20,15 +28,48 @@ export function JobsPage() {
   const [history, setHistory] = useState<CollectionRunSnapshot[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [run, setRun] = useState<CollectionRunSnapshot | null>(null);
-  const [jobs, setJobs] = useState<ArticleJobsPage | null>(null);
-  const [page, setPage] = useState(1);
+  const [result, setResult] = useState<{ data: ArticleJobsPage; key: string } | null>(null);
+  const [params, setParams] = useSearchParams();
+  const requestedPage = Number(params.get("page") ?? 1);
+  const page =
+    Number.isInteger(requestedPage) && requestedPage >= 1 && requestedPage <= 100000
+      ? requestedPage
+      : 1;
+  const requestedStatus = params.get("status") ?? "all";
+  const status: ArticleJobStatus = articleJobStatuses.includes(requestedStatus as ArticleJobStatus)
+    ? (requestedStatus as ArticleJobStatus)
+    : "all";
+  const [retry, setRetry] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const id = selected ?? current?.id;
+  const key = JSON.stringify([id, page, status]);
+  const jobs = result?.key === key ? result.data : null;
+  function setPage(next: number, replace = false) {
+    setParams(
+      (previous) => {
+        const updated = new URLSearchParams(previous);
+        if (next === 1) updated.delete("page");
+        else updated.set("page", String(next));
+        return updated;
+      },
+      { replace },
+    );
+  }
+  function setStatus(next: ArticleJobStatus) {
+    setParams((previous) => {
+      const updated = new URLSearchParams(previous);
+      updated.delete("page");
+      if (next === "all") updated.delete("status");
+      else updated.set("status", next);
+      return updated;
+    });
+  }
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const controller = new AbortController();
+    setLoading(true);
     async function refresh() {
       let active = false;
       try {
@@ -38,7 +79,7 @@ export function JobsPage() {
             ? api<CollectionRunSnapshot>(`/collection/runs/${id}`, { signal: controller.signal })
             : null,
           id
-            ? api<ArticleJobsPage>(`/collection/runs/${id}/jobs?page=${page}`, {
+            ? api<ArticleJobsPage>(`/collection/runs/${id}/jobs?page=${page}&status=${status}`, {
                 signal: controller.signal,
               })
             : null,
@@ -46,7 +87,8 @@ export function JobsPage() {
         if (stopped) return;
         setHistory(runs);
         setRun(detail);
-        setJobs(rows);
+        setResult(rows ? { data: rows, key: JSON.stringify([id, rows.page, status]) } : null);
+        if (rows && rows.page !== page) setPage(rows.page, true);
         setError("");
         active = Boolean(detail?.active);
         if (!id && runs[0]) setSelected(runs[0].id);
@@ -63,10 +105,14 @@ export function JobsPage() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [id, page]);
-  const pages = Math.max(1, Math.ceil((jobs?.total ?? 0) / (jobs?.pageSize ?? 10)));
+  }, [id, page, status, retry]);
+  const currentPage = jobs?.page ?? page;
+  const pageSize = jobs?.pageSize ?? 5;
+  const total = jobs?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const offset = (currentPage - 1) * pageSize;
   return (
-    <main className="mx-auto max-w-6xl space-y-7 px-5 py-9">
+    <main className="mx-auto max-w-7xl space-y-7 px-5 py-9">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="space-y-2">
           <h1 className="text-3xl font-semibold" tabIndex={-1}>
@@ -88,6 +134,11 @@ export function JobsPage() {
         </Button>
       </div>
       <Feedback error message={error || collectionError} />
+      {error && (
+        <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>
+          Réessayer
+        </Button>
+      )}
       {loading && <p role="status">Chargement de l’historique…</p>}
       {!loading && !history.length && !error && (
         <p>
@@ -97,150 +148,192 @@ export function JobsPage() {
           </Link>
         </p>
       )}
-      {!!history.length && (
-        <div className="space-y-2">
-          <label htmlFor="collection-run" className="text-sm font-medium">
-            Récupération
-          </label>
-          <select
-            id="collection-run"
-            value={id ?? ""}
-            onChange={(event) => {
-              setSelected(event.target.value);
-              setPage(1);
-              setJobs(null);
-              setRun(null);
-            }}
-            className="flex min-h-10 w-full rounded-md border bg-background px-3 py-2"
-          >
-            {history.map((item) => (
-              <option key={item.id} value={item.id}>
-                {new Date(item.startedAt).toLocaleString("fr-FR")} ·{" "}
-                {item.trigger === "scheduled" ? "Quotidienne" : "Manuelle"} · {labels[item.state]}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-      {run && (
-        <section className="space-y-4 rounded-lg border p-4" aria-label="État de la récupération">
-          <div className="flex flex-wrap justify-between gap-3">
-            <p className="font-medium">{labels[run.state]}</p>
-            <p className="text-sm">
-              {run.total === null
-                ? "Recensement des articles"
-                : `${run.completed}/${run.total} articles traités · ${run.failed} en échec · ${run.skipped} ignorés`}
-            </p>
-          </div>
-          <Feedback inline error message={run.error ?? ""} />
-          {run.result?.status === "SENT" && <p>Newsletter envoyée.</p>}
-          {run.result?.status === "NO_NEW_ARTICLES" && <p>Aucun nouvel article à envoyer.</p>}
-          <CollectionProgress events={run.events} busy={run.active} />
-        </section>
-      )}
-      {jobs && (
-        <section className="space-y-4" aria-label="Traitement des articles">
-          <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b bg-muted/40">
-                <tr>
-                  <th scope="col" className="px-4 py-3">
-                    Article
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Source
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Statut
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Tentatives
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Étape
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Résumé IA
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.jobs.map((job) => (
-                  <tr key={job.id} className="border-b last:border-0">
-                    <td className="min-w-44 px-4 py-4">
-                      <p className="font-medium">{job.title}</p>
-                    </td>
-                    <td className="px-4 py-4">
-                      {job.sourceUrl && (
-                        <a
-                          href={job.sourceUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="break-all underline underline-offset-4"
-                        >
-                          {new URL(job.sourceUrl).hostname}
-                        </a>
-                      )}
-                    </td>
-                    <td className="px-4 py-4">
-                      <span
-                        className={`inline-flex items-center gap-2 ${job.state === "failed" ? "text-destructive" : ""}`}
-                      >
-                        <span
-                          aria-hidden="true"
-                          className={`size-2 shrink-0 rounded-full ${job.state === "failed" ? "bg-red-500" : job.state === "completed" ? "bg-green-600" : "bg-amber-500"}`}
-                        />
-                        {job.skipped ? "Ignoré" : labels[job.state]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4">{job.attempts}</td>
-                    <td className="min-w-52 px-4 py-4">
-                      {job.error ?? job.progress?.message ?? "—"}
-                    </td>
-                    <td className="px-4 py-4">
-                      {job.summary ? (
-                        <ArticleSummaryDialog articleTitle={job.title} summary={job.summary} />
-                      ) : (
-                        <span className="text-muted-foreground" aria-label="Résumé indisponible">
-                          —
-                        </span>
-                      )}
-                    </td>
-                  </tr>
+      <div className="flex min-w-0 flex-col gap-6 lg:flex-row lg:items-start">
+        <aside
+          aria-label="Suivi de la collecte"
+          className="min-w-0 space-y-5 lg:w-72 xl:w-80 lg:shrink-0"
+        >
+          {!!history.length && (
+            <div className="space-y-2">
+              <label htmlFor="collection-run" className="text-sm font-medium">
+                Récupération
+              </label>
+              <select
+                id="collection-run"
+                value={id ?? ""}
+                onChange={(event) => {
+                  setSelected(event.target.value);
+                  setPage(1);
+                  setResult(null);
+                  setRun(null);
+                }}
+                className="flex min-h-10 w-full rounded-md border bg-background px-3 py-2"
+              >
+                {history.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {new Date(item.startedAt).toLocaleString("fr-FR")} ·{" "}
+                    {item.trigger === "scheduled" ? "Quotidienne" : "Manuelle"} ·{" "}
+                    {labels[item.state]}
+                  </option>
                 ))}
-              </tbody>
-            </table>
-            {!jobs.jobs.length && (
-              <p className="p-4 text-muted-foreground">
-                {run?.active
-                  ? "Les articles apparaîtront après le recensement."
-                  : "Aucun article à traiter pour cette récupération."}
-              </p>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              {jobs.total} {jobs.total === 1 ? "article" : "articles"} · Page {page}/{pages}
-            </p>
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                disabled={page <= 1}
-                onClick={() => setPage((value) => value - 1)}
-              >
-                Précédente
-              </Button>
-              <Button
-                variant="outline"
-                disabled={page >= pages}
-                onClick={() => setPage((value) => value + 1)}
-              >
-                Suivante
-              </Button>
+              </select>
             </div>
-          </div>
-        </section>
-      )}
+          )}
+          {run && (
+            <section
+              className="space-y-4 rounded-lg border p-4"
+              aria-label="État de la récupération"
+            >
+              <div className="flex flex-wrap justify-between gap-3">
+                <p className="font-medium">{labels[run.state]}</p>
+                <p className="text-sm">
+                  {run.total === null
+                    ? "Recensement des articles"
+                    : `${run.completed}/${run.total} articles traités · ${run.failed} en échec · ${run.skipped} ignorés`}
+                </p>
+              </div>
+              <Feedback inline error message={run.error ?? ""} />
+              {run.result?.status === "SENT" && <p>Newsletter envoyée.</p>}
+              {run.result?.status === "NO_NEW_ARTICLES" && <p>Aucun nouvel article à envoyer.</p>}
+              <CollectionProgress events={run.events} busy={run.active} />
+            </section>
+          )}
+        </aside>
+        {!!history.length && (
+          <section className="min-w-0 flex-1 space-y-4" aria-label="Traitement des articles">
+            <div className="grid max-w-xs gap-2">
+              <Label htmlFor="article-job-status">Statut des articles</Label>
+              <select
+                id="article-job-status"
+                value={status}
+                onChange={(event) => setStatus(event.target.value as ArticleJobStatus)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                <option value="all">Tous les statuts</option>
+                <option value="waiting">En attente</option>
+                <option value="active">En cours</option>
+                <option value="completed">Terminé</option>
+                <option value="failed">Échec</option>
+                <option value="skipped">Ignoré</option>
+              </select>
+            </div>
+            <div className="overflow-x-auto rounded-lg border" aria-busy={loading}>
+              <table className="w-full text-left text-sm">
+                <thead className="border-b bg-muted/40">
+                  <tr>
+                    <th scope="col" className="px-4 py-3">
+                      Article
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Source
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Statut
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Tentatives
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Étape
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Résumé IA
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {jobs?.jobs.map((job) => (
+                    <tr key={job.id} className="border-b last:border-0">
+                      <td className="min-w-44 px-4 py-4">
+                        <p className="font-medium">{job.title}</p>
+                      </td>
+                      <td className="px-4 py-4">
+                        {job.sourceUrl && (
+                          <a
+                            href={job.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="break-all underline underline-offset-4"
+                          >
+                            {new URL(job.sourceUrl).hostname}
+                          </a>
+                        )}
+                      </td>
+                      <td className="px-4 py-4">
+                        <span
+                          className={`inline-flex items-center gap-2 ${job.state === "failed" ? "text-destructive" : ""}`}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`size-2 shrink-0 rounded-full ${job.state === "failed" ? "bg-red-500" : job.state === "completed" ? "bg-green-600" : "bg-amber-500"}`}
+                          />
+                          {job.skipped ? "Ignoré" : labels[job.state]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4">{job.attempts}</td>
+                      <td className="min-w-52 px-4 py-4">
+                        {job.error ?? job.progress?.message ?? "—"}
+                      </td>
+                      <td className="px-4 py-4">
+                        {job.summary ? (
+                          <ArticleSummaryDialog articleTitle={job.title} summary={job.summary} />
+                        ) : (
+                          <span className="text-muted-foreground" aria-label="Résumé indisponible">
+                            —
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!jobs?.jobs.length && (
+                <p className="p-4 text-muted-foreground">
+                  {loading
+                    ? "Chargement des articles…"
+                    : status !== "all"
+                      ? "Aucun article ne correspond à ce statut."
+                      : run?.active
+                        ? "Les articles apparaîtront après le recensement."
+                        : "Aucun article à traiter pour cette récupération."}
+                </p>
+              )}
+            </div>
+            <nav
+              aria-label="Pagination des articles"
+              className="flex flex-wrap items-center justify-between gap-4"
+            >
+              <p className="text-sm text-muted-foreground" aria-live="polite">
+                {total ? `${offset + 1}–${Math.min(offset + pageSize, total)} sur ${total}` : "0"}{" "}
+                article{total === 1 ? "" : "s"}
+              </p>
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Page précédente"
+                  disabled={loading || !jobs || currentPage <= 1}
+                  onClick={() => setPage(currentPage - 1)}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </Button>
+                <span className="text-sm">
+                  Page {currentPage} sur {pages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Page suivante"
+                  disabled={loading || !jobs || currentPage >= pages}
+                  onClick={() => setPage(currentPage + 1)}
+                >
+                  <ChevronRight aria-hidden="true" />
+                </Button>
+              </div>
+            </nav>
+          </section>
+        )}
+      </div>
     </main>
   );
 }

@@ -104,6 +104,15 @@ export type CollectionEvent =
   | { type: "result"; result: RunResult }
   | { type: "error"; message: string; code: string };
 export type QueueState = "waiting" | "active" | "delayed" | "completed" | "failed";
+export const articleJobStatuses = [
+  "all",
+  "waiting",
+  "active",
+  "completed",
+  "failed",
+  "skipped",
+] as const;
+export type ArticleJobStatus = (typeof articleJobStatuses)[number];
 export type ArticleJobResult = {
   articleId: string;
   status: "completed" | "skipped" | "failed";

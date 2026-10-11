@@ -735,6 +735,13 @@ export function DocumentationPage() {
               encore connu. Il est fixé quand les articles à traiter ont été identifiés.
             </p>
             <p>
+              Sur ordinateur, le suivi de la collecte et le tableau sont côte à côte. Sur mobile,
+              ils sont empilés. Le tableau affiche <b>5 articles par page</b>. Utilisez le filtre
+              <b> Statut des articles</b> pour retrouver les traitements en attente, en cours,
+              terminés, en échec ou ignorés, puis les flèches pour parcourir les résultats. Le
+              filtre conserve le bilan global de la collecte.
+            </p>
+            <p>
               Dans la colonne <b>Résumé IA</b>, cliquez sur <b>Voir le résumé</b> pour lire le texte
               enregistré et ses points clés. Le bouton apparaît automatiquement quand le traitement
               de l’article est terminé. Les articles en attente, ignorés ou en échec n’affichent pas

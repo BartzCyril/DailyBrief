@@ -821,8 +821,47 @@ try {
   await page.getByRole("link", { name: "Historique d’exécutions", exact: true }).click();
   await page.getByRole("heading", { name: "Historique d’exécutions" }).waitFor();
   await page.getByRole("cell", { name: "Article RSS", exact: false }).first().waitFor();
+  const collectionPanel = await page
+    .getByLabel("Suivi de la collecte", { exact: true })
+    .boundingBox();
+  const articlesPanel = await page
+    .getByLabel("Traitement des articles", { exact: true })
+    .boundingBox();
+  assert(
+    collectionPanel &&
+      articlesPanel &&
+      collectionPanel.x + collectionPanel.width <= articlesPanel.x &&
+      Math.abs(collectionPanel.y - articlesPanel.y) < 2,
+    "Collection and article panels must sit next to each other on desktop",
+  );
+  assert((await page.getByRole("table").getByRole("row").count()) <= 6);
+  await page
+    .getByRole("combobox", { name: "Statut des articles", exact: true })
+    .selectOption("active");
+  await page.getByRole("cell", { name: "En cours", exact: true }).first().waitFor();
+  assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuemax"), "2");
+  await page
+    .getByRole("combobox", { name: "Statut des articles", exact: true })
+    .selectOption("completed");
+  await page.getByText("Aucun article ne correspond à ce statut.", { exact: true }).waitFor();
+  await page
+    .getByRole("combobox", { name: "Statut des articles", exact: true })
+    .selectOption("all");
+  await page.getByRole("cell", { name: "Article RSS", exact: false }).first().waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  const mobileCollection = await page
+    .getByLabel("Suivi de la collecte", { exact: true })
+    .boundingBox();
+  const mobileArticles = await page
+    .getByLabel("Traitement des articles", { exact: true })
+    .boundingBox();
+  assert(
+    mobileCollection &&
+      mobileArticles &&
+      mobileCollection.y + mobileCollection.height <= mobileArticles.y,
+    "Collection and article panels must stack on mobile",
+  );
   await page.screenshot({ path: "/tmp/dailybrief-jobs-mobile.png", fullPage: true });
   await page.getByRole("link", { name: "Tableau de bord", exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 1000 });

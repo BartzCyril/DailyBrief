@@ -135,9 +135,22 @@ describe("durable collection queue", () => {
       expect(running.completed).toBe(0);
       const rows = await manager.jobs(owner.id, waiting.id);
       expect(rows.total).toBe(15);
-      expect(rows.jobs).toHaveLength(10);
+      expect(rows.pageSize).toBe(5);
+      expect(rows.jobs).toHaveLength(5);
       expect(rows.jobs.every((job) => job.summary === null)).toBe(true);
       expect((await manager.jobs(owner.id, waiting.id, 2)).jobs).toHaveLength(5);
+      const activeJobs = await until(
+        () => manager.jobs(owner.id, waiting.id, 1, "active"),
+        (value) => value.total === queueConfig.AI_CONCURRENCY,
+      );
+      const pendingJobs = await manager.jobs(owner.id, waiting.id, 1, "waiting");
+      expect(activeJobs.jobs.every((job) => job.state === "active")).toBe(true);
+      expect(pendingJobs.total + activeJobs.total).toBe(15);
+      expect(pendingJobs.jobs).toHaveLength(5);
+      expect(
+        pendingJobs.jobs.every((job) => job.state === "waiting" || job.state === "delayed"),
+      ).toBe(true);
+      expect((await manager.jobs(owner.id, waiting.id, 1, "completed")).total).toBe(0);
       expect((await manager.enqueue(owner.id)).id).toBe(waiting.id);
       const reconnected = new JobsManager(db, queueConfig);
       expect((await reconnected.current(owner.id))?.id).toBe(waiting.id);
@@ -161,7 +174,7 @@ describe("durable collection queue", () => {
         15,
       );
       const completedJobs = await manager.jobs(owner.id, waiting.id);
-      expect(completedJobs.jobs).toHaveLength(10);
+      expect(completedJobs.jobs).toHaveLength(5);
       for (const job of completedJobs.jobs) {
         expect(job.summary).toEqual({
           title: job.title,
@@ -175,6 +188,16 @@ describe("durable collection queue", () => {
       expect(secondPage.jobs.every((job) => job.summary?.summary === `Résumé ${job.title}`)).toBe(
         true,
       );
+      const lastPage = await manager.jobs(owner.id, waiting.id, 99, "completed");
+      expect(lastPage.page).toBe(3);
+      expect(lastPage.total).toBe(15);
+      expect(lastPage.jobs).toHaveLength(5);
+      expect(
+        new Set([...completedJobs.jobs, ...secondPage.jobs, ...lastPage.jobs].map((job) => job.id))
+          .size,
+      ).toBe(15);
+      const empty = await manager.jobs(owner.id, waiting.id, 99, "active");
+      expect(empty).toEqual({ jobs: [], total: 0, page: 1, pageSize: 5 });
       const otherOwner = await user(false);
       await expect(manager.jobs(otherOwner.id, waiting.id)).rejects.toMatchObject({
         code: "NOT_FOUND",
@@ -247,6 +270,18 @@ describe("durable collection queue", () => {
       expect(queued.status).toBe(202);
       expect(queued.body.id).toBeDefined();
       expect((await agent.get(`/collection/runs/${run.id}/jobs`)).status).toBe(404);
+      expect(
+        (await agent.get(`/collection/runs/${queued.body.id}/jobs?status=unknown`)).status,
+      ).toBe(400);
+      expect(
+        (await agent.get(`/collection/runs/${queued.body.id}/jobs?status[]=active`)).status,
+      ).toBe(400);
+      expect((await agent.get(`/collection/runs/${queued.body.id}/jobs?page=0`)).status).toBe(400);
+      const ownJobs = await agent.get(
+        `/collection/runs/${queued.body.id}/jobs?page=99&status=waiting`,
+      );
+      expect(ownJobs.status).toBe(200);
+      expect(ownJobs.body).toMatchObject({ page: 1, pageSize: 5, total: 0, jobs: [] });
       await until(
         () => manager.snapshot(registered.body.id, queued.body.id),
         (value) => !value.active,
@@ -271,6 +306,10 @@ describe("durable collection queue", () => {
       const rows = await manager.jobs(owner.id, queued.id);
       expect(rows.jobs.every((job) => job.state === "failed" && job.attempts === 1)).toBe(true);
       expect(rows.jobs.every((job) => job.summary === null)).toBe(true);
+      const failures = await manager.jobs(owner.id, queued.id, 2, "failed");
+      expect(failures.total).toBe(15);
+      expect(failures.jobs).toHaveLength(5);
+      expect(failures.jobs.every((job) => job.state === "failed")).toBe(true);
       summaryFailure = null;
       const retry = await manager.enqueue(owner.id);
       expect(
@@ -307,6 +346,58 @@ describe("durable collection queue", () => {
       true,
     );
   });
+  queueTest(
+    "filters skipped jobs separately from completed articles and never exposes their old summaries",
+    async () => {
+      await consumers!.collections.pause();
+      const owner = await user(false);
+      const source = await db.source.create({
+        data: {
+          userId: owner.id,
+          url: `https://feed.example/${randomUUID()}`,
+          type: "RSS",
+          enabled: false,
+        },
+      });
+      const article = await db.article.create({
+        data: {
+          userId: owner.id,
+          sourceId: source.id,
+          title: "Article ignoré",
+          contentHash: randomUUID(),
+          fingerprint: randomUUID(),
+          summary: "Ancien résumé à conserver",
+          summarizedAt: new Date(),
+        },
+      });
+      const queued = await manager.enqueue(owner.id);
+      const root = await manager.collections.getJob(
+        (await db.dailyBriefRun.findUniqueOrThrow({ where: { id: queued.id } })).queueJobId!,
+      );
+      await root!.updateData({ ...root!.data, articleIds: [article.id] });
+      const job = await manager.summaries.add(
+        "scraping-summary",
+        { userId: owner.id, runId: queued.id, articleId: article.id },
+        { jobId: `${root!.id}-${article.id}` },
+      );
+      await until(
+        () => job.getState(),
+        (state) => state === "completed",
+      );
+      const ignored = await manager.jobs(owner.id, queued.id, 1, "skipped");
+      expect(ignored.total).toBe(1);
+      expect(ignored.jobs[0]).toMatchObject({ skipped: true, summary: null });
+      expect((await manager.jobs(owner.id, queued.id, 1, "completed")).total).toBe(0);
+      expect((await db.article.findUniqueOrThrow({ where: { id: article.id } })).summary).toBe(
+        "Ancien résumé à conserver",
+      );
+      await consumers!.collections.resume();
+      await until(
+        () => manager.snapshot(owner.id, queued.id),
+        (value) => !value.active,
+      );
+    },
+  );
   queueTest("worker restart reuses completed jobs from the durable article batch", async () => {
     await consumers!.collections.pause();
     const owner = await user();

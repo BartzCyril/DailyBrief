@@ -2,7 +2,12 @@
 import { chromium, type Page } from "playwright";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { CollectionRunSnapshot, Source, JournalPreview } from "@dailybrief/shared";
+import type {
+  ArticleJobSnapshot,
+  CollectionRunSnapshot,
+  Source,
+  JournalPreview,
+} from "@dailybrief/shared";
 
 const root = resolve(import.meta.dir, "../..");
 const output = resolve(root, "frontend/public/documentation");
@@ -164,38 +169,49 @@ try {
     if (path === "/collection/current") return respond(showRun ? run : null);
     if (path === "/collection/runs") return respond([run]);
     if (path === "/collection/runs/demo-collection") return respond(run);
-    if (path === "/collection/runs/demo-collection/jobs")
-      return respond({
-        total: 15,
-        page: 1,
-        pageSize: 10,
-        jobs: Array.from({ length: 5 }, (_, i) => ({
+    if (path === "/collection/runs/demo-collection/jobs") {
+      const jobs: ArticleJobSnapshot[] = Array.from({ length: 15 }, (_, i) => {
+        const completed = i < 2 || (i >= 5 && i < 13);
+        return {
           id: `demo-job-${i}`,
           articleId: `article-demo-${i + 1}`,
-          title: titles[i % titles.length],
+          title: titles[i % titles.length]!,
           sourceUrl: sources[i % 2]!.url,
-          state: i < 2 ? "completed" : i === 2 ? "active" : "waiting",
-          attempts: i < 3 ? 1 : 0,
+          state: completed ? "completed" : i === 2 ? "active" : "waiting",
+          attempts: completed || i === 2 ? 1 : 0,
           skipped: false,
           progress:
             i === 2
               ? { stage: "ai", status: "running", message: "Résumé IA en cours", at: day }
               : null,
           error: null,
-          summary:
-            i < 2
-              ? {
-                  title: titles[i % titles.length],
-                  summary:
-                    "Les acteurs du secteur présentent de nouvelles solutions. Cet exemple illustre le résumé IA enregistré après la récupération complète de l’article.",
-                  keyPoints: [
-                    "Les informations essentielles sont conservées.",
-                    "Le résumé peut être consulté sans relancer l’IA.",
-                  ],
-                }
-              : null,
-        })),
+          summary: completed
+            ? {
+                title: titles[i % titles.length]!,
+                summary:
+                  "Les acteurs du secteur présentent de nouvelles solutions. Cet exemple illustre le résumé IA enregistré après la récupération complète de l’article.",
+                keyPoints: [
+                  "Les informations essentielles sont conservées.",
+                  "Le résumé peut être consulté sans relancer l’IA.",
+                ],
+              }
+            : null,
+        };
       });
+      const params = new URL(route.request().url()).searchParams;
+      const status = params.get("status") ?? "all";
+      const filtered = jobs.filter((job) => status === "all" || job.state === status);
+      const page = Math.min(
+        Number(params.get("page") ?? 1),
+        Math.max(1, Math.ceil(filtered.length / 5)),
+      );
+      return respond({
+        jobs: filtered.slice((page - 1) * 5, page * 5),
+        total: filtered.length,
+        page,
+        pageSize: 5,
+      });
+    }
     if (path === "/sources") {
       const params = new URL(route.request().url()).searchParams;
       const filtered = sources.filter(
