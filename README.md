@@ -654,8 +654,12 @@ La collecte manuelle et programmée applique les mêmes règles. Le recensement 
 workflow n'écrit ni articles, ni résumés, ni newsletters et n'envoie aucun email.
 Les RSS directs et le scraping ne passent pas par ces réglages.
 
-La page **« Journaux »** affiche **« Vos journaux »**, avec ajout, activation,
-configuration de l'accès, modification du domaine et suppression. L'ajout, la
+La page **« Journaux »** permet l'ajout, l'activation,
+la configuration de l'accès, la modification du domaine et la suppression.
+Le switch de la colonne Actions active ou désactive le journal, comme pour les sources.
+Le point vert ou rouge de la colonne Statut est un indicateur sans action au clic.
+Le tableau du workflow utilise également le switch commun pour l'activation.
+L'ajout, la
 modification du domaine et la configuration de l'accès s'ouvrent dans des modales,
 y compris pour l'accès depuis le workflow. Échap ou « Annuler » ferme sans enregistrer,
 puis le focus revient au bouton d'ouverture. Les champs et les actions sont espacés,

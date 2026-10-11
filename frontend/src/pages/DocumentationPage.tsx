@@ -571,9 +571,10 @@ export function DocumentationPage() {
                 base.
               </li>
               <li>
-                <strong>Activez le journal.</strong> Les nouveaux domaines sont désactivés par
-                défaut. Le point vert indique un domaine actif et le point rouge un domaine
-                désactivé. Un journal public peut être activé sans identifiants.
+                <strong>Activez le journal avec le switch de la colonne Actions.</strong> Les
+                nouveaux domaines sont désactivés par défaut. Le point vert indique un domaine actif
+                et le point rouge un domaine désactivé. Un journal public peut être activé sans
+                identifiants.
               </li>
               <li>
                 Si un abonnement est nécessaire, utilisez l’icône en forme de clé{" "}
@@ -597,7 +598,7 @@ export function DocumentationPage() {
               name="journaux"
               height={410}
               alt="Tableau des journaux avec comptes, états d’activation, accès et actions"
-              caption="Les actions permettent de configurer l’accès, modifier le domaine ou supprimer le journal."
+              caption="Les actions permettent de configurer l’accès, modifier le domaine, supprimer le journal et l’activer ou le désactiver avec le switch."
             />
             <Table
               headings={["Réglage de connexion", "Exemple fictif", "Comment le choisir"]}

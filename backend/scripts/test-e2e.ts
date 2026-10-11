@@ -284,7 +284,7 @@ try {
   await page.keyboard.press("Enter");
   await page.getByLabel("Domaine du nouveau journal").fill("MANUAL-JOURNAL.EXAMPLE");
   await page.getByRole("button", { name: "Enregistrer le journal", exact: true }).click();
-  await page.getByRole("button", { name: "Activer manual-journal.example", exact: true }).waitFor();
+  await page.getByRole("switch", { name: "Activer manual-journal.example", exact: true }).waitFor();
   await page
     .getByRole("button", { name: "Modifier le domaine manual-journal.example", exact: true })
     .click();
@@ -295,7 +295,7 @@ try {
   await page.getByRole("dialog").screenshot({ path: "/tmp/dailybrief-domain-modal-mobile.png" });
   await page.getByRole("button", { name: "Enregistrer le domaine", exact: true }).click();
   await page
-    .getByRole("button", { name: "Activer corrected-journal.example", exact: true })
+    .getByRole("switch", { name: "Activer corrected-journal.example", exact: true })
     .waitFor();
   assert(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -624,13 +624,15 @@ try {
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     "Journal table must fit the mobile viewport with internal scrolling",
   );
-  const activateJournal = page.getByRole("button", {
+  const activateJournal = page.getByRole("switch", {
     name: "Activer publisher.example",
     exact: true,
   });
   await activateJournal.focus();
   await page.keyboard.press("Enter");
-  await page.getByRole("button", { name: "Désactiver publisher.example", exact: true }).waitFor();
+  await page
+    .getByRole("switch", { name: "Activer publisher.example", checked: true, exact: true })
+    .waitFor();
   await page.getByRole("button", { name: "Configurer l'accès" }).click();
   await page.getByLabel("Email pour publisher.example").fill("subscriber@example.test");
   await page.getByLabel("Mot de passe", { exact: true }).fill("test-only-journal-password");

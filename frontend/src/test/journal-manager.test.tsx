@@ -106,7 +106,13 @@ test("shows a compact journal table with three icon actions and no removed descr
   for (const action of actions) expect(action.textContent).toBe("");
   expect(actions[0]).toHaveAccessibleName("Configurer l'accès");
   expect(actions[0]).toBeDisabled();
-  expect(within(cells[1]!).getByRole("button")).toHaveAttribute("aria-pressed", "false");
+  expect(within(cells[1]!).getByRole("img", { name: "Désactivé" })).toHaveClass("bg-red-600");
+  expect(within(cells[1]!).queryByRole("button")).not.toBeInTheDocument();
+  expect(
+    within(cells.at(-1)!).getByRole("switch", { name: "Activer paper.example" }),
+  ).not.toBeChecked();
+  await user.click(within(cells[1]!).getByRole("img", { name: "Désactivé" }));
+  expect(fetcher.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
   expect(within(cells[2]!).getByRole("img", { name: "Non configuré" })).toHaveClass("bg-red-600");
   await user.hover(actions[1]!);
   expect(await screen.findByRole("tooltip")).toHaveTextContent("Modifier le domaine");
@@ -180,13 +186,34 @@ test("shows saved journal counts and supports keyboard addition, activation, ren
   await user.keyboard("{Enter}");
   await user.type(screen.getByLabelText("Domaine du nouveau journal"), "MANUAL.EXAMPLE");
   await user.click(screen.getByRole("button", { name: "Enregistrer le journal" }));
-  expect(await screen.findByRole("button", { name: "Activer manual.example" })).toBeInTheDocument();
+  expect(await screen.findByRole("switch", { name: "Activer manual.example" })).not.toBeChecked();
   const create = fetcher.mock.calls.find(([, init]) => init?.method === "POST");
   expect(JSON.parse(String(create?.[1]?.body))).toEqual({ domain: "MANUAL.EXAMPLE" });
-  await user.click(screen.getByRole("button", { name: "Activer manual.example" }));
+  screen.getByRole("switch", { name: "Activer manual.example" }).focus();
+  await user.keyboard(" ");
+  await waitFor(() =>
+    expect(screen.getByRole("switch", { name: "Activer manual.example" })).toBeChecked(),
+  );
   expect(
-    await screen.findByRole("button", { name: "Désactiver manual.example" }),
-  ).toBeInTheDocument();
+    within(screen.getByRole("link", { name: "manual.example" }).closest("tr")!).getByRole("img", {
+      name: "Activé",
+    }),
+  ).toHaveClass("bg-green-600");
+  expect(journals.find((journal) => journal.domain === "manual.example")?.enabled).toBe(true);
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(screen.getByRole("switch", { name: "Activer manual.example" })).not.toBeChecked(),
+  );
+  expect(journals.find((journal) => journal.domain === "manual.example")?.enabled).toBe(false);
+  expect(
+    within(screen.getByRole("link", { name: "manual.example" }).closest("tr")!).getByRole("img", {
+      name: "Désactivé",
+    }),
+  ).toHaveClass("bg-red-600");
+  await user.click(screen.getByRole("switch", { name: "Activer manual.example" }));
+  await waitFor(() =>
+    expect(screen.getByRole("switch", { name: "Activer manual.example" })).toBeChecked(),
+  );
   await user.click(screen.getByRole("button", { name: "Modifier le domaine manual.example" }));
   expect(screen.getByText(/Changer de domaine désactive le journal/)).toBeInTheDocument();
   await user.clear(screen.getByLabelText("Nouveau domaine pour manual.example"));
@@ -196,8 +223,8 @@ test("shows saved journal counts and supports keyboard addition, activation, ren
   );
   await user.click(screen.getByRole("button", { name: "Enregistrer le domaine" }));
   expect(
-    await screen.findByRole("button", { name: "Activer corrected.example" }),
-  ).toBeInTheDocument();
+    await screen.findByRole("switch", { name: "Activer corrected.example" }),
+  ).not.toBeChecked();
   expect(screen.queryByRole("link", { name: "manual.example" })).not.toBeInTheDocument();
   const remove = screen.getByRole("button", { name: "Supprimer le journal corrected.example" });
   await user.click(remove);

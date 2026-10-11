@@ -70,7 +70,7 @@ beforeEach(() => {
 test("saves form selectors, tests the saved login and distinguishes configuration from successful authentication", async () => {
   const user = userEvent.setup();
   render(<Harness />);
-  await user.click(screen.getByRole("button", { name: "Activer www.lemonde.fr" }));
+  await user.click(screen.getByRole("switch", { name: "Activer www.lemonde.fr" }));
   await user.click(screen.getAllByRole("button", { name: "Configurer l'accès" })[0]!);
   expect(screen.getByLabelText("URL du formulaire de connexion")).toHaveFocus();
   expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toBeDisabled();
@@ -159,11 +159,10 @@ test("renders counts, keyboard activation and credential editing with no passwor
   expect(within(rows[1]!).getByText("12")).toBeInTheDocument();
   expect(within(rows[2]!).getByText("7")).toBeInTheDocument();
   expect(within(rows[1]!).getByRole("button", { name: "Configurer l'accès" })).toBeDisabled();
-  screen.getByRole("button", { name: "Activer www.lemonde.fr" }).focus();
-  await user.keyboard("{Enter}");
-  expect(await screen.findByRole("button", { name: "Désactiver www.lemonde.fr" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
+  screen.getByRole("switch", { name: "Activer www.lemonde.fr" }).focus();
+  await user.keyboard(" ");
+  await waitFor(() =>
+    expect(screen.getByRole("switch", { name: "Activer www.lemonde.fr" })).toBeChecked(),
   );
   await user.click(within(rows[1]!).getByRole("button", { name: "Configurer l'accès" }));
   await user.type(screen.getByLabelText("Email pour www.lemonde.fr"), "reader@example.com");
@@ -194,7 +193,7 @@ test("renders counts, keyboard activation and credential editing with no passwor
 test("clears an unsaved password when closing the access modal with Escape", async () => {
   const user = userEvent.setup();
   render(<Harness />);
-  await user.click(screen.getByRole("button", { name: "Activer www.lemonde.fr" }));
+  await user.click(screen.getByRole("switch", { name: "Activer www.lemonde.fr" }));
   const trigger = screen.getAllByRole("button", { name: "Configurer l'accès" })[0]!;
   await user.click(trigger);
   expect(screen.getByLabelText("URL du formulaire de connexion")).toHaveFocus();

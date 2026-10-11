@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { JournalPreview, JournalLoginConfig } from "@dailybrief/shared";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { IconButton } from "@/components/IconButton";
 import { KeyRound, Pencil, Trash2 } from "lucide-react";
 import { Field } from "@/components/Field";
@@ -141,6 +142,15 @@ function JournalRow({
       ? "Formulaire configuré · connexion à vérifier"
       : "Identifiants enregistrés · formulaire à configurer"
     : "Non configuré";
+  const activationSwitch = (
+    <Switch
+      title={journal.enabled ? "Désactiver le journal" : "Activer le journal"}
+      aria-label={`Activer ${journal.domain}`}
+      checked={journal.enabled}
+      disabled={pending}
+      onCheckedChange={(enabled) => void update({ enabled })}
+    />
+  );
   const accessActions = (
     <>
       {journal.loginConfig && (
@@ -358,35 +368,22 @@ function JournalRow({
       </th>
       <td className={management ? "p-3 text-center" : "p-3"}>{journal.count}</td>
       <td className={management ? "p-3 text-center" : "p-3"}>
-        <Button
-          variant={management ? "ghost" : "outline"}
-          size={management ? "icon-sm" : "default"}
-          className="cursor-pointer"
-          title={
-            management
-              ? journal.enabled
-                ? "Désactiver le journal"
-                : "Activer le journal"
-              : undefined
-          }
-          disabled={pending}
-          aria-label={`${journal.enabled ? "Désactiver" : "Activer"} ${journal.domain}`}
-          aria-pressed={journal.enabled}
-          onClick={() => void update({ enabled: !journal.enabled })}
-        >
-          {management ? (
-            <span
-              aria-hidden="true"
-              className={
-                "size-2.5 rounded-full " + (journal.enabled ? "bg-green-600" : "bg-red-600")
-              }
-            />
-          ) : journal.enabled ? (
-            "Activé"
-          ) : (
-            "Désactivé"
-          )}
-        </Button>
+        {management ? (
+          <span
+            role="img"
+            aria-label={journal.enabled ? "Activé" : "Désactivé"}
+            title={journal.enabled ? "Activé" : "Désactivé"}
+            className={
+              "inline-block size-2.5 rounded-full " +
+              (journal.enabled ? "bg-green-600" : "bg-red-600")
+            }
+          />
+        ) : (
+          <div className="flex items-center gap-3">
+            {activationSwitch}
+            <span>{journal.enabled ? "Activé" : "Désactivé"}</span>
+          </div>
+        )}
       </td>
       {management ? (
         <td className="p-3 text-center">
@@ -493,6 +490,7 @@ function JournalRow({
                 </IconButton>
               }
             />
+            {activationSwitch}
           </div>
         </td>
       )}
@@ -561,7 +559,7 @@ export function JournalTable({
                   scope="col"
                   className={
                     management
-                      ? `p-3 font-medium ${label === "Domaine du journal" ? "text-left" : label === "Actions" ? "w-36 text-right" : label === "Nombre d'articles" ? "w-24 text-center" : "w-16 text-center"}`
+                      ? `p-3 font-medium ${label === "Domaine du journal" ? "text-left" : label === "Actions" ? "w-48 text-right" : label === "Nombre d'articles" ? "w-24 text-center" : "w-16 text-center"}`
                       : "p-3 text-left"
                   }
                 >
