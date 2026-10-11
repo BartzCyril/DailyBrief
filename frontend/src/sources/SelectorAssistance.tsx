@@ -6,6 +6,27 @@ import { Feedback } from "@/components/Feedback";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { validHttpUrl } from "./api";
 
+function hasRequiredSelectors(result: SelectorAnalysisResponse) {
+  const fields =
+    result.kind === "RSS_LINK"
+      ? [result.articleLinkSelector]
+      : result.kind === "JOURNAL_LOGIN"
+        ? [
+            result.loginConfig.loginUrl,
+            result.loginConfig.emailSelector,
+            result.loginConfig.passwordSelector,
+            result.loginConfig.submitSelector,
+          ]
+        : [
+            result.scrapingConfig.articleSelector,
+            result.scrapingConfig.titleSelector,
+            result.scrapingConfig.linkSelector,
+            result.scrapingConfig.descriptionSelector,
+            result.scrapingConfig.dateSelector,
+          ];
+  return fields.every((field) => typeof field === "string" && !!field.trim());
+}
+
 export type SelectorAssistancePending = "analysis" | "help" | null;
 
 /** Only the public URL and analysis type leave the browser, never form credentials. */
@@ -55,7 +76,7 @@ export function SelectorAssistance({
     currentRequest.current = null;
     setPending(null);
     setError("");
-    setMessage("Analyse annulée. Vous pouvez modifier les réglages ou réessayer.");
+    setMessage("Analyse annulée.");
     callbacks.current.onBusyChange?.(false);
     callbacks.current.onPendingChange?.(null);
   }
@@ -95,16 +116,26 @@ export function SelectorAssistance({
         if (result.kind !== kind)
           throw new Error("L'analyse reçue ne correspond pas à ce formulaire.");
         callbacks.current.onResult(result);
-        setMessage(result.message);
-        setHelpRequestId(result.complete ? undefined : result.helpRequestId);
+        if (hasRequiredSelectors(result)) {
+          setMessage(
+            result.kind === "SCRAPING" && result.retrievalConfirmed === false
+              ? "Sélecteurs remplis. Vérifiez le mode de récupération."
+              : "Sélecteurs remplis.",
+          );
+          setHelpRequestId(undefined);
+        } else {
+          setError("Certains sélecteurs n'ont pas pu être remplis.");
+          setHelpRequestId(result.helpRequestId);
+        }
       } else {
-        const result = await api<{ message: string }>("/ai/selectors/help", {
+        await api<{ message: string }>("/ai/selectors/help", {
           method: "POST",
           body: { helpRequestId },
           signal: controller.signal,
         });
         if (obsolete()) return;
-        setMessage(result.message);
+        setError("");
+        setMessage("Demande d'aide envoyée.");
         setHelpSent(true);
       }
     } catch (error) {
@@ -139,29 +170,22 @@ export function SelectorAssistance({
             Annuler l'analyse
           </Button>
         )}
-        {helpRequestId && (
+        {helpRequestId && !helpSent && (
           <Button
             type="button"
             variant="outline"
-            disabled={disabled || !!pending || helpSent}
+            disabled={disabled || !!pending}
             onClick={() => void run("help")}
           >
             {pending === "help" ? <LoaderCircle className="animate-spin" /> : <Mail />}
-            {pending === "help" ? "Envoi en cours…" : "Envoyer une demande d'aide"}
+            {pending === "help" ? "Envoi en cours…" : "Demander de l'aide"}
           </Button>
         )}
       </div>
-      <p className="text-xs text-muted-foreground">
-        L'IA analyse la page publique et propose des réglages.{" "}
-        {kind === "JOURNAL_LOGIN"
-          ? "Vérifiez les sélecteurs, renseignez vos identifiants, enregistrez puis testez la connexion."
-          : "Vérifiez-les avec le bouton Tester avant d'enregistrer."}{" "}
-        Aucun identifiant n'est envoyé à l'IA.
-      </p>
-      {helpRequestId && (
+      <p className="text-xs text-muted-foreground">Vérifiez les champs avant d'enregistrer.</p>
+      {helpRequestId && !helpSent && (
         <p className="text-xs text-muted-foreground">
-          Cette demande transmet par email à l'administrateur l'adresse du site et les sélecteurs
-          manquants, sans vos identifiants.
+          Envoie le site et les sélecteurs manquants à l'administrateur, sans vos identifiants.
         </p>
       )}
       <Feedback message={error} error />

@@ -112,12 +112,12 @@ test("saves form selectors, tests the saved login and distinguishes configuratio
   const testButton = screen.getByRole("button", { name: "Tester la connexion" });
   testButton.focus();
   await user.keyboard("{Enter}");
-  expect(await screen.findByText(/Connexion vérifiée/)).toBeInTheDocument();
+  expect(await screen.findByText("Connexion réussie.")).toBeInTheDocument();
   expect(testCalls).toBe(1);
   failConnection = true;
   await user.click(screen.getByRole("button", { name: "Tester la connexion" }));
   expect(await screen.findByText("Connexion refusée")).toBeInTheDocument();
-  expect(screen.queryByText(/Connexion vérifiée/)).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByText("Connexion réussie.")).not.toBeInTheDocument());
   await user.click(screen.getAllByRole("button", { name: "Configurer l'accès" })[0]!);
   expect(screen.getByLabelText("URL du formulaire de connexion")).toHaveValue(
     "https://secure.lemonde.fr/login",

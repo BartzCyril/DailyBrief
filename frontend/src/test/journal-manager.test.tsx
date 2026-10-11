@@ -157,7 +157,7 @@ test("distinguishes partial access from configured access and keeps connection c
   );
   expect(within(dialog).getByLabelText("Nouveau mot de passe (vide : conserver)")).toHaveValue("");
   await user.click(within(dialog).getByRole("button", { name: "Tester la connexion" }));
-  expect(await within(dialog).findByText(/Connexion vérifiée/)).toBeInTheDocument();
+  expect(await screen.findByText("Connexion réussie.")).toBeInTheDocument();
   expect(connectionTests).toBe(1);
   await user.click(within(dialog).getByRole("button", { name: "Supprimer les identifiants" }));
   await user.click(
@@ -229,11 +229,12 @@ test("keeps a journal visible after a deletion error and allows list loading to 
   failLoad = false;
   await user.click(screen.getByRole("button", { name: "Réessayer" }));
   await screen.findByRole("link", { name: "paper.example" });
+  await waitFor(() => expect(screen.queryByText("Journaux indisponibles")).toBeNull());
   failDelete = true;
   await user.click(screen.getByRole("button", { name: "Supprimer le journal paper.example" }));
   const dialog = screen.getByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Supprimer" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Suppression impossible");
+  expect(await screen.findByText("Suppression impossible")).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Annuler" }));
   expect(screen.getByRole("link", { name: "paper.example" })).toBeInTheDocument();
 });

@@ -386,7 +386,7 @@ test("keeps a source on deletion failure and permits retry in the scraping confi
   const dialog = screen.getByRole("alertdialog");
   expect(dialog).toHaveTextContent("Êtes-vous sûr de vouloir supprimer cette source de scraping ?");
   await ui.click(within(dialog).getByRole("button", { name: "Supprimer" }));
-  expect(await within(dialog).findByRole("alert")).toHaveTextContent("Suppression impossible.");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Suppression impossible.");
   expect(stored).toEqual([scraping]);
   serverError = "";
   await ui.click(within(dialog).getByRole("button", { name: "Supprimer" }));

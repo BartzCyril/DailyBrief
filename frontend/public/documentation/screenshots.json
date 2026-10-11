@@ -5,15 +5,15 @@
   },
   "rss": {
     "width": 768,
-    "height": 586
+    "height": 570
   },
   "scraping": {
     "width": 768,
-    "height": 1104
+    "height": 1030
   },
   "assistance": {
-    "width": 768,
-    "height": 1152
+    "width": 1280,
+    "height": 1191
   },
   "journaux": {
     "width": 1152,
@@ -21,7 +21,7 @@
   },
   "acces": {
     "width": 672,
-    "height": 1224
+    "height": 1208
   },
   "dashboard": {
     "width": 1152,

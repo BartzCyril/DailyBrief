@@ -110,7 +110,7 @@ export function RssForm() {
         </div>
       </form>
       <Feedback message={error} error />
-      <Feedback message={preview?.warnings?.join(" ") ?? ""} />
+      <Feedback inline message={preview?.warnings?.join(" ") ?? ""} />
       {preview && <ArticlePreview preview={preview} />}
     </div>
   );

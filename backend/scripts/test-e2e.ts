@@ -334,7 +334,11 @@ try {
     rssAnalysis.ok(),
     `RSS selector analysis failed with HTTP ${rssAnalysis.status()}: ${(await rssAnalysis.json()).message ?? "unknown error"}`,
   );
-  await page.getByText(/Lien externe vérifié sur une notice du flux/).waitFor();
+  await page.getByText("Sélecteurs remplis.", { exact: true }).waitFor();
+  assert.equal(
+    await page.getByRole("button", { name: "Demander de l'aide", exact: true }).count(),
+    0,
+  );
   assert.equal(
     await page.getByLabel("Sélecteur du lien vers l'article (facultatif)").inputValue(),
     "a.accessToPrimaryDoc.primarydoc",
@@ -345,7 +349,7 @@ try {
   await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Le service IA est indisponible" }).waitFor();
   assert.equal(helpMessages.length, 0, "AI failure must not send mail without a click");
-  const askHelp = page.getByRole("button", { name: "Envoyer une demande d'aide", exact: true });
+  const askHelp = page.getByRole("button", { name: "Demander de l'aide", exact: true });
   selectorMailFailure = true;
   await askHelp.click();
   await page.getByText("Envoi de la demande impossible. Réessayez.", { exact: true }).waitFor();
@@ -354,13 +358,13 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await askHelp.focus();
   await page.keyboard.press("Enter");
-  await page.getByText(/La demande d.aide a été envoyée/).waitFor();
+  await page.getByText("Demande d'aide envoyée.", { exact: true }).waitFor();
   assert.equal(helpMessages.length, 1);
   assert.equal(helpMessages[0]?.to, config.SMTP_USER);
   assert.equal(helpMessages[0]?.replyTo, email);
   assert(helpMessages[0]?.text.includes("https://fixture.example/feed"));
   assert(helpMessages[0]?.text.includes("sélecteur CSS"));
-  assert(await askHelp.isDisabled());
+  assert.equal(await askHelp.count(), 0, "Help disappears after the request has been sent");
   assert(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     "Selector assistance must fit mobile",
@@ -390,7 +394,11 @@ try {
   await page.getByRole("link", { name: "Ajouter une source de scraping" }).click();
   await page.getByLabel("URL du site").fill("https://fixture.example/news");
   await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
-  await page.getByText(/Sélecteurs vérifiés sur les articles présents/).waitFor();
+  await page.getByText("Sélecteurs remplis.", { exact: true }).waitFor();
+  assert.equal(
+    await page.getByRole("button", { name: "Demander de l'aide", exact: true }).count(),
+    0,
+  );
   assert.equal(
     await page.getByLabel("Sélecteur des articles", { exact: true }).inputValue(),
     "article",
@@ -560,6 +568,9 @@ try {
   assert.equal(await sourceTable.getByRole("row").count(), 2);
   await page.getByRole("combobox", { name: "Statut des sources" }).selectOption("all");
   await page.getByRole("searchbox", { name: "Rechercher une URL" }).fill("");
+  const rssTotal =
+    sourceTableFixture.length + storedSources.filter((source) => source.type === "RSS").length;
+  await page.getByText(`1–5 sur ${rssTotal} sources`, { exact: true }).waitFor();
   const workflowAction = page
     .getByRole("link", { name: "Tester le workflow de A à Z", exact: true })
     .first();
@@ -633,7 +644,15 @@ try {
   assert(await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).isDisabled());
   await page.getByLabel("URL du formulaire de connexion").fill(loginConfig.loginUrl);
   await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
-  await page.getByText(/Champs et bouton vérifiés/).waitFor();
+  await page.getByText("Sélecteurs remplis.", { exact: true }).waitFor();
+  const autofillToast = page
+    .locator("[data-sonner-toast]")
+    .filter({ hasText: "Sélecteurs remplis." });
+  await autofillToast.getByRole("button", { name: "Fermer la notification" }).click();
+  assert(
+    await page.getByRole("dialog").isVisible(),
+    "Closing a toast must not close the journal modal",
+  );
   assert.equal(
     await page.getByLabel("URL du formulaire de connexion").inputValue(),
     loginConfig.loginUrl,
@@ -653,7 +672,7 @@ try {
   );
   assert.equal(helpMessages.length, 1, "Successful login form analysis must not send email");
   assert.equal(
-    await page.getByRole("button", { name: "Envoyer une demande d'aide", exact: true }).count(),
+    await page.getByRole("button", { name: "Demander de l'aide", exact: true }).count(),
     0,
   );
   assert(
@@ -704,7 +723,7 @@ try {
   const testConnection = page.getByRole("button", { name: "Tester la connexion" });
   await testConnection.focus();
   await page.keyboard.press("Enter");
-  await page.getByText(/Connexion vérifiée. La session de test a été fermée/).waitFor();
+  await page.getByText("Connexion réussie.", { exact: true }).waitFor();
   assert.equal(messages.length, 0, "A connection test must not send email");
   assert.equal(await page.locator('input[type="password"]').count(), 0);
   await page.getByRole("button", { name: "Supprimer les identifiants" }).click();

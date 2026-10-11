@@ -192,7 +192,7 @@ export function EditSourceForm({
         )}
       </fieldset>
       <Feedback message={error} error />
-      <Feedback message={preview?.warnings?.join(" ") ?? ""} />
+      <Feedback inline message={preview?.warnings?.join(" ") ?? ""} />
       <div className="flex flex-wrap gap-3">
         <Button type="button" variant="outline" disabled={pending} onClick={() => void test()}>
           {testing && <LoaderCircle className="animate-spin" />}

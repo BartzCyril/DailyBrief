@@ -41,6 +41,38 @@ const scrapingResult: SelectorAnalysisResponse = {
   complete: true,
   missingFields: [],
 };
+
+test.each([rssResult, scrapingResult])(
+  "successful $kind autofill hides obsolete partial help and technical details",
+  async (result) => {
+    const obsoleteMessage =
+      "Champs et bouton vérifiés. L'élément de réussite après connexion ne peut pas être déduit de la page publique : conservez votre réglage existant ou demandez de l'aide.";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json({ ...result, complete: false, helpRequestId: "obsolete", message: obsoleteMessage }),
+      ),
+    );
+    const onResult = vi.fn();
+    render(<SelectorAssistance kind={result.kind} url="https://example.com" onResult={onResult} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
+    await screen.findByText("Sélecteurs remplis.");
+    expect(screen.queryByText(obsoleteMessage)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Demander de l'aide" })).toBeNull();
+    expect(onResult).toHaveBeenCalledTimes(1);
+  },
+);
+
+test("keeps uncertain retrieval mode visible in a short notification without offering help for filled selectors", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json({ ...scrapingResult, retrievalConfirmed: false })),
+  );
+  render(<SelectorAssistance kind="SCRAPING" url="https://example.com" onResult={vi.fn()} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
+  await screen.findByText("Sélecteurs remplis. Vérifiez le mode de récupération.");
+  expect(screen.queryByRole("button", { name: "Demander de l'aide" })).toBeNull();
+});
 const preview = {
   articles: [
     {
@@ -173,7 +205,7 @@ test.each([
   },
 );
 
-test("analyzes a journal's public login form, preserves credentials and authenticated selectors, and exposes partial help", async () => {
+test("fills a journal form without obsolete technical messages or help, and preserves credentials and legacy selectors", async () => {
   const journal: JournalPreview = {
     domain: "journal.example.com",
     count: 2,
@@ -221,7 +253,9 @@ test("analyzes a journal's public login form, preserves credentials and authenti
   expect(screen.getByLabelText(/Nouveau mot de passe/)).toHaveValue("never-send-to-ai");
   expect(screen.queryByLabelText("Sélecteur visible après connexion")).toBeNull();
   expect(screen.queryByLabelText("Sélecteur du contenu intégral (facultatif)")).toBeNull();
-  expect(screen.getByRole("button", { name: "Envoyer une demande d'aide" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Demander de l'aide" })).toBeNull();
+  expect(screen.queryByText(result.message)).toBeNull();
+  expect(await screen.findByText("Sélecteurs remplis.")).toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
     kind: "JOURNAL_LOGIN",
@@ -259,28 +293,24 @@ test("offers help only after failure, sends it on demand, supports a failed send
   const user = userEvent.setup();
   const onResult = vi.fn();
   render(<SelectorAssistance kind="RSS_LINK" url="https://example.com/feed" onResult={onResult} />);
-  expect(
-    screen.queryByRole("button", { name: "Envoyer une demande d'aide" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Demander de l'aide" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Analyse impossible");
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(onResult).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Envoyer une demande d'aide" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("serveur email");
-  expect(screen.getByRole("button", { name: "Envoyer une demande d'aide" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Envoyer une demande d'aide" }));
-  expect(await screen.findByText("Votre demande d'aide a été envoyée.")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Envoyer une demande d'aide" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Demander de l'aide" }));
+  expect(await screen.findByText("Le serveur email est indisponible.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Demander de l'aide" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Demander de l'aide" }));
+  expect(await screen.findByText("Demande d'aide envoyée.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Demander de l'aide" })).toBeNull();
   expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/help"))).toHaveLength(2);
   expect(JSON.parse(String(fetcher.mock.calls.at(-1)?.[1]?.body))).toEqual({
     helpRequestId: "ticket-one",
   });
   await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
   await waitFor(() => expect(onResult).toHaveBeenCalledWith(rssResult));
-  expect(
-    screen.queryByRole("button", { name: "Envoyer une demande d'aide" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Demander de l'aide" })).not.toBeInTheDocument();
 });
 
 test("ignores a result for an edited URL and clears the associated help request", async () => {
@@ -321,9 +351,7 @@ test("ignores a result for an edited URL and clears the associated help request"
     finish?.(json({ ...rssResult, complete: false, helpRequestId: "obsolete" })),
   );
   expect(onResult).not.toHaveBeenCalled();
-  expect(
-    screen.queryByRole("button", { name: "Envoyer une demande d'aide" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Demander de l'aide" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toBeEnabled();
   expect(busy).toHaveBeenLastCalledWith(false);
 });
@@ -403,9 +431,7 @@ test("does not offer email help for a network failure without a server ticket", 
   render(<SelectorAssistance kind="RSS_LINK" url="https://example.com/feed" onResult={vi.fn()} />);
   await userEvent.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Connexion impossible");
-  expect(
-    screen.queryByRole("button", { name: "Envoyer une demande d'aide" }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Demander de l'aide" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toBeEnabled();
 });
 
@@ -463,7 +489,7 @@ test.each(["RSS", "SCRAPING", "EDIT_RSS", "EDIT_SCRAPING"] as const)(
     expect(selector).toHaveValue(".manual-selection");
     expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toBeEnabled();
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("button", { name: "Envoyer une demande d'aide" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Demander de l'aide" })).toBeNull();
   },
 );
 
@@ -549,7 +575,7 @@ test.each(["close", "escape", "cancel"] as const)(
     await user.click(screen.getByRole("button", { name: "Configurer l'accès" }));
     expect(screen.getByLabelText(/Nouveau mot de passe/)).toHaveValue("");
     expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Envoyer une demande d'aide" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Demander de l'aide" })).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(1);
   },
 );
@@ -576,7 +602,7 @@ test("protects the journal modal while its explicitly requested help email is be
     "https://journal.example.com/login",
   );
   await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
-  await user.click(await screen.findByRole("button", { name: "Envoyer une demande d'aide" }));
+  await user.click(await screen.findByRole("button", { name: "Demander de l'aide" }));
   expect(screen.getByRole("button", { name: "Fermer la fenêtre" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Annuler" })).toBeDisabled();
   expect(screen.queryByRole("button", { name: "Annuler l'analyse" })).toBeNull();
@@ -619,7 +645,7 @@ test("blocks closing a source modal during help delivery and unlocks it after SM
   );
   await user.click(screen.getByRole("button", { name: "Modifier https://example.com/feed" }));
   await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
-  await user.click(await screen.findByRole("button", { name: "Envoyer une demande d'aide" }));
+  await user.click(await screen.findByRole("button", { name: "Demander de l'aide" }));
   expect(screen.getByRole("button", { name: "Fermer la fenêtre" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Annuler" })).toBeDisabled();
   await user.keyboard("{Escape}");

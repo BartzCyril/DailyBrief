@@ -530,17 +530,23 @@ export function DocumentationPage() {
                 identifiants, enregistrez puis utilisez <b>Tester la connexion</b>.
               </li>
             </Steps>
-            <h3>Si l’analyse échoue ou reste incomplète</h3>
+            <h3>Si l’analyse ne remplit pas les sélecteurs</h3>
             <p>
               Lorsqu’une demande d’aide est disponible après l’échec, un bouton{" "}
-              <b>Envoyer une demande d’aide</b> apparaît. En cliquant dessus, vous envoyez un email
-              à l’administrateur configuré pour votre instance. Cet email indique le site concerné
-              et les sélecteurs à trouver.
+              <b>Demander de l’aide</b> apparaît. En cliquant dessus, vous envoyez un email à
+              l’administrateur configuré pour votre instance. Cet email indique le site concerné et
+              les sélecteurs à trouver.
+            </p>
+            <p>
+              Quand les sélecteurs sont remplis, une notification confirme le résultat et le bouton
+              d’aide reste masqué. Les confirmations et erreurs s’affichent dans des notifications
+              que vous pouvez fermer. Les avertissements des aperçus et les détails des jobs restent
+              consultables sur leur page.
             </p>
             <Screenshot
               name="assistance"
               height={760}
-              alt="Analyse IA incomplète avec message et bouton Envoyer une demande d’aide"
+              alt="Échec du remplissage IA avec bouton Demander de l’aide et notification d’erreur"
               caption="Une proposition peut être ajustée à la main ; une demande d’aide est proposée quand l’analyse rencontre un problème."
             />
             <Tip title="Vos identifiants restent hors de l’analyse">

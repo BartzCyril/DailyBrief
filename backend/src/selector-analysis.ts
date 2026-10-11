@@ -874,6 +874,7 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
             ...base,
             kind: input.kind,
             scrapingConfig: parsed.data,
+            retrievalConfirmed: mode !== "SCROLL" || Boolean(page.scrollObserved),
             message: `Sélecteurs vérifiés sur les articles présents. ${descriptionSelector === fields.titleSelector ? "Aucune description distincte retenue : le sélecteur du titre sert de description. " : ""}${mode === "PAGINATE" ? "Pagination détectée à partir des liens de la page." : mode === "LOAD_MORE" ? "Bouton de chargement identifié." : page.scrollObserved ? "Chargement d'articles au scroll observé." : "Aucun chargement supplémentaire confirmé : mode scroll proposé, à vérifier."} Testez la source avant de l'enregistrer.`,
           };
         }

@@ -132,7 +132,7 @@ test("shows test errors and duplicate errors", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Tester" }));
   await screen.findByText("Un article");
   await userEvent.click(screen.getByRole("button", { name: "Enregistrer le flux" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("existe déjà");
+  expect(await screen.findByText(/existe déjà/)).toBeInTheDocument();
 });
 test("disables incompatible actions while testing", async () => {
   let resolve: (response: Response) => void = () => {};

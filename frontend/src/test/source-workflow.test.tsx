@@ -170,11 +170,14 @@ test("page or AI errors stay on the article and can be retried", async () => {
   await userEvent.click(
     (await screen.findAllByRole("button", { name: "Faire le résumé avec l'IA" }))[0]!,
   );
-  expect(await screen.findByRole("alert")).toHaveTextContent("Ollama inaccessible");
+  expect(await screen.findByText("Ollama inaccessible")).toBeInTheDocument();
+  expect(
+    screen.getByText("Le résumé de cet article a échoué.").closest("[data-sonner-toast]"),
+  ).toHaveAttribute("data-type", "error");
   failSummary = false;
   await userEvent.click(screen.getAllByRole("button", { name: "Faire le résumé avec l'IA" })[0]!);
   expect(await screen.findByText(result.summary.summary)).toBeInTheDocument();
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByText("Ollama inaccessible")).not.toBeInTheDocument();
 });
 test("allows collection retry and refreshing removes previous test results", async () => {
   failCollect = true;

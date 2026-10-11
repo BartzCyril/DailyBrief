@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import type { User } from "@dailybrief/shared";
 import { authApi } from "./api";
 import { ApiError, errorMessage } from "@/lib/api";
+import { toast } from "sonner";
+import { notify } from "@/components/Toaster";
 type Auth = {
   user: User | null;
   loading: boolean;
@@ -29,15 +31,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
   useEffect(() => {
     void refresh();
-    const expired = () => setUser(null);
+    const expired = () => {
+      toast.dismiss();
+      setUser(null);
+    };
     window.addEventListener("dailybrief:unauthenticated", expired);
     return () => window.removeEventListener("dailybrief:unauthenticated", expired);
   }, []);
   async function login(email: string, password: string) {
     setUser(await authApi.login(email, password));
+    notify("Connexion réussie.");
   }
   async function logout() {
     await authApi.logout();
+    toast.dismiss();
+    notify("Déconnexion réussie.");
     setUser(null);
   }
   return (

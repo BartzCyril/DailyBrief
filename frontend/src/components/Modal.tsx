@@ -51,7 +51,11 @@ export function Modal({
             if (busy) event.preventDefault();
           }}
           onPointerDownOutside={(event) => {
-            if (busy) event.preventDefault();
+            if (
+              busy ||
+              (event.target instanceof Element && event.target.closest("[data-sonner-toaster]"))
+            )
+              event.preventDefault();
           }}
           onCloseAutoFocus={(event) => restoreFocusAfterRemoval(event, returnFocus.current)}
         >

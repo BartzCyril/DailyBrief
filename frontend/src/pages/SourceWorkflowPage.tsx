@@ -4,6 +4,7 @@ import type { WorkflowPreview, WorkflowSummary, CollectionProgress } from "@dail
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Feedback } from "@/components/Feedback";
+import { notify } from "@/components/Toaster";
 import { CollectionProgress as ProgressLog } from "@/dashboard/CollectionProgress";
 import { sourcesApi, summarizeWorkflowArticle, validHttpUrl } from "@/sources/api";
 import { errorMessage } from "@/lib/api";
@@ -76,11 +77,13 @@ export function SourceWorkflowPage() {
           [index]: { ...previous[index]!, result },
         }));
     } catch (error) {
-      if (!controller.signal.aborted)
+      if (!controller.signal.aborted) {
+        notify("Le résumé de cet article a échoué.", "error");
         setTests((previous) => ({
           ...previous,
           [index]: { ...previous[index]!, error: errorMessage(error) },
         }));
+      }
     } finally {
       controllers.current.delete(controller);
       if (!controller.signal.aborted)
@@ -223,7 +226,7 @@ export function SourceWorkflowPage() {
               {test && (
                 <ProgressLog events={test.events} busy={test.busy} completedLabel="Test terminé" />
               )}
-              <Feedback message={test?.error ?? ""} error />
+              <Feedback inline message={test?.error ?? ""} error />
               {test?.result && (
                 <section
                   aria-label={`Résumé IA de ${article.title}`}

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Plus, Globe, Rss } from "lucide-react";
 import { Tabs } from "radix-ui";
 import type { SourcePage, SourceListQuery } from "@dailybrief/shared";
 import { Button } from "@/components/ui/button";
 import { Feedback } from "@/components/Feedback";
+import { NavigationFeedback } from "@/components/NavigationFeedback";
 import { SourceList } from "@/sources/SourceList";
 import { sourcesApi } from "@/sources/api";
 import { errorMessage } from "@/lib/api";
@@ -46,15 +47,6 @@ export function SourcesPage() {
       mounted.current = false;
     };
   }, []);
-  const location = useLocation();
-  const notification: unknown = location.state;
-  const message =
-    notification &&
-    typeof notification === "object" &&
-    "message" in notification &&
-    typeof notification.message === "string"
-      ? notification.message
-      : "";
   const refresh = useCallback(async () => {
     if (!mounted.current) return;
     const id = ++requestId.current;
@@ -112,7 +104,7 @@ export function SourcesPage() {
           </Link>
         </Button>
       </div>
-      <Feedback message={message} />
+      <NavigationFeedback />
       <Feedback error message={error} />
       {error && (
         <Button variant="outline" onClick={() => void refresh().catch(() => {})}>

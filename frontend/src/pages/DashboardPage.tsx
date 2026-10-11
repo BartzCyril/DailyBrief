@@ -1,23 +1,15 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Globe, Newspaper } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Feedback } from "@/components/Feedback";
+import { NavigationFeedback } from "@/components/NavigationFeedback";
 import { Statistics } from "@/dashboard/Statistics";
 import { CollectionSettings } from "@/dashboard/CollectionSettings";
 import { ManualCollection } from "@/dashboard/ManualCollection";
 import { useDashboard } from "@/dashboard/useDashboard";
 export function DashboardPage() {
   const dashboard = useDashboard();
-  const location = useLocation();
-  const notification: unknown = location.state;
-  const message =
-    notification &&
-    typeof notification === "object" &&
-    "message" in notification &&
-    typeof notification.message === "string"
-      ? notification.message
-      : "";
   return (
     <main className="max-w-6xl mx-auto px-5 py-9 space-y-7">
       <div>
@@ -31,7 +23,7 @@ export function DashboardPage() {
           Vos sources, votre rythme, l'essentiel dans votre boîte mail.
         </p>
       </div>
-      <Feedback message={message} />
+      <NavigationFeedback />
       <Feedback error message={dashboard.error} />
       {dashboard.error && (
         <Button variant="outline" onClick={() => void dashboard.refresh()}>

@@ -10,7 +10,7 @@ type AnalysisDetails = {
 };
 export type SelectorAnalysisResult = AnalysisDetails &
   (
-    | { kind: "SCRAPING"; scrapingConfig: ScrapingConfig }
+    | { kind: "SCRAPING"; scrapingConfig: ScrapingConfig; retrievalConfirmed?: boolean }
     | { kind: "RSS_LINK"; articleLinkSelector: string }
     | {
         kind: "JOURNAL_LOGIN";

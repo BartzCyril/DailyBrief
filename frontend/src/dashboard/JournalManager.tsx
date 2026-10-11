@@ -8,6 +8,7 @@ import { Modal } from "@/components/Modal";
 import { JournalTable } from "@/sources/JournalTable";
 import { sourcesApi } from "@/sources/api";
 import { errorMessage } from "@/lib/api";
+import { notify } from "@/components/Toaster";
 
 export function JournalManager({ refreshKey = 0 }: { refreshKey?: number }) {
   const [data, setData] = useState<JournalList | null>(null);
@@ -42,6 +43,7 @@ export function JournalManager({ refreshKey = 0 }: { refreshKey?: number }) {
     setAddError("");
     try {
       await sourcesApi.addJournal(domain);
+      notify("Journal ajouté.");
       setDomain("");
       setAdding(false);
       await refresh();

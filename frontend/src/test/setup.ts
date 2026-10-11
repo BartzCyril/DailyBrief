@@ -1,7 +1,15 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
-afterEach(cleanup);
+import { render } from "@testing-library/react";
+import { createElement } from "react";
+import { beforeEach, afterEach } from "vitest";
+import { toast } from "sonner";
+import { Toaster } from "../components/Toaster";
+beforeEach(() => render(createElement(Toaster)));
+afterEach(() => {
+  toast.dismiss();
+  cleanup();
+});
 class Observer {
   observe() {}
   unobserve() {}

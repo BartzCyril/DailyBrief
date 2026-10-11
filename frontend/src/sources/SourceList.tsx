@@ -89,6 +89,7 @@ export function SourceList({
     try {
       await sourcesApi.setEnabled(source.id, enabled);
       await onChanged?.();
+      setMessage(enabled ? "Source activée." : "Source désactivée.");
     } catch (error) {
       setError(errorMessage(error));
     } finally {

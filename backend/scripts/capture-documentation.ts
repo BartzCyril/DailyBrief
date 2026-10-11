@@ -214,15 +214,17 @@ try {
           nextRunAt: "2026-10-11T07:30:00.000Z",
         },
       });
+    if (path === "/ai/selectors/analyze" && assistanceIncomplete)
+      return respond(
+        { message: "L'analyse n'a pas pu remplir les sélecteurs.", helpRequestId: "demo-help" },
+        422,
+      );
     if (path === "/ai/selectors/analyze")
       return respond({
         kind: "SCRAPING",
-        complete: !assistanceIncomplete,
+        complete: true,
         scrapingConfig,
-        helpRequestId: assistanceIncomplete ? "demo-help" : undefined,
-        message: assistanceIncomplete
-          ? "L’analyse reste incomplète. Vérifiez la date et la description avant d’enregistrer, ou envoyez une demande d’aide."
-          : "Sélecteurs proposés. Vérifiez les articles avec le bouton Tester.",
+        message: "Sélecteurs proposés. Vérifiez les articles avec le bouton Tester.",
       });
     throw new Error(`API de démonstration non prévue : ${path}`);
   });
@@ -236,14 +238,13 @@ try {
   await page.goto(`${origin}/sources/new/scraping`);
   await page.getByLabel("URL du site").fill("https://actualites.exemple.fr/cloud");
   await page.getByRole("button", { name: "Remplir avec l'IA" }).click();
-  await page
-    .getByText("Sélecteurs proposés. Vérifiez les articles avec le bouton Tester.", { exact: true })
-    .waitFor();
+  await page.getByText("Sélecteurs remplis.", { exact: true }).waitFor();
   await capture(page, "scraping");
   assistanceIncomplete = true;
   await page.getByRole("button", { name: "Remplir avec l'IA" }).click();
-  await page.getByRole("button", { name: "Envoyer une demande d'aide" }).waitFor();
-  await capture(page, "assistance");
+  await page.getByRole("button", { name: "Demander de l'aide" }).waitFor();
+  await page.getByText("L'analyse n'a pas pu remplir les sélecteurs.", { exact: true }).waitFor();
+  await capture(page, "assistance", page.locator("body"));
   await page.goto(`${origin}/journals`);
   await page.getByText("www.lemonde.fr", { exact: true }).waitFor();
   await capture(page, "journaux");

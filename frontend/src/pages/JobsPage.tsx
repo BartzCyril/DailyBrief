@@ -129,7 +129,7 @@ export function JobsPage() {
                 : `${run.completed}/${run.total} articles traités · ${run.failed} en échec · ${run.skipped} ignorés`}
             </p>
           </div>
-          <Feedback error message={run.error ?? ""} />
+          <Feedback inline error message={run.error ?? ""} />
           {run.result?.status === "SENT" && <p>Newsletter envoyée.</p>}
           {run.result?.status === "NO_NEW_ARTICLES" && <p>Aucun nouvel article à envoyer.</p>}
           <CollectionProgress events={run.events} busy={run.active} />

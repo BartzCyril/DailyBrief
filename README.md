@@ -480,12 +480,24 @@ avec `curl` ne garantit pas que le site accepte cette requête.
 Le statut final de la commande dépend de Chromium ; un échec du client HTTP
 simple reste informatif si le navigateur charge correctement la page.
 
-Si l'analyse échoue ou reste incomplète, « Envoyer une demande d'aide » permet
+Les confirmations et erreurs utilisent un Toaster commun sur toutes les pages et
+dans les modales. Les notifications sont fermables, accessibles au clavier et
+adaptées au mobile. Les avertissements d'aperçu et les erreurs des articles et jobs
+restent consultables dans leurs résultats. Les confirmations de navigation ne sont
+pas répétées lors d'un retour en arrière.
+
+Lorsque les champs nécessaires sont remplis, l'analyse affiche simplement
+« Sélecteurs remplis. » et masque l'aide, même si une ancienne réponse mentionne
+un sélecteur de réussite après connexion. Si le mode de récupération reste incertain,
+une courte notification invite à le vérifier.
+
+Si l'analyse échoue ou ne remplit pas les sélecteurs nécessaires, « Demander de l'aide » permet
 d'envoyer un email à l'adresse configurée dans `SMTP_USER`. Aucun email n'est
 envoyé automatiquement. Le message indique le type de configuration, le site,
 la notice réellement analysée pour un RSS et les informations restant à trouver.
 L'adresse du compte sert de `Reply-To`. Les mots de passe, cookies, contenu HTML,
-prompts IA et paramètres privés des URL ne sont jamais inclus.
+prompts IA et paramètres privés des URL ne sont jamais inclus. Le bouton disparaît
+après l'envoi réussi de la demande ou une nouvelle analyse réussie.
 
 Les demandes sont isolées par utilisateur et expirent après une heure. Un deuxième
 clic sur une demande déjà envoyée ne renvoie pas le mail. Après un refus SMTP

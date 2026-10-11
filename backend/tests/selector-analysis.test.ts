@@ -188,7 +188,7 @@ test("does not invent pagination from article links, foreign links, large offset
       kind: "SCRAPING",
       url,
     });
-    expect(result).toMatchObject({ scrapingConfig: { mode: "SCROLL" } });
+    expect(result).toMatchObject({ scrapingConfig: { mode: "SCROLL" }, retrievalConfirmed: false });
     expect(result.message).toContain("Aucun chargement supplémentaire confirmé");
   }
 });
@@ -254,7 +254,7 @@ test("observes actual new article links after scrolling in Chromium", async () =
     },
     page,
   ).service.analyze({ kind: "SCRAPING", url });
-  expect(result).toMatchObject({ scrapingConfig: { mode: "SCROLL" } });
+  expect(result).toMatchObject({ scrapingConfig: { mode: "SCROLL" }, retrievalConfirmed: true });
   expect(result.message).toContain("au scroll observé");
 }, 45000);
 

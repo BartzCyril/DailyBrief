@@ -9,6 +9,7 @@ import { Modal } from "@/components/Modal";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 import { sourcesApi } from "./api";
 import { errorMessage } from "@/lib/api";
+import { notify } from "@/components/Toaster";
 import { SelectorAssistance, type SelectorAssistancePending } from "./SelectorAssistance";
 
 function formDefaults(journal: JournalPreview): JournalLoginConfig {
@@ -78,6 +79,7 @@ function JournalRow({
       await sourcesApi.updateJournal(journal.domain, { domain });
       await onStructureChange?.();
       setRenaming(false);
+      notify("Journal modifié.");
     } catch (error) {
       setError(errorMessage(error));
     } finally {
@@ -93,6 +95,17 @@ function JournalRow({
     setPassword("");
     setEditing(false);
     setForm(formDefaults({ ...saved, count: journal.count }));
+    notify(
+      body.enabled !== undefined
+        ? body.enabled
+          ? "Journal activé."
+          : "Journal désactivé."
+        : body.clearCredentials
+          ? "Identifiants supprimés."
+          : body.loginConfig === null
+            ? "Formulaire supprimé."
+            : "Accès enregistré.",
+    );
   }
   async function update(body: Parameters<typeof sourcesApi.updateJournal>[1]) {
     if (pending) return;
@@ -115,7 +128,7 @@ function JournalRow({
     setConnectionResult("");
     try {
       const result = await sourcesApi.testJournalConnection(journal.domain);
-      if (result.authenticated) setConnectionResult(result.message);
+      if (result.authenticated) setConnectionResult("Connexion réussie.");
     } catch (error) {
       setError(errorMessage(error));
     } finally {
@@ -467,6 +480,7 @@ function JournalRow({
               onConfirm={async () => {
                 await sourcesApi.removeJournal(journal.domain);
                 await onStructureChange?.();
+                notify("Journal supprimé.");
               }}
               trigger={
                 <IconButton
