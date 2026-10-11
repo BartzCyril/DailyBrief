@@ -9,7 +9,8 @@ import {
   watchBrowserRequests,
   type BrowserNetworkFactory,
 } from "./browser-network";
-import { articleDate, articleUrl } from "./rss";
+import { articleUrl } from "./rss";
+import { parsePublicationDateGroups } from "./publication-date";
 import { AppError, UpstreamHttpError } from "./errors";
 import { ConcurrencyLimiter } from "./concurrency";
 import { createHash } from "node:crypto";
@@ -50,20 +51,39 @@ async function extract(
   config: ScrapingConfig,
   timezone = "UTC",
 ): Promise<ArticlePreview[]> {
+  const reference = new Date();
   const entries = await page.evaluate(
     (config) =>
-      Array.from(document.querySelectorAll(config.articleSelector)).map((element) => ({
-        title: element.querySelector(config.titleSelector)?.textContent?.trim() ?? "",
-        url: element.querySelector(config.linkSelector)?.getAttribute("href") ?? null,
-        description: config.descriptionSelector
-          ? (element.querySelector(config.descriptionSelector)?.textContent?.trim() ?? null)
-          : null,
-        publishedAt: config.dateSelector
-          ? (element.querySelector(config.dateSelector)?.getAttribute("datetime") ??
-            element.querySelector(config.dateSelector)?.textContent ??
-            null)
-          : null,
-      })),
+      Array.from(document.querySelectorAll(config.articleSelector)).map((element) => {
+        const matches = config.dateSelector
+          ? [
+              ...(element.matches(config.dateSelector) ? [element] : []),
+              ...element.querySelectorAll(config.dateSelector),
+            ]
+          : [];
+        return {
+          title: element.querySelector(config.titleSelector)?.textContent?.trim() ?? "",
+          url: element.querySelector(config.linkSelector)?.getAttribute("href") ?? null,
+          description: config.descriptionSelector
+            ? (element.querySelector(config.descriptionSelector)?.textContent?.trim() ?? null)
+            : null,
+          dateGroups: matches.map((date) => {
+            const dates = [
+              date,
+              ...date.querySelectorAll('time[datetime], [itemprop="datePublished"]'),
+            ];
+            return [
+              ...dates.flatMap((node) =>
+                ["datetime", "content", "data-date", "data-published-at"].map((attribute) =>
+                  node.getAttribute(attribute),
+                ),
+              ),
+              date.textContent,
+              ...(dates.length === 2 ? [dates[1]!.textContent] : []),
+            ];
+          }),
+        };
+      }),
     config,
   );
   if (entries.length && !entries.some((item) => item.title))
@@ -74,10 +94,10 @@ async function extract(
     );
   return entries
     .filter((item) => item.title)
-    .map((item) => ({
+    .map(({ dateGroups, ...item }) => ({
       ...item,
       url: item.url ? articleUrl(item.url, page.url()) : null,
-      publishedAt: item.publishedAt ? articleDate(item.publishedAt, timezone) : null,
+      publishedAt: parsePublicationDateGroups(dateGroups, timezone, reference),
     }));
 }
 export class ScrapingService {

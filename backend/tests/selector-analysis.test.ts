@@ -122,6 +122,77 @@ test("an absent date remains an explicit failure and is never replaced by the ti
   );
 });
 
+test.each([
+  '<p class="date">24 Sept. 2026</p>',
+  '<p class="date">08.10.2026</p>',
+  '<p class="date">Publié le 29 septembre 2026</p>',
+  '<time class="date" datetime="invalid">08.10.2026</time>',
+  '<meta class="date" itemprop="datePublished" content="2026-10-08T12:30:00Z" data-dailybrief-hidden="">',
+])("AI selector validation accepts the same supported date as collection: %s", async (date) => {
+  const page = {
+    html: articlePage.replace(/<time.*?<\/time>/g, date),
+    url: "https://publisher.example/",
+  };
+  const result = await provider({ ...scraping, dateSelector: ".date" }, page).service.analyze({
+    kind: "SCRAPING",
+    url: page.url,
+  });
+  expect(result).toMatchObject({ complete: true, scrapingConfig: { dateSelector: ".date" } });
+});
+
+test("selector analysis recovers a calendar icon's publication text instead of a neighbouring theme label", async () => {
+  const page = {
+    html: articlePage.replace(
+      /<time.*?<\/time>/g,
+      '<p class="fr-card__detail">Culture</p><p class="fr-card__detail fr-icon-calendar-2-fill">Publié le 29 septembre 2026</p>',
+    ),
+    url: "https://publisher.example/",
+  };
+  const result = await provider({ ...scraping, dateSelector: null }, page).service.analyze({
+    kind: "SCRAPING",
+    url: page.url,
+  });
+  expect(result).toMatchObject({
+    complete: true,
+    scrapingConfig: { dateSelector: '[class*="calendar"]' },
+  });
+});
+
+test("selector analysis can recover hidden datePublished metadata without treating it as the description", async () => {
+  const page = {
+    html: articlePage.replace(
+      /<time.*?<\/time>/g,
+      '<meta itemprop="datePublished" content="2026-10-08T12:30:00Z" data-dailybrief-hidden="">',
+    ),
+    url: "https://publisher.example/",
+  };
+  const result = await provider({ ...scraping, dateSelector: null }, page).service.analyze({
+    kind: "SCRAPING",
+    url: page.url,
+  });
+  expect(result).toMatchObject({
+    complete: true,
+    scrapingConfig: { dateSelector: '[itemprop="datePublished"]', descriptionSelector: ".summary" },
+  });
+});
+
+test.each(["31.02.2026", "2026", "8 octobre"])(
+  "AI does not present an unparseable publication date as a valid selector: %s",
+  async (date) => {
+    const page = {
+      html: articlePage.replace(/<time.*?<\/time>/g, `<p class="date">${date}</p>`),
+      url: "https://publisher.example/",
+    };
+    await assert.rejects(
+      provider({ ...scraping, dateSelector: ".date" }, page).service.analyze({
+        kind: "SCRAPING",
+        url: page.url,
+      }),
+      { code: "INVALID_SELECTOR_ANALYSIS" },
+    );
+  },
+);
+
 test("detects query pagination even when the AI defaults to scroll, including a zero start", async () => {
   for (const start of [0, 1, 4]) {
     const url = `https://publisher.example/news?page=${start}`;

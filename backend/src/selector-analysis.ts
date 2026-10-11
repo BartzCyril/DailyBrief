@@ -523,14 +523,19 @@ function select(root: Document | Element, value: string, visibleOnly = true): El
     throw analysisError("L'IA a proposé un sélecteur CSS invalide.", "INVALID_SELECTOR_ANALYSIS");
   }
 }
-function unique(root: Document | Element, value: string, visibleOnly = true): Element {
+function unique(
+  root: Document | Element,
+  value: string,
+  visibleOnly = true,
+  allowHiddenMachineDate = false,
+): Element {
   const matches = select(root, value, visibleOnly);
   if (matches.length !== 1)
     throw analysisError(
       "Un sélecteur proposé par l'IA ne désigne pas un seul élément de la page. Demandez de l'aide pour le préciser.",
       "INVALID_SELECTOR_ANALYSIS",
     );
-  if (isHidden(matches[0]!))
+  if (isHidden(matches[0]!) && !(allowHiddenMachineDate && hasPublicationDate(matches[0]!, true)))
     throw analysisError(
       "Un sélecteur proposé désigne un élément masqué.",
       "INVALID_SELECTOR_ANALYSIS",
@@ -570,8 +575,14 @@ function validateScraping(document: Document, url: string, config: ScrapingConfi
     let observed = false;
     for (const block of blocks) {
       if (!select(block, field, false).length) continue;
-      const match = unique(block, field, false);
-      if (!(match.textContent?.trim() || match.getAttribute("datetime")?.trim()))
+      const match = unique(block, field, false, field === config.dateSelector);
+      if (!(
+        match.textContent?.trim() ||
+        match.getAttribute("datetime")?.trim() ||
+        match.getAttribute("content")?.trim() ||
+        match.getAttribute("data-date")?.trim() ||
+        match.getAttribute("data-published-at")?.trim()
+      ))
         throw analysisError(
           "Le sélecteur de description ou de date proposé ne contient aucune information.",
           "INVALID_SELECTOR_ANALYSIS",
@@ -820,16 +831,24 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
                 ]) ?? fields.titleSelector);
           const dateSelector =
             fields.dateSelector ||
-            discoverArticleField(blocks, [
-              "time[datetime]",
-              "time",
-              '[itemprop="datePublished"]',
-              ".date",
-              ".published",
-              ".pubdate",
-              ".publication-date",
-              ".article-date",
-            ]);
+            discoverArticleField(
+              blocks,
+              [
+                "time[datetime]",
+                "time",
+                '[itemprop="datePublished"]',
+                ".date",
+                ".published",
+                ".pubdate",
+                ".publication-date",
+                ".article-date",
+                '[class*="calendar"]',
+                "[data-date]",
+                "[data-published-at]",
+              ],
+              hasPublicationDate,
+              true,
+            );
           if (!dateSelector)
             throw analysisError(
               "Aucune date de publication n'a pu être identifiée dans les articles. Le sélecteur de date est obligatoire : choisissez une page qui l'affiche ou demandez de l'aide.",

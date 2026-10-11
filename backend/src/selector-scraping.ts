@@ -1,5 +1,6 @@
 import type { ScrapingConfig } from "@dailybrief/shared";
 import { articleUrl } from "./rss";
+import { parsePublicationDateCandidates } from "./publication-date";
 
 const paginationLandmark = '[class*="pagin" i], [id*="pagin" i], [aria-label*="page" i]';
 const moreText =
@@ -170,7 +171,12 @@ export function discoverLoadMore(document: Document, articleSelector: string): s
 }
 
 /** Missing model fields can be recovered from unambiguous elements on the actual page. */
-export function discoverArticleField(blocks: Element[], selectors: string[]): string | undefined {
+export function discoverArticleField(
+  blocks: Element[],
+  selectors: string[],
+  accepts: (element: Element) => boolean = () => true,
+  allowHiddenMachineDate = false,
+): string | undefined {
   return selectors.find((selector) => {
     let observed = false;
     for (const block of blocks) {
@@ -178,8 +184,16 @@ export function discoverArticleField(blocks: Element[], selectors: string[]): st
       if (!matches.length) continue;
       if (
         matches.length !== 1 ||
-        isHidden(matches[0]!) ||
-        !(matches[0]!.textContent?.trim() || matches[0]!.getAttribute("datetime")?.trim())
+        (isHidden(matches[0]!) &&
+          !(allowHiddenMachineDate && hasPublicationDate(matches[0]!, true))) ||
+        !(
+          matches[0]!.textContent?.trim() ||
+          matches[0]!.getAttribute("datetime")?.trim() ||
+          matches[0]!.getAttribute("content")?.trim() ||
+          matches[0]!.getAttribute("data-date")?.trim() ||
+          matches[0]!.getAttribute("data-published-at")?.trim()
+        ) ||
+        !accepts(matches[0]!)
       )
         return false;
       observed = true;
@@ -188,14 +202,21 @@ export function discoverArticleField(blocks: Element[], selectors: string[]): st
   });
 }
 
-export function hasPublicationDate(element: Element): boolean {
-  const datetime = element.getAttribute("datetime")?.trim();
-  if (datetime) return !Number.isNaN(Date.parse(datetime));
-  const text = element.textContent?.trim() ?? "";
-  return (
-    /\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}\b|\b\d{1,2}(?:er)?\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre|january|february|march|april|may|june|july|august|september|october|november|december)\b|\b(?:il y a|ago|aujourd'hui|hier)\b/i.test(
-      text,
-    ) ||
-    (!Number.isNaN(Date.parse(text)) && /\b\d{4}\b/.test(text))
+export function hasPublicationDate(element: Element, machineOnly = false): boolean {
+  const nodes = [
+    element,
+    ...element.querySelectorAll('time[datetime], [itemprop="datePublished"]'),
+  ];
+  return Boolean(
+    parsePublicationDateCandidates([
+      ...nodes.flatMap((node) =>
+        ["datetime", "content", "data-date", "data-published-at"].map((attribute) =>
+          node.getAttribute(attribute),
+        ),
+      ),
+      ...(machineOnly
+        ? []
+        : [element.textContent, ...(nodes.length === 2 ? [nodes[1]!.textContent] : [])]),
+    ]),
   );
 }

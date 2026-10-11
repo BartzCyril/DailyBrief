@@ -18,6 +18,124 @@ const article = (publishedAt: string | null, id = publishedAt): ArticlePreview =
   publishedAt,
 });
 
+test.each([
+  [
+    "observatoire",
+    '<p class="date">24 Sept. 2026</p>',
+    ".format-article .date",
+    "2026-09-23T22:00:00.000Z",
+    "2026-09-24T12:00:00Z",
+  ],
+  [
+    "icom",
+    '<p class="date">08.10.2026</p>',
+    ".date",
+    "2026-10-07T22:00:00.000Z",
+    "2026-10-08T12:00:00Z",
+  ],
+  [
+    "collectivites",
+    '<p class="fr-card__detail">Culture</p><p class="fr-card__detail fr-icon-calendar-2-fill">Publié le 29 septembre 2026</p>',
+    ".fr-card__detail",
+    "2026-09-28T22:00:00.000Z",
+    "2026-09-29T12:00:00Z",
+  ],
+])(
+  "scraping reads the publication date in the %s example and keeps it in the local recent window",
+  async (name, dateHtml, dateSelector, expected, now) => {
+    const page = `<article class="entry format-article"><h2><a href="/${name}">Article ${name}</a></h2><p class="description">Description ${name}</p>${dateHtml}</article>`;
+    const service = new ScrapingService(async () => page);
+    const result = await service.collect(
+      "https://fixture.example/news",
+      {
+        articleSelector: ".entry",
+        titleSelector: "h2",
+        linkSelector: "h2 a",
+        descriptionSelector: ".description",
+        dateSelector: dateSelector!,
+        mode: "SCROLL",
+        scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+      },
+      { window: recentArticleWindow("Europe/Paris", new Date(now!)) },
+    );
+    expect(result.articles).toHaveLength(1);
+    expect(result.articles[0]?.publishedAt).toBe(expected!);
+  },
+  15000,
+);
+
+test("scraping reads date metadata, nested time elements and visible fallbacks without returning raw date fields", async () => {
+  const dates = [
+    '<time class="date" datetime="">08.10.2026</time>',
+    '<time class="date" datetime="invalid">08.10.2026</time>',
+    '<meta class="date" itemprop="datePublished" content="2026-10-08T12:30:00Z">',
+    '<p class="date">Publié le<time datetime="2026-10-08T12:30:00Z">8 octobre 2026</time></p>',
+    '<p class="date" data-date="2026-10-08"></p>',
+  ];
+  const service = new ScrapingService(async () =>
+    dates
+      .map(
+        (date, index) =>
+          `<article><h2><a href="/${index}">Article ${index}</a></h2><p class="description">Description ${index}</p>${date}</article>`,
+      )
+      .join(""),
+  );
+  const result = await service.collect("https://fixture.example/news", {
+    articleSelector: "article",
+    titleSelector: "h2",
+    linkSelector: "h2 a",
+    descriptionSelector: ".description",
+    dateSelector: ".date",
+    mode: "SCROLL",
+    scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+  });
+  expect(result.articles.map((article) => article.publishedAt)).toEqual([
+    "2026-10-08T00:00:00.000Z",
+    "2026-10-08T00:00:00.000Z",
+    "2026-10-08T12:30:00.000Z",
+    "2026-10-08T12:30:00.000Z",
+    "2026-10-08T00:00:00.000Z",
+  ]);
+  expect(JSON.stringify(result)).not.toContain("dateGroups");
+}, 15000);
+
+test("a date selector matching conflicting dates cannot silently choose the wrong publication day", async () => {
+  const service = new ScrapingService(
+    async () =>
+      '<article><h2><a href="/one">Article</a></h2><p class="date">08.10.2026</p><p class="date">09.10.2026</p></article>',
+  );
+  const result = await service.collect(
+    "https://fixture.example/news",
+    {
+      articleSelector: "article",
+      titleSelector: "h2",
+      linkSelector: "h2 a",
+      dateSelector: ".date",
+      mode: "SCROLL",
+      scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+    },
+    { window: recentArticleWindow("Europe/Paris", new Date("2026-10-09T12:00:00Z")) },
+  );
+  expect(result.articles).toEqual([]);
+  expect(result.warnings?.join(" ")).toContain("date de publication inexploitable");
+}, 15000);
+
+test("a matching article wrapper does not hide its actual child publication date", async () => {
+  const service = new ScrapingService(
+    async () =>
+      '<article class="date"><h2><a href="/one">Un article daté</a></h2><p class="date">2026-10-08</p></article>',
+  );
+  const result = await service.collect("https://fixture.example/news", {
+    articleSelector: "article",
+    titleSelector: "h2",
+    linkSelector: "h2 a",
+    dateSelector: ".date",
+    mode: "SCROLL",
+    scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+  });
+  expect(result.articles[0]?.publishedAt).toBe("2026-10-08T00:00:00.000Z");
+}, 15000);
+
 test("publication windows use local calendar days, including DST transitions and UTC boundaries", () => {
   expect(window).toEqual({
     start: new Date("2026-10-09T22:00:00Z"),

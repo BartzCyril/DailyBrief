@@ -175,8 +175,26 @@ La période est figée au début de l’exécution dans le fuseau du compte, de 
 à minuit le lendemain. Ce sont des jours calendaires, y compris aux changements d’heure,
 plutôt qu’une durée glissante de 48 heures. Un article sans date exploitable, ancien ou
 daté après cette période est ignoré et signalé avant la récupération de son contenu complet.
-Les dates françaises affichées par les pages de scraping sont prises en charge, ainsi que
-les dates ISO et RSS. Le workflow de test conserve son aperçu de configuration indépendant.
+Les dates françaises et anglaises courantes, ISO, RSS et HTTP sont prises en charge.
+Par exemple : `24 Sept. 2026`, `08.10.2026`, `Publié le 29 septembre 2026`,
+`1er février 2026`, `October 8, 2026` et les dates avec heure et décalage UTC.
+Les espaces insécables, accents, jours de semaine et préfixes de publication sont
+normalisés. Sans décalage explicite, l'heure est interprétée dans le fuseau du compte.
+Les dates relatives (`hier`, `aujourd'hui`, `il y a 2 heures`) utilisent l'heure de lecture.
+
+Le sélecteur de date est évalué dans chaque bloc d'article. Le collecteur privilégie
+les attributs `datetime`, `content`, `data-date` et `data-published-at`, y compris
+un élément `time` imbriqué, puis utilise le texte visible si l'attribut est vide ou
+invalide. Si plusieurs éléments correspondent, l'unique date exploitable est
+retenue ; des dates contradictoires sont signalées comme inexploitables.
+L'analyse des sélecteurs IA utilise le même parseur, avec un sélecteur précis par bloc.
+
+Pour les dates numériques ambiguës, la convention est **jour/mois/année** ;
+le format mois/jour est accepté seulement si le deuxième nombre dépasse 12.
+Une année seule, une date incomplète, une plage de dates ou une date impossible
+comme `31.02.2026` ne deviennent pas une date de publication. Aucun parseur ne peut
+déduire sans contexte si `08/10/2026` signifie le 8 octobre ou le 10 août.
+Le workflow de test conserve son aperçu de configuration indépendant.
 
 Une source peut déclarer explicitement `newestFirst=true` avec le switch **Articles du plus
 récent au plus ancien**. Ce réglage est désactivé par défaut : activez-le uniquement si le

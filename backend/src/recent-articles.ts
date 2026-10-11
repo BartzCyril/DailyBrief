@@ -1,6 +1,8 @@
 import { DateTime, IANAZone } from "luxon";
 import type { ArticlePreview } from "@dailybrief/shared";
 import { AppError } from "./errors";
+import { parsePublicationDate } from "./publication-date";
+export { parsePublicationDate } from "./publication-date";
 
 export type RecentArticleWindow = {
   start: Date;
@@ -23,46 +25,6 @@ export function recentArticleWindow(timezone: string, now = new Date()): RecentA
     timezone,
     date: today.toISODate()!,
   };
-}
-
-// A date without an offset describes local publication time, never the server's timezone.
-export function parsePublicationDate(value: string, timezone = "UTC"): string | null {
-  const raw = value.replace(/\u00a0/g, " ").trim();
-  if (!raw || !IANAZone.isValidZone(timezone)) return null;
-  const options = { zone: timezone };
-  for (const parsed of [
-    DateTime.fromISO(raw, options),
-    DateTime.fromRFC2822(raw, options),
-    // Some feeds publish a stale weekday label next to an otherwise valid date.
-    DateTime.fromRFC2822(raw.replace(/^(?:mon|tue|wed|thu|fri|sat|sun),\s*/i, ""), options),
-    DateTime.fromHTTP(raw, options),
-  ]) {
-    if (parsed.isValid) return parsed.toUTC().toISO();
-  }
-  const normalized = raw
-    .toLocaleLowerCase("fr-FR")
-    .replace(/^(?:publié(?:e)?\s+(?:le\s+)?|le\s+)/, "")
-    .replace(/^(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\s+/, "")
-    .replace(/\b1er\b/g, "1")
-    .replace(/\s+(?:à|a)\s+/g, " ")
-    .replace(/(\d)h(?=\d)/g, "$1:")
-    .replace(/\s+/g, " ");
-  for (const format of [
-    "d LLLL yyyy HH:mm:ss",
-    "d LLLL yyyy HH:mm",
-    "d LLLL yyyy",
-    "d LLL yyyy HH:mm",
-    "d LLL yyyy",
-    "d/M/yyyy HH:mm:ss",
-    "d/M/yyyy HH:mm",
-    "d/M/yyyy",
-    "yyyy-MM-dd HH:mm:ss",
-    "yyyy-MM-dd HH:mm",
-  ]) {
-    const parsed = DateTime.fromFormat(normalized, format, { ...options, locale: "fr" });
-    if (parsed.isValid) return parsed.toUTC().toISO();
-  }
-  return null;
 }
 
 export function filterRecentArticles<T extends Pick<ArticlePreview, "publishedAt">>(
