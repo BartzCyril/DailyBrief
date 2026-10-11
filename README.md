@@ -321,6 +321,16 @@ est borné à 45 secondes, 8 navigations, 2 navigateurs simultanés et 2 Mio de 
 rendu. Une protection CAPTCHA ou un refus persistant du site reste une erreur
 explicite ; le navigateur ne garantit pas l'accès à toutes les pages publiques.
 
+Le budget réseau du navigateur est de **32 Mio par chargement**, pour l'ensemble
+du HTML, des scripts, des feuilles de style et des requêtes dynamiques. Le scraping
+recommence ce budget avant chaque page de pagination, clic « Charger plus » ou
+étape de scroll ; le poids des pages précédentes ne bloque plus toute la source.
+La limite de 2 Mio par réponse décompressée reste indépendante. Un chargement qui
+dépasse son budget est interrompu avec `RESPONSE_TOO_LARGE`, y compris si le
+dépassement provient d'une ressource secondaire. Les redirections et les requêtes
+du site ne réinitialisent pas le budget. Aucun réglage `.env` supplémentaire n'est
+nécessaire.
+
 `Article.content` contient le texte extrait après succès ; `contentFetchedAt`
 marque sa récupération et `contentError` conserve les erreurs. Le hash de
 déduplication reste celui de l'entrée collectée pour conserver son identité.

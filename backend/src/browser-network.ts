@@ -4,6 +4,11 @@ import { AppError } from "./errors";
 import { validateRemoteUrl, remoteConnectionError, RemoteConnectionError } from "./network";
 import { MAX_REMOTE_BYTES } from "./remote-response";
 
+// HTML and each decoded response keep their separate 2 MiB limit. A browser
+// also needs CSS/scripts/AJAX, so its wire budget is larger and scoped to one
+// application-initiated page, scroll or load-more operation, not the collection.
+export const MAX_BROWSER_LOAD_BYTES = 32 * 1024 * 1024;
+
 export type BrowserDestinationValidator = typeof validateRemoteUrl;
 export type BrowserNetworkFactory = () => Promise<BrowserNetwork>;
 export type NativeBrowserRequest = {
@@ -38,11 +43,14 @@ export class BrowserNetwork {
   private sockets = new Set<Socket>();
   private failures = new Map<string, AppError>();
   private receivedBytes = 0;
+  private budgetError?: AppError;
+  private budgetFailure?: (error: AppError) => void;
   private closed = false;
   private constructor(
     private server: ReturnType<typeof createServer>,
     private validate: BrowserDestinationValidator,
     port: number,
+    private maxLoadBytes: number,
   ) {
     this.launchOptions = {
       proxy: { server: `socks5://127.0.0.1:${port}`, bypass: "<-loopback>" },
@@ -56,7 +64,11 @@ export class BrowserNetwork {
 
   static async create(
     validate: BrowserDestinationValidator = validateRemoteUrl,
+    options: { maxLoadBytes?: number } = {},
   ): Promise<BrowserNetwork> {
+    const maxLoadBytes = options.maxLoadBytes ?? MAX_BROWSER_LOAD_BYTES;
+    if (!Number.isSafeInteger(maxLoadBytes) || maxLoadBytes <= 0)
+      throw new Error("Invalid browser download budget");
     let network: BrowserNetwork;
     const server = createServer((socket) => network.accept(socket));
     await new Promise<void>((resolve, reject) => {
@@ -68,12 +80,28 @@ export class BrowserNetwork {
     });
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Missing browser relay address");
-    network = new BrowserNetwork(server, validate, address.port);
+    network = new BrowserNetwork(server, validate, address.port, maxLoadBytes);
     return network;
   }
 
   async guard(url: string): Promise<void> {
     await this.validate(url);
+  }
+
+  // Only the application can begin a new operation. Redirects, background
+  // requests and unsolicited navigations must not reset an exhausted budget.
+  beginLoad(): void {
+    this.assertWithinBudget();
+    this.receivedBytes = 0;
+  }
+
+  assertWithinBudget(): void {
+    if (this.budgetError) throw this.budgetError;
+  }
+
+  onBudgetExceeded(listener: (error: AppError) => void): void {
+    this.budgetFailure = listener;
+    if (this.budgetError) listener(this.budgetError);
   }
 
   private key(url: string): string {
@@ -82,6 +110,7 @@ export class BrowserNetwork {
   }
 
   failure(url: string, browserMessage = ""): AppError {
+    if (this.budgetError) return this.budgetError;
     const saved = this.failures.get(this.key(url));
     if (saved) return saved;
     if (/ERR_(?:CERT|SSL|TLS)_/.test(browserMessage)) return new RemoteConnectionError("TLS");
@@ -190,15 +219,15 @@ export class BrowserNetwork {
       socket.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]));
       remote.on("data", (chunk: Buffer) => {
         this.receivedBytes += chunk.length;
-        if (this.receivedBytes > MAX_REMOTE_BYTES * 6) {
-          this.failures.set(
-            this.key(url),
-            new AppError(
+        if (this.receivedBytes > this.maxLoadBytes) {
+          if (!this.budgetError) {
+            this.budgetError = new AppError(
               413,
-              "Le chargement navigateur dépasse la taille autorisée.",
+              "Le chargement de cette page dépasse le budget réseau autorisé du navigateur.",
               "RESPONSE_TOO_LARGE",
-            ),
-          );
+            );
+            this.budgetFailure?.(this.budgetError);
+          }
           remote.destroy();
           socket.destroy();
         }
@@ -219,6 +248,7 @@ export class BrowserNetwork {
 
   async close() {
     this.closed = true;
+    this.budgetFailure = undefined;
     for (const socket of this.sockets) socket.destroy();
     this.failures.clear();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
@@ -226,7 +256,15 @@ export class BrowserNetwork {
 }
 
 /** Count Chromium's decoded response chunks as well as the relay's wire bytes. */
-export async function watchBrowserResponseSize(page: Page, onFailure: (error: AppError) => void) {
+export async function watchBrowserResponseSize(
+  page: Page,
+  onFailure: (error: AppError) => void,
+  network?: BrowserNetwork,
+) {
+  network?.onBudgetExceeded((error) => {
+    onFailure(error);
+    void page.close().catch(() => {});
+  });
   const session = await page.context().newCDPSession(page);
   const sizes = new Map<string, number>();
   await session.send("Network.enable");

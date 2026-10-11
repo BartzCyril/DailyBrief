@@ -142,7 +142,7 @@ export class ScrapingService {
             networkError = error;
             failLoad?.(error);
           };
-          await watchBrowserResponseSize(page, fail);
+          await watchBrowserResponseSize(page, fail, nativeNetwork);
           await watchBrowserRequests(
             page,
             network,
@@ -293,8 +293,12 @@ export class ScrapingService {
         async function navigate(target: string) {
           networkError = undefined;
           try {
-            if (network) await network.guard(target);
+            if (network) {
+              await network.guard(target);
+              network.beginLoad();
+            }
             await page.goto(target, { waitUntil: "networkidle" });
+            network?.assertWithinBudget();
           } catch (error) {
             if (networkError instanceof AppError) throw networkError;
             throw error;
@@ -303,7 +307,12 @@ export class ScrapingService {
         }
         const articles: ArticlePreview[] = [];
         const warnings: string[] = [];
-        const readArticles = () => extract(page, config, options?.window.timezone);
+        const readArticles = async () => {
+          network?.assertWithinBudget();
+          const entries = await extract(page, config, options?.window.timezone);
+          network?.assertWithinBudget();
+          return entries;
+        };
         let ordered = Boolean(options?.newestFirst);
         let previousDate = Infinity;
         const observed = new Set<string>();
@@ -339,6 +348,7 @@ export class ScrapingService {
           articles.push(...initial);
           let stop = reachedArchives(initial);
           for (let i = 0; !stop && i < (firstPageOnly ? 0 : config.scroll!.maxScrolls); i++) {
+            network?.beginLoad();
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
             await page.waitForTimeout(config.scroll!.waitAfterScrollMs);
             const entries = await readArticles();
@@ -382,6 +392,7 @@ export class ScrapingService {
                 "INVALID_LOAD_MORE_BUTTON",
               );
             if (!(await buttons.isEnabled())) break;
+            network?.beginLoad();
             networkError = undefined;
             blockedPosts.clear();
             attemptedLoads = 0;

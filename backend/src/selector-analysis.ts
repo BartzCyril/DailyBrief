@@ -347,7 +347,7 @@ export async function renderPublicSelectorPage(
       const page = await context.newPage();
       if (network) {
         const nativeNetwork = network;
-        await watchBrowserResponseSize(page, fail);
+        await watchBrowserResponseSize(page, fail, nativeNetwork);
         await watchBrowserRequests(
           page,
           network,
@@ -485,6 +485,7 @@ export async function renderPublicSelectorPage(
             element.setAttribute("data-dailybrief-hidden", "");
         }
       });
+      network?.assertWithinBudget();
       const html = await page.content();
       if (Buffer.byteLength(html) > MAX_REMOTE_BYTES)
         throw analysisError(

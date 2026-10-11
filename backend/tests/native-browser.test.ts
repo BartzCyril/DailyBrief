@@ -31,6 +31,44 @@ const server = createServer((request, response) => {
     ua: request.headers["user-agent"],
   });
   response.setHeader("Content-Type", "text/html; charset=utf-8");
+  if (path === "/wide-script") {
+    response.setHeader("Content-Type", "application/javascript");
+    response.end(`/*${"x".repeat(1792 * 1024)}*/window.loadedScripts=(window.loadedScripts||0)+1;`);
+    return;
+  }
+  if (path === "/wide-page") {
+    response.end(
+      `<main></main>${Array.from({ length: 8 }, (_, index) => `<script src="/wide-script?index=${index}"></script>`).join("")}<script>if(window.loadedScripts===8)document.querySelector('main').innerHTML='<article><h2><a href="/article">Page aux scripts volumineux</a></h2></article>';</script>`,
+    );
+    return;
+  }
+  if (path === "/budget-script") {
+    response.setHeader("Content-Type", "application/javascript");
+    response.end(`/*${"x".repeat(2048)}*/window.budgetScriptLoaded=true;`);
+    return;
+  }
+  if (path === "/budget-pages") {
+    const number = Number(new URL(request.url!, "http://fixture").searchParams.get("page") ?? 1);
+    response.end(
+      number > 5
+        ? "<main></main>"
+        : `<!--${"x".repeat(2048)}--><main><article><h2><a href="/article-${number}">Page ${number}</a></h2></article></main><script src="/budget-script?page=${number}"></script>`,
+    );
+    return;
+  }
+  if (path === "/budget-batch") {
+    const number = Number(new URL(request.url!, "http://fixture").searchParams.get("batch"));
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ number, padding: "x".repeat(2048) }));
+    return;
+  }
+  if (path === "/budget-load-more" || path === "/budget-scroll") {
+    const load = `const number=++window.batch;fetch('/budget-batch?batch='+number${path === "/budget-load-more" ? ",{method:'POST'}" : ""}).then(r=>r.json()).then(data=>{document.querySelector('main').insertAdjacentHTML('beforeend','<article><h2><a href="/article-'+data.number+'">Article '+data.number+'</a></h2></article>');${path === "/budget-load-more" ? "if(number===5)document.querySelector('.more').remove();" : "document.body.style.height=(2000+number*500)+'px';"}});`;
+    response.end(
+      `<!--${"x".repeat(2048)}--><main><article><h2><a href="/article-0">Article 0</a></h2></article></main><script>window.batch=0;${path === "/budget-scroll" ? `document.body.style.height='2000px';window.addEventListener('scroll',()=>{if(window.scrollY+window.innerHeight>=document.documentElement.scrollHeight-2){${load}}});` : `window.loadArticles=()=>{${load}};`}</script>${path === "/budget-load-more" ? '<button class="more" onclick="loadArticles()">Plus</button>' : ""}`,
+    );
+    return;
+  }
   if (path === "/native-notice") {
     response.end(
       `<a class="primarydoc" href="http://ads.test:${port}/external-article">Consulter le document</a>`,
@@ -148,6 +186,18 @@ const networkFactory: BrowserNetworkFactory = () =>
       return { url, address: "127.0.0.1", family: 4 };
     return validateRemoteUrl(value);
   });
+const budgetNetworkFactory =
+  (maxLoadBytes: number): BrowserNetworkFactory =>
+  () =>
+    BrowserNetwork.create(
+      async (value) => {
+        const target = new URL(value);
+        if (target.hostname === "publisher.test")
+          return { url: target, address: "127.0.0.1", family: 4 };
+        return validateRemoteUrl(value);
+      },
+      { maxLoadBytes },
+    );
 const url = (path: string) => `http://publisher.test:${port}${path}`;
 
 test("Chromium loads the actual URL, manages cookies and reads the hydrated HTML without HTTP pre-download", async () => {
@@ -240,6 +290,94 @@ test("native rendering bounds inflated HTTP response sizes before using a compre
     code: "RESPONSE_TOO_LARGE",
   });
 }, 45000);
+
+test("a page with more than 12 MiB of scripts still loads with individually bounded responses", async () => {
+  const start = requests.length;
+  const result = await new ScrapingService(undefined, networkFactory).collect(url("/wide-page"), {
+    articleSelector: "article",
+    titleSelector: "h2",
+    linkSelector: "a",
+    mode: "SCROLL",
+    scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+  });
+  expect(result.articles.map((article) => article.title)).toEqual(["Page aux scripts volumineux"]);
+  expect(requests.slice(start).filter((request) => request.path === "/wide-script")).toHaveLength(
+    8,
+  );
+}, 45000);
+
+test("pagination gets a fresh browser download budget for every page", async () => {
+  const result = await new ScrapingService(undefined, budgetNetworkFactory(8192)).collect(
+    url("/budget-pages"),
+    {
+      articleSelector: "article",
+      titleSelector: "h2",
+      linkSelector: "a",
+      mode: "PAGINATE",
+      pagination: { strategy: "QUERY_PARAM", queryParam: "page", startPage: 1 },
+    },
+  );
+  expect(result.articles.map((article) => article.title)).toEqual(
+    [1, 2, 3, 4, 5].map((number) => `Page ${number}`),
+  );
+}, 45000);
+
+test("load-more batches do not consume the budget of previous batches", async () => {
+  const result = await new ScrapingService(undefined, budgetNetworkFactory(8192)).collect(
+    url("/budget-load-more"),
+    {
+      articleSelector: "article",
+      titleSelector: "h2",
+      linkSelector: "a",
+      mode: "LOAD_MORE",
+      loadMore: { buttonSelector: ".more", waitTimeoutMs: 3000 },
+    },
+  );
+  expect(result.articles.map((article) => article.title)).toEqual(
+    [0, 1, 2, 3, 4, 5].map((number) => `Article ${number}`),
+  );
+}, 45000);
+
+test("each scroll gets a fresh download budget", async () => {
+  const result = await new ScrapingService(undefined, budgetNetworkFactory(8192)).collect(
+    url("/budget-scroll"),
+    {
+      articleSelector: "article",
+      titleSelector: "h2",
+      linkSelector: "a",
+      mode: "SCROLL",
+      scroll: { maxScrolls: 3, waitAfterScrollMs: 300 },
+    },
+  );
+  expect(result.articles.map((article) => article.title)).toEqual(
+    [0, 1, 2, 3].map((number) => `Article ${number}`),
+  );
+}, 45000);
+
+test("oversized static resources fail explicitly and an exhausted budget cannot be reset", async () => {
+  for (const kind of ["selectors", "article", "scraping"]) {
+    let network: BrowserNetwork | undefined;
+    const factory: BrowserNetworkFactory = async () =>
+      (network = await budgetNetworkFactory(4096)());
+    const load =
+      kind === "selectors"
+        ? () => renderPublicSelectorPage(url("/budget-pages?page=1"), undefined, factory)
+        : kind === "article"
+          ? () => new ArticleBrowser(undefined, factory).render(url("/budget-pages?page=1"))
+          : () =>
+              new ScrapingService(undefined, factory).collect(url("/budget-pages?page=1"), {
+                articleSelector: "article",
+                titleSelector: "h2",
+                linkSelector: "a",
+                mode: "SCROLL",
+                scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+              });
+    await assert.rejects(load(), { code: "RESPONSE_TOO_LARGE" });
+    expect(() => network!.beginLoad()).toThrow(
+      expect.objectContaining({ code: "RESPONSE_TOO_LARGE" }),
+    );
+  }
+}, 60000);
 
 test("article rendering shares native navigation and includes hydrated full article text", async () => {
   const page = await new ArticleBrowser(undefined, networkFactory).render(url("/hydrated"));

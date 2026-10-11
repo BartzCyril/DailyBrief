@@ -67,7 +67,7 @@ export class ArticleBrowser {
             networkError = error;
             failNavigation(error);
           };
-          await watchBrowserResponseSize(page, fail);
+          await watchBrowserResponseSize(page, fail, nativeNetwork);
           await watchBrowserRequests(
             page,
             network,
@@ -262,6 +262,7 @@ export class ArticleBrowser {
           navigationFailure,
         ]);
         if (networkError instanceof AppError) throw networkError;
+        network?.assertWithinBudget();
         const html = await page.content();
         if (Buffer.byteLength(html, "utf8") > MAX_REMOTE_BYTES)
           throw new AppError(
