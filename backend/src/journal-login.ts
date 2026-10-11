@@ -10,7 +10,9 @@ export type JournalLogin = { config: JournalLoginConfig; email: string; password
 function loginError(code = "JOURNAL_LOGIN_FAILED") {
   const messages: Record<string, string> = {
     JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID:
-      "L'élément de réussite est déjà visible avant connexion. Choisissez un élément propre au compte connecté.",
+      "L'ancien réglage de vérification est déjà visible avant connexion. Supprimez puis reconfigurez le formulaire de connexion du journal.",
+    JOURNAL_LOGIN_UNVERIFIED:
+      "La connexion n'a pas pu être confirmée automatiquement. Vérifiez vos identifiants sur le site du journal ; une validation supplémentaire peut être nécessaire.",
     JOURNAL_LOGIN_SELECTOR_AMBIGUOUS:
       "Un sélecteur de connexion désigne plusieurs éléments. Précisez-le pour obtenir un seul élément visible.",
     JOURNAL_LOGIN_INSECURE_FORM:
@@ -202,7 +204,13 @@ export class JournalLoginBrowser {
             const email = await uniqueVisible(page, login.config.emailSelector);
             const password = await uniqueVisible(page, login.config.passwordSelector);
             const submit = await uniqueVisible(page, login.config.submitSelector);
-            if (await page.locator(login.config.successSelector).isVisible())
+            const previousSignals = login.config.successSelector
+              ? []
+              : (await page.evaluate(connectionStateInPage)).signals;
+            if (
+              login.config.successSelector &&
+              (await page.locator(login.config.successSelector).isVisible())
+            )
               throw loginError("JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID");
             if (
               (await password.getAttribute("type")) !== "password" ||
@@ -217,7 +225,9 @@ export class JournalLoginBrowser {
             await password.fill(login.password);
             observer?.("Envoi du formulaire et vérification de la connexion.");
             await submit.click();
-            await uniqueVisible(page, login.config.successSelector);
+            if (login.config.successSelector)
+              await uniqueVisible(page, login.config.successSelector);
+            else await confirmConnection(page, previousSignals, this.timeoutMs);
             authenticating = false;
             observer?.("Connexion au journal vérifiée dans cette session.");
             if (!target) return { html: "", url: journalOrigin };
@@ -276,6 +286,68 @@ export class JournalLoginBrowser {
       }
     });
   }
+}
+
+// A redirect, cookie, or disappearance of the form alone never confirms authentication.
+function connectionStateInPage() {
+  const visible = (element: Element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return (
+      style.display !== "none" &&
+      style.visibility === "visible" &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  };
+  const normalize = (text: string) =>
+    text
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  const signals = [...document.querySelectorAll("a, button, [role='button'], [role='menuitem']")]
+    .filter(visible)
+    .flatMap((element) => {
+      const label = normalize(
+        element.textContent?.trim() || element.getAttribute("aria-label") || "",
+      );
+      let href = "";
+      if (element instanceof HTMLAnchorElement && element.hasAttribute("href")) {
+        try {
+          href = new URL(element.href, location.href).pathname;
+        } catch {
+          // An unrelated malformed link must not prevent verification of a valid account control.
+        }
+      }
+      if (
+        /^(deconnexion|se deconnecter|log out|logout|sign out)$/.test(label) ||
+        /(?:^|\/)(?:logout|log-out|signout|sign-out|deconnexion)(?:\/|\.|$)/i.test(href)
+      )
+        return ["logout"];
+      return [];
+    });
+  return {
+    signals,
+    passwordVisible: [...document.querySelectorAll("input[type='password']")].some(visible),
+  };
+}
+
+async function confirmConnection(page: Page, previousSignals: string[], timeoutMs: number) {
+  const before = new Set(previousSignals);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const state = await page.evaluate(connectionStateInPage);
+      if (!state.passwordVisible && state.signals.some((signal) => !before.has(signal))) return;
+    } catch {
+      // A form submission can replace the document during this check.
+      if (page.isClosed()) throw loginError();
+    }
+    await page.waitForTimeout(100);
+  }
+  throw loginError("JOURNAL_LOGIN_UNVERIFIED");
 }
 
 async function uniqueVisible(page: Page, selector: string): Promise<Locator> {

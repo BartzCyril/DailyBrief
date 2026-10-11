@@ -541,7 +541,7 @@ test("a feed without notice URLs produces an actionable error without contacting
   expect(fixture.bodies).toHaveLength(0);
 });
 
-test("login analysis fills public inputs and always marks the authenticated success selector as missing", async () => {
+test("login analysis completes the public form selectors without inventing authenticated selectors", async () => {
   const fixture = provider(login, { html: loginPage, url: "https://publisher.example/login" });
   const result = await fixture.service.analyze({
     kind: "JOURNAL_LOGIN",
@@ -549,8 +549,8 @@ test("login analysis fills public inputs and always marks the authenticated succ
   });
   expect(result).toMatchObject({
     kind: "JOURNAL_LOGIN",
-    complete: false,
-    missingFields: ["successSelector"],
+    complete: true,
+    missingFields: [],
     loginConfig: { loginUrl: "https://publisher.example/login", ...login },
   });
   if (result.kind !== "JOURNAL_LOGIN") throw new Error("Unexpected result");
@@ -669,7 +669,7 @@ test("login analysis accepts usable native submit controls and safe POST overrid
         kind: "JOURNAL_LOGIN",
         url: "https://publisher.example/login",
       }),
-    ).toMatchObject({ kind: "JOURNAL_LOGIN", complete: false, loginConfig: login });
+    ).toMatchObject({ kind: "JOURNAL_LOGIN", complete: true, loginConfig: login });
 });
 
 test("login analysis refuses fragment routes rather than returning a different form address", async () => {

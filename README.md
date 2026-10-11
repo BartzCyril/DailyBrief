@@ -430,12 +430,14 @@ le formulaire sans l'enregistrer : vérifiez-les puis utilisez « Tester » avan
 Une modification de l'adresse invalide les résultats. « Annuler l'analyse » interrompt
 la requête IA ; fermer le formulaire l'interrompt également.
 
-Dans la configuration d'accès d'un journal, le même bouton analyse l'adresse du
-formulaire de connexion, ou cherche un lien de connexion sur la page publique du
-journal. Il propose les champs d'identifiant et de mot de passe et le bouton d'envoi.
-L'analyse ne soumet pas le formulaire et ne reçoit pas vos identifiants. Le sélecteur
-confirmant une connexion réussie doit être vérifié après connexion ; l'IA ne peut
-pas le déduire de la page publique. Les champs déjà renseignés restent conservés.
+Dans la configuration d'accès d'un journal, commencez par l'adresse HTTPS de sa
+page de connexion (par exemple `/login` ou `/connexion`). Le bouton « Remplir avec
+l'IA », placé juste dessous, devient disponible quand cette adresse est renseignée.
+Il propose les sélecteurs des champs d'identifiant et de mot de passe et du bouton d'envoi.
+Les identifiants se renseignent ensuite dans une section séparée, en bas de la modal.
+L'analyse ne soumet pas le formulaire et ne reçoit pas vos identifiants. Les sélecteurs
+de réussite et de contenu intégral ne sont plus demandés dans la modal. Les anciens
+réglages restent conservés ; utilisez « Tester la connexion » après enregistrement.
 
 Les sélecteurs proposés sont contrôlés sur la page chargée dans Chromium : un
 résultat ambigu, masqué ou absent est refusé. L'IA reçoit une structure de page
@@ -683,21 +685,28 @@ sauvegarde protégée : la remplacer sans migration rend les secrets existants i
 Les mots de passe ne sont placés ni dans les logs, ni dans Redis, ni dans les prompts.
 
 Le formulaire « Configurer l'accès » accepte une **URL HTTPS** de connexion et les
-sélecteurs CSS des champs email et mot de passe, du bouton de connexion et d'un
-élément visible après connexion (par exemple le menu du compte). Ce dernier doit
-être absent ou masqué avant connexion. Les sélecteurs doivent désigner un seul
+sélecteurs CSS des champs email et mot de passe et du bouton de connexion.
+Les sélecteurs doivent désigner un seul
 élément visible. Le champ de mot de passe doit être de type `password` ; les
 formulaires GET sont refusés afin de ne pas mettre le secret dans une URL.
 
-Un sélecteur facultatif désigne la zone du contenu intégral de l'article. Il est
-nécessaire pour les pages dont les métadonnées indiquent un accès réservé : la
+Sans ancien sélecteur de réussite enregistré, le serveur confirme la session seulement
+si un nouveau contrôle visible de déconnexion apparaît après soumission
+et qu'aucun champ de mot de passe n'est visible. Une redirection, un cookie ou la
+disparition du formulaire ne suffisent pas. Sans preuve, il renvoie
+`JOURNAL_LOGIN_UNVERIFIED`, sans présenter l'utilisateur comme connecté. Un lien
+« Mon compte », souvent public, ne suffit pas non plus.
+
+La modal n'affiche plus le sélecteur facultatif du contenu intégral. Les valeurs
+déjà enregistrées restent conservées lors d'une modification de l'accès. Ce réglage
+serveur reste nécessaire pour les pages dont les métadonnées indiquent un accès réservé : la
 connexion au compte ne garantit pas que l'abonnement autorise la lecture. Un paywall
 visible, une session expirée ou une zone absente empêche l'extraction et l'IA.
 La détection générique ne garantit pas la reconnaissance de toutes les protections
-propres aux journaux ; choisissez précisément la zone du texte complet.
+propres aux journaux.
 
 « Tester la connexion » appelle `POST /journals/:domain/test` avec `{}`. L'endpoint
-est réservé au propriétaire, vérifie le marqueur de réussite et ferme la session de
+est réservé au propriétaire, vérifie la connexion et ferme la session de
 test sans lire d'article, modifier la collecte ou envoyer d'email. Son résultat est
 temporaire. Le workflow et le pipeline ouvrent chacun un nouveau contexte Chromium,
 se connectent puis lisent l'article **dans le même contexte et avec ses cookies**.

@@ -72,23 +72,30 @@ test("saves form selectors, tests the saved login and distinguishes configuratio
   render(<Harness />);
   await user.click(screen.getByRole("button", { name: "Activer www.lemonde.fr" }));
   await user.click(screen.getAllByRole("button", { name: "Configurer l'accès" })[0]!);
-  await user.type(screen.getByLabelText("Email pour www.lemonde.fr"), "reader@example.com");
-  await user.type(screen.getByLabelText("Mot de passe", { exact: true }), "secret-for-test");
+  expect(screen.getByLabelText("URL du formulaire de connexion")).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toBeDisabled();
   await user.type(
     screen.getByLabelText("URL du formulaire de connexion"),
     "https://secure.lemonde.fr/login",
   );
+  expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toBeEnabled();
+  await user.keyboard("{Tab}");
+  expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toHaveFocus();
+  await user.keyboard("{Tab}");
+  expect(screen.getByLabelText("Sélecteur du champ email")).toHaveFocus();
   for (const [label, value] of [
     ["Sélecteur du champ email", "#email"],
     ["Sélecteur du champ mot de passe", "#password"],
     ["Sélecteur du bouton de connexion", "#submit"],
-    ["Sélecteur visible après connexion", ".account"],
-    ["Sélecteur du contenu intégral (facultatif)", ".full-article"],
   ]) {
     const field = screen.getByLabelText(label!);
     await user.clear(field);
     await user.type(field, value!);
   }
+  await user.keyboard("{Tab}");
+  expect(screen.getByLabelText("Email pour www.lemonde.fr")).toHaveFocus();
+  await user.type(screen.getByLabelText("Email pour www.lemonde.fr"), "reader@example.com");
+  await user.type(screen.getByLabelText("Mot de passe", { exact: true }), "secret-for-test");
   await user.click(screen.getByRole("button", { name: "Enregistrer les identifiants" }));
   expect(
     await screen.findByText(/Formulaire configuré · connexion à vérifier/),
@@ -98,8 +105,8 @@ test("saves form selectors, tests the saved login and distinguishes configuratio
     emailSelector: "#email",
     passwordSelector: "#password",
     submitSelector: "#submit",
-    successSelector: ".account",
-    articleContentSelector: ".full-article",
+    successSelector: null,
+    articleContentSelector: null,
   });
   expect(screen.queryByDisplayValue("secret-for-test")).not.toBeInTheDocument();
   const testButton = screen.getByRole("button", { name: "Tester la connexion" });
@@ -115,7 +122,7 @@ test("saves form selectors, tests the saved login and distinguishes configuratio
   expect(screen.getByLabelText("URL du formulaire de connexion")).toHaveValue(
     "https://secure.lemonde.fr/login",
   );
-  expect(screen.getByLabelText("Sélecteur visible après connexion")).toHaveValue(".account");
+  expect(screen.queryByLabelText("Sélecteur visible après connexion")).toBeNull();
   expect(screen.getByRole("dialog")).toHaveAccessibleName("Configurer l'accès à www.lemonde.fr");
   expect(screen.queryByRole("button", { name: "Tester la connexion" })).not.toBeInTheDocument();
   expect(screen.getByLabelText(/Nouveau mot de passe/)).toHaveValue("");
@@ -190,7 +197,7 @@ test("clears an unsaved password when closing the access modal with Escape", asy
   await user.click(screen.getByRole("button", { name: "Activer www.lemonde.fr" }));
   const trigger = screen.getAllByRole("button", { name: "Configurer l'accès" })[0]!;
   await user.click(trigger);
-  expect(screen.getByLabelText("Email pour www.lemonde.fr")).toHaveFocus();
+  expect(screen.getByLabelText("URL du formulaire de connexion")).toHaveFocus();
   await user.type(screen.getByLabelText("Mot de passe", { exact: true }), "unsaved-secret");
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

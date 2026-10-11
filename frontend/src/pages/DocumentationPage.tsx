@@ -526,8 +526,8 @@ export function DocumentationPage() {
                 la vérification de l’aperçu.
               </li>
               <li>
-                Pour une source, cliquez sur <b>Tester</b>. Pour un journal, complétez notamment le
-                sélecteur de réussite, enregistrez puis utilisez <b>Tester la connexion</b>.
+                Pour une source, cliquez sur <b>Tester</b>. Pour un journal, renseignez vos
+                identifiants, enregistrez puis utilisez <b>Tester la connexion</b>.
               </li>
             </Steps>
             <h3>Si l’analyse échoue ou reste incomplète</h3>
@@ -574,9 +574,13 @@ export function DocumentationPage() {
                 <b>Configurer l’accès</b>. Elle devient disponible après activation.
               </li>
               <li>
-                Renseignez l’email et le mot de passe de votre compte sur ce journal. Pour permettre
-                la connexion automatique, renseignez aussi le formulaire et ses sélecteurs, puis
-                enregistrez.
+                Commencez par l’URL HTTPS de la page de connexion du journal, par exemple
+                <code> /login</code> ou <code>/connexion</code>. Cliquez sur{" "}
+                <b>Remplir avec l’IA</b>, puis vérifiez les sélecteurs du formulaire.
+              </li>
+              <li>
+                Dans la section <b>Identifiants du journal</b> en dessous, renseignez l’email et le
+                mot de passe de votre compte sur ce journal, puis enregistrez.
               </li>
               <li>
                 Rouvrez la configuration et cliquez sur <b>Tester la connexion</b>. Un accès
@@ -612,22 +616,12 @@ export function DocumentationPage() {
                   <code>button[type='submit']</code>,
                   "Le bouton qui valide le formulaire",
                 ],
-                [
-                  "Sélecteur visible après connexion",
-                  <code>.mon-compte</code>,
-                  "Un élément absent avant connexion et visible uniquement une fois connecté",
-                ],
-                [
-                  "Sélecteur du contenu intégral",
-                  <code>.article-body</code>,
-                  "La zone du texte complet d’un article abonné, pour éviter un simple extrait public",
-                ],
               ]}
             />
             <p>
-              Pour trouver le sélecteur de réussite, connectez-vous vous-même au journal dans votre
-              navigateur et inspectez un élément réservé à la session, comme le menu de votre
-              compte. Un bouton « Se connecter » affiché en permanence ne convient pas.
+              La connexion est confirmée automatiquement lorsqu’un nouveau contrôle de déconnexion
+              apparaît et que les champs de mot de passe ne sont plus visibles. Si le site ne permet
+              pas de confirmer la session, le test affiche une erreur.
             </p>
             <Screenshot
               name="acces"

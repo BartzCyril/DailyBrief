@@ -251,7 +251,6 @@ try {
   await page.getByRole("button", { name: "Configurer l'accès", exact: true }).first().click();
   await page.getByRole("dialog").waitFor();
   await page.getByLabel("URL du formulaire de connexion").fill("https://www.lemonde.fr/connexion");
-  await page.getByLabel("Sélecteur visible après connexion").fill(".mon-compte");
   await capture(page, "acces", page.getByRole("dialog"));
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 1000 });

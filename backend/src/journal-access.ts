@@ -77,13 +77,7 @@ export class JournalSecretCipher {
 }
 
 export function journalLoginConfig(row: StoredAccess): JournalLoginConfig | null {
-  if (
-    !row.loginUrl ||
-    !row.emailSelector ||
-    !row.passwordSelector ||
-    !row.submitSelector ||
-    !row.successSelector
-  )
+  if (!row.loginUrl || !row.emailSelector || !row.passwordSelector || !row.submitSelector)
     return null;
   return {
     loginUrl: row.loginUrl,
@@ -221,7 +215,7 @@ export class JournalAccessService {
       if (hasSubscriptionMetadata(rendered.html) && !login.config.articleContentSelector)
         throw new AppError(
           422,
-          "Cet article est réservé aux abonnés. Configurez le sélecteur du contenu intégral pour vérifier la zone à lire après connexion.",
+          "Le contenu intégral de cet article réservé aux abonnés n'a pas pu être confirmé après connexion.",
           "JOURNAL_FULL_CONTENT_UNVERIFIED",
         );
       const content = extractArticleContent(rendered.contentHtml ?? rendered.html, rendered.url);
@@ -245,7 +239,7 @@ const loginConfigSchema = z
     emailSelector: selector,
     passwordSelector: selector,
     submitSelector: selector,
-    successSelector: selector,
+    successSelector: selector.nullish(),
     articleContentSelector: selector.nullish(),
   })
   .strict();
@@ -437,6 +431,7 @@ export function journalAccessRouter(
           ? body.loginConfig
             ? {
                 ...body.loginConfig,
+                successSelector: body.loginConfig.successSelector ?? null,
                 articleContentSelector: body.loginConfig.articleContentSelector ?? null,
               }
             : {

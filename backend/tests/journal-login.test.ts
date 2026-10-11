@@ -9,6 +9,87 @@ const credentials = {
   config: loginConfig,
 };
 
+test("confirms a newly visible logout control without a user-supplied success selector despite unrelated malformed links", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    const response = await fixture.fetch(url, options);
+    if (url.endsWith("/account"))
+      return {
+        ...response,
+        text: response.text + '<a>Lire</a><a href="http://[">Lien cassé</a>',
+      };
+    return response;
+  });
+  const result = await browser.run(
+    "publisher.example",
+    { ...credentials, config: { ...loginConfig, successSelector: null } },
+    "https://publisher.example/article",
+  );
+  expect(result.contentHtml).toContain(fullText);
+  expect(
+    fixture.requests.find((request) => request.url.endsWith("/article"))?.options?.cookie,
+  ).toContain("sid=own-session");
+}, 45000);
+
+test("confirms a new logout control when a public account link was already visible before login", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    const response = await fixture.fetch(url, options);
+    if (url.endsWith("/login"))
+      return { ...response, text: response.text + '<a href="/account">Mon compte</a>' };
+    if (url.endsWith("/account"))
+      return { ...response, text: '<button aria-label="Se déconnecter"></button>' };
+    return response;
+  });
+  await browser.run("publisher.example", {
+    ...credentials,
+    config: { ...loginConfig, successSelector: null },
+  });
+  expect(fixture.requests.some((request) => request.options?.method === "POST")).toBe(true);
+}, 45000);
+
+test.each([
+  "wrong-password",
+  "public-account",
+  "public-logout",
+  "account-only",
+  "redirect-only",
+  "hidden-account",
+  "password-remains",
+])(
+  "does not confirm an ambiguous automatic login: %s",
+  async (scenario) => {
+    const fixture = journalFixture();
+    fixture.state.failed = scenario === "wrong-password";
+    const browser = new JournalLoginBrowser(async (url, options) => {
+      const response = await fixture.fetch(url, options);
+      if (url.endsWith("/login") && scenario === "public-account")
+        return { ...response, text: response.text + '<a href="/account">Mon compte</a>' };
+      if (url.endsWith("/login") && scenario === "public-logout")
+        return { ...response, text: response.text + "<button>Se déconnecter</button>" };
+      if (url.endsWith("/account")) {
+        if (scenario === "public-account" || scenario === "account-only")
+          return { ...response, text: '<a href="/account">Mon compte</a>' };
+        if (scenario === "redirect-only") return { ...response, text: "<main>Bienvenue</main>" };
+        if (scenario === "hidden-account")
+          return { ...response, text: "<button hidden>Se déconnecter</button>" };
+        if (scenario === "password-remains")
+          return { ...response, text: response.text + '<input type="password">' };
+      }
+      return response;
+    }, 700);
+    await assert.rejects(
+      browser.run("publisher.example", {
+        ...credentials,
+        config: { ...loginConfig, successSelector: null },
+      }),
+      { code: "JOURNAL_LOGIN_UNVERIFIED" },
+    );
+    expect(fixture.requests.some((request) => request.url.endsWith("/article"))).toBe(false);
+  },
+  45000,
+);
+
 test("posts the configured form and reads the article in the same fresh authenticated context", async () => {
   const fixture = journalFixture();
   const browser = new JournalLoginBrowser(fixture.fetch);

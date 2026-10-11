@@ -120,6 +120,37 @@ describe("configured journal login API and pipeline", () => {
       })
       .expect(200);
   }
+  test("saves only the public form selectors and confirms the session automatically without sending mail", async () => {
+    const {
+      successSelector: _success,
+      articleContentSelector: _content,
+      ...simpleConfig
+    } = loginConfig;
+    const saved = await agent
+      .patch("/journals/publisher.example")
+      .send({
+        enabled: true,
+        email: "reader@example.com",
+        password: "journal-test-password",
+        loginConfig: simpleConfig,
+      })
+      .expect(200);
+    expect(saved.body).toMatchObject({
+      authenticationSupported: true,
+      hasCredentials: true,
+      loginConfig: { ...simpleConfig, successSelector: null, articleContentSelector: null },
+    });
+    const connection = await agent.post("/journals/publisher.example/test").send({}).expect(200);
+    expect(connection.body.authenticated).toBe(true);
+    expect(connection.text).not.toContain("journal-test-password");
+    expect(connection.text).not.toContain("own-session");
+    expect(summaries).toBe(0);
+    expect(sends).toBe(0);
+    expect(await db.article.count({ where: { userId } })).toBe(0);
+    await assert.rejects(journals.fetchArticle(userId, "https://publisher.example/article"), {
+      code: "JOURNAL_FULL_CONTENT_UNVERIFIED",
+    });
+  }, 60000);
   test("persists form configuration, hides secrets, checks login and reads complete content without modifying production data", async () => {
     const saved = await configure();
     expect(saved.body.loginConfig).toMatchObject(loginConfig);

@@ -219,12 +219,8 @@ test("analyzes a journal's public login form, preserves credentials and authenti
   );
   expect(screen.getByLabelText("Email pour journal.example.com")).toHaveValue("reader@example.com");
   expect(screen.getByLabelText(/Nouveau mot de passe/)).toHaveValue("never-send-to-ai");
-  expect(screen.getByLabelText("Sélecteur visible après connexion")).toHaveValue(
-    ".account-existing",
-  );
-  expect(screen.getByLabelText("Sélecteur du contenu intégral (facultatif)")).toHaveValue(
-    ".full-existing",
-  );
+  expect(screen.queryByLabelText("Sélecteur visible après connexion")).toBeNull();
+  expect(screen.queryByLabelText("Sélecteur du contenu intégral (facultatif)")).toBeNull();
   expect(screen.getByRole("button", { name: "Envoyer une demande d'aide" })).toBeEnabled();
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
@@ -530,6 +526,10 @@ test.each(["close", "escape", "cancel"] as const)(
     const user = userEvent.setup();
     render(<JournalTable journals={[slowJournal]} onChange={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "Configurer l'accès" }));
+    await user.type(
+      screen.getByLabelText("URL du formulaire de connexion"),
+      "https://journal.example.com/login",
+    );
     await user.type(screen.getByLabelText(/Nouveau mot de passe/), "private-secret");
     await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
     expect(screen.getByRole("button", { name: "Annuler l'analyse" })).toBeEnabled();
@@ -543,12 +543,12 @@ test.each(["close", "escape", "cancel"] as const)(
     expect(signal?.aborted).toBe(true);
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
       kind: "JOURNAL_LOGIN",
-      url: "https://journal.example.com",
+      url: "https://journal.example.com/login",
     });
     await act(async () => finish?.(json({ ...rssResult, helpRequestId: "late-help" })));
     await user.click(screen.getByRole("button", { name: "Configurer l'accès" }));
     expect(screen.getByLabelText(/Nouveau mot de passe/)).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remplir avec l'IA" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Envoyer une demande d'aide" })).toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(1);
   },
@@ -571,6 +571,10 @@ test("protects the journal modal while its explicitly requested help email is be
   const user = userEvent.setup();
   render(<JournalTable journals={[slowJournal]} onChange={vi.fn()} />);
   await user.click(screen.getByRole("button", { name: "Configurer l'accès" }));
+  await user.type(
+    screen.getByLabelText("URL du formulaire de connexion"),
+    "https://journal.example.com/login",
+  );
   await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
   await user.click(await screen.findByRole("button", { name: "Envoyer une demande d'aide" }));
   expect(screen.getByRole("button", { name: "Fermer la fenêtre" })).toBeDisabled();

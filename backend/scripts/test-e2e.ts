@@ -630,6 +630,8 @@ try {
     .waitFor();
   assert.equal(messages.length, 0);
   await page.getByRole("button", { name: "Configurer l'accès" }).click();
+  assert(await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).isDisabled());
+  await page.getByLabel("URL du formulaire de connexion").fill(loginConfig.loginUrl);
   await page.getByRole("button", { name: "Remplir avec l'IA", exact: true }).click();
   await page.getByText(/Champs et bouton vérifiés/).waitFor();
   assert.equal(
@@ -640,7 +642,7 @@ try {
     await page.getByLabel("Sélecteur du champ email", { exact: true }).inputValue(),
     "#email",
   );
-  assert.equal(await page.getByLabel("Sélecteur visible après connexion").inputValue(), "");
+  assert.equal(await page.getByLabel("Sélecteur visible après connexion").count(), 0);
   assert.equal(
     await page.getByLabel("Email pour publisher.example").inputValue(),
     "subscriber@example.test",
@@ -649,11 +651,11 @@ try {
     loginFixture.requests.filter((request) => request.options?.method === "POST").length,
     0,
   );
-  assert.equal(helpMessages.length, 1, "Partial login analysis must wait for a click before email");
-  await page.getByRole("button", { name: "Envoyer une demande d'aide", exact: true }).click();
-  await page.getByText(/La demande d.aide a été envoyée/).waitFor();
-  assert.equal(helpMessages.length, 2);
-  assert(helpMessages[1]?.text.includes("Élément visible uniquement après une connexion réussie"));
+  assert.equal(helpMessages.length, 1, "Successful login form analysis must not send email");
+  assert.equal(
+    await page.getByRole("button", { name: "Envoyer une demande d'aide", exact: true }).count(),
+    0,
+  );
   assert(
     selectorPrompts.every(
       (prompt) =>
@@ -671,10 +673,7 @@ try {
   await page
     .getByLabel("Sélecteur du bouton de connexion", { exact: true })
     .fill(loginConfig.submitSelector);
-  await page.getByLabel("Sélecteur visible après connexion").fill(loginConfig.successSelector);
-  await page
-    .getByLabel("Sélecteur du contenu intégral (facultatif)")
-    .fill(loginConfig.articleContentSelector!);
+  assert.equal(await page.getByLabel("Sélecteur du contenu intégral (facultatif)").count(), 0);
   assert.equal(await page.getByLabel("Nouveau mot de passe (vide : conserver)").inputValue(), "");
   assert(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -697,6 +696,11 @@ try {
   await page.getByRole("dialog").screenshot({ path: "/tmp/dailybrief-journal-login-mobile.png" });
   await page.getByRole("button", { name: "Enregistrer les identifiants" }).click();
   await page.getByText("Formulaire configuré · connexion à vérifier", { exact: true }).waitFor();
+  // Preserve coverage of legacy subscriber settings, which are no longer editable in this modal.
+  await db.journalAccess.update({
+    where: { userId_domain: { userId: tableOwnerId, domain: "publisher.example" } },
+    data: { articleContentSelector: loginConfig.articleContentSelector },
+  });
   const testConnection = page.getByRole("button", { name: "Tester la connexion" });
   await testConnection.focus();
   await page.keyboard.press("Enter");
@@ -961,7 +965,7 @@ try {
   assert.equal(await db.article.count({ where: { userId: user.id } }), 0);
   await page.getByRole("button", { name: "Se déconnecter" }).click();
   await page.waitForURL("**/login");
-  assert.equal(helpMessages.length, 2, "Only the two explicit help requests may send help emails");
+  assert.equal(helpMessages.length, 1, "Only the explicit help request may send a help email");
   assert(
     helpMessages.every(
       (message) =>
@@ -970,7 +974,7 @@ try {
   );
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: RSS, scraping and journal selector autofill through public Chromium and structured AI; partial login and failed AI help on explicit click only, SMTP retry, no credentials in AI, mobile and keyboard assistance; register, login, separate sources and journals navigation, modal journal addition and domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, mobile journal login settings, keyboard connection test and authenticated article reading, complete scraping settings editing and preview without changes to sources or articles, settings, Redis article jobs with progress restored after reload, mobile jobs monitoring, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: RSS, scraping and journal selector autofill through public Chromium and structured AI; failed AI help on explicit click only, SMTP retry, no credentials in AI, mobile and keyboard assistance; register, login, separate sources and journals navigation, modal journal addition and domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, simplified mobile journal settings with login URL before AI and credentials below, automatic connection verification and authenticated article reading with legacy subscriber settings, complete scraping settings editing and preview without changes to sources or articles, settings, Redis article jobs with progress restored after reload, mobile jobs monitoring, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();

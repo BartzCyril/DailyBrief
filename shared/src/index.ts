@@ -163,7 +163,7 @@ export type JournalLoginConfig = {
   emailSelector: string;
   passwordSelector: string;
   submitSelector: string;
-  successSelector: string;
+  successSelector?: string | null;
   articleContentSelector?: string | null;
 };
 export type JournalPreview = JournalAccess & { count: number };

@@ -18,18 +18,12 @@ function formDefaults(journal: JournalPreview): JournalLoginConfig {
       emailSelector: "input[type='email']",
       passwordSelector: "input[type='password']",
       submitSelector: "button[type='submit']",
-      successSelector: "",
+      successSelector: null,
       articleContentSelector: "",
     }
   );
 }
-const formFields = [
-  [
-    "loginUrl",
-    "URL du formulaire de connexion",
-    "https://journal.fr/connexion",
-    "Adresse HTTPS de la page de connexion du journal, où se trouvent les champs email et mot de passe.",
-  ],
+const selectorFields = [
   [
     "emailSelector",
     "Sélecteur du champ email",
@@ -47,18 +41,6 @@ const formFields = [
     "Sélecteur du bouton de connexion",
     "button[type='submit']",
     "Bouton qui envoie le formulaire de connexion, par exemple button[type='submit'].",
-  ],
-  [
-    "successSelector",
-    "Sélecteur visible après connexion",
-    ".mon-compte",
-    "Élément absent avant connexion et visible après, par exemple le menu de votre compte. À vérifier une fois connecté au journal.",
-  ],
-  [
-    "articleContentSelector",
-    "Sélecteur du contenu intégral (facultatif)",
-    ".article-body",
-    "Zone du texte complet sur la page d'un article, sans menus ni extrait d'abonnement. Laissez vide pour l'extraction automatique.",
   ],
 ] as const;
 
@@ -80,9 +62,7 @@ function JournalRow({
   const [assistancePending, setAssistancePending] = useState<SelectorAssistancePending>(null);
   const [error, setError] = useState("");
   const [form, setForm] = useState<JournalLoginConfig>(() => formDefaults(journal));
-  const [assistanceUrl, setAssistanceUrl] = useState(
-    journal.loginConfig?.loginUrl || `https://${journal.domain}`,
-  );
+  const [assistanceUrl, setAssistanceUrl] = useState(journal.loginConfig?.loginUrl ?? "");
   const pending = busy || !!assistancePending;
   const modalBusy = busy || assistancePending === "help";
   const [connectionResult, setConnectionResult] = useState("");
@@ -195,12 +175,12 @@ function JournalRow({
         if (open) {
           setEmail(journal.email ?? "");
           setForm(formDefaults(journal));
-          setAssistanceUrl(journal.loginConfig?.loginUrl || `https://${journal.domain}`);
+          setAssistanceUrl(journal.loginConfig?.loginUrl ?? "");
         }
       }}
       busy={modalBusy}
       title={`Configurer l'accès à ${journal.domain}`}
-      description="Enregistrez les identifiants et, si nécessaire, les paramètres du formulaire de connexion."
+      description="Configurez d'abord la page de connexion et ses sélecteurs, puis renseignez vos identifiants."
       trigger={
         management ? (
           <IconButton
@@ -228,6 +208,7 @@ function JournalRow({
               ? {
                   loginConfig: {
                     ...form,
+                    successSelector: form.successSelector?.trim() || null,
                     articleContentSelector: form.articleContentSelector?.trim() || null,
                   },
                 }
@@ -235,70 +216,83 @@ function JournalRow({
           });
         }}
       >
-        <fieldset disabled={pending} className="min-w-0 space-y-5">
+        <fieldset className="min-w-0 space-y-5 rounded-lg border p-4 sm:p-5">
+          <legend className="px-2 font-semibold">1. Page de connexion et sélecteurs</legend>
+          <fieldset disabled={pending} className="min-w-0">
+            <Field
+              label="URL du formulaire de connexion"
+              hint="Commencez par l'adresse HTTPS de la page où vous vous connectez au journal (par exemple /login ou /connexion), puis cliquez sur Remplir avec l'IA."
+              type="url"
+              placeholder={`https://${journal.domain}/login`}
+              value={form.loginUrl}
+              required={Boolean(form.loginUrl || journal.loginConfig)}
+              autoComplete="off"
+              onChange={(event) => {
+                const value = event.target.value;
+                setForm((previous) => ({ ...previous, loginUrl: value }));
+                setAssistanceUrl(value);
+              }}
+            />
+          </fieldset>
+          <SelectorAssistance
+            kind="JOURNAL_LOGIN"
+            url={assistanceUrl}
+            disabled={busy}
+            onPendingChange={setAssistancePending}
+            onStart={() => {
+              setError("");
+              setConnectionResult("");
+            }}
+            onResult={(result) => {
+              if (result.kind !== "JOURNAL_LOGIN") return;
+              setForm((previous) => ({
+                ...previous,
+                ...result.loginConfig,
+                successSelector:
+                  previous.successSelector || result.loginConfig.successSelector || null,
+                articleContentSelector:
+                  previous.articleContentSelector ||
+                  result.loginConfig.articleContentSelector ||
+                  "",
+              }));
+            }}
+          />
+          <fieldset disabled={pending} className="min-w-0 space-y-5">
+            {selectorFields.map(([key, label, placeholder, hint]) => (
+              <Field
+                key={key}
+                label={label}
+                hint={hint}
+                placeholder={placeholder}
+                value={form[key]}
+                required={Boolean(form.loginUrl || journal.loginConfig)}
+                autoComplete="off"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setForm((previous) => ({ ...previous, [key]: value }));
+                }}
+              />
+            ))}
+            <p className="text-sm text-muted-foreground">
+              CAPTCHA et double authentification ne sont pas automatisés.
+            </p>
+          </fieldset>
+        </fieldset>
+        <fieldset disabled={pending} className="min-w-0 space-y-5 rounded-lg border p-4 sm:p-5">
+          <legend className="px-2 font-semibold">2. Identifiants du journal</legend>
+          <p className="text-sm text-muted-foreground">
+            Ces identifiants servent à vous connecter via le formulaire configuré ci-dessus. Ils ne
+            sont jamais envoyés à l'IA.
+          </p>
           <Field
             label={`Email pour ${journal.domain}`}
-            hint="Identifiant email de votre abonnement à ce journal. Il n'est pas envoyé à l'IA."
+            hint="Identifiant email de votre abonnement à ce journal."
             type="email"
             required
             value={email}
             autoComplete="off"
             onChange={(event) => setEmail(event.target.value)}
           />
-        </fieldset>
-        <SelectorAssistance
-          kind="JOURNAL_LOGIN"
-          url={assistanceUrl}
-          disabled={busy}
-          onPendingChange={setAssistancePending}
-          onStart={() => {
-            setError("");
-            setConnectionResult("");
-          }}
-          onResult={(result) => {
-            if (result.kind !== "JOURNAL_LOGIN") return;
-            setForm((previous) => ({
-              ...previous,
-              ...result.loginConfig,
-              successSelector: previous.successSelector || result.loginConfig.successSelector || "",
-              articleContentSelector:
-                previous.articleContentSelector || result.loginConfig.articleContentSelector || "",
-            }));
-          }}
-        />
-        <fieldset disabled={pending} className="min-w-0 space-y-5">
-          <fieldset className="min-w-0 space-y-4 rounded-lg border p-4">
-            <legend className="px-1 font-medium">Connexion automatique</legend>
-            <p className="text-sm text-muted-foreground">
-              Renseignez une URL HTTPS et des sélecteurs CSS. Les identifiants seront envoyés au
-              site indiqué par cette URL. L'élément de réussite doit être absent avant connexion et
-              visible après, par exemple le menu du compte. CAPTCHA et double authentification ne
-              sont pas automatisés.
-            </p>
-            {formFields.map(([key, label, placeholder, hint]) => (
-              <Field
-                key={key}
-                label={label}
-                hint={hint}
-                type={key === "loginUrl" ? "url" : "text"}
-                placeholder={placeholder}
-                value={form[key] ?? ""}
-                required={
-                  key !== "articleContentSelector" && Boolean(form.loginUrl || journal.loginConfig)
-                }
-                autoComplete="off"
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setForm((previous) => ({ ...previous, [key]: value }));
-                  if (key === "loginUrl") setAssistanceUrl(value || `https://${journal.domain}`);
-                }}
-              />
-            ))}
-            <p className="text-sm text-muted-foreground">
-              Pour un article réservé aux abonnés, indiquez la zone du contenu intégral afin
-              d'éviter de résumer un extrait public. Enregistrez avant de tester la connexion.
-            </p>
-          </fieldset>
           <Field
             label={
               journal.hasCredentials ? "Nouveau mot de passe (vide : conserver)" : "Mot de passe"

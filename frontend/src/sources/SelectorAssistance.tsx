@@ -154,7 +154,7 @@ export function SelectorAssistance({
       <p className="text-xs text-muted-foreground">
         L'IA analyse la page publique et propose des réglages.{" "}
         {kind === "JOURNAL_LOGIN"
-          ? "Complétez le sélecteur visible après connexion, enregistrez puis testez la connexion."
+          ? "Vérifiez les sélecteurs, renseignez vos identifiants, enregistrez puis testez la connexion."
           : "Vérifiez-les avec le bouton Tester avant d'enregistrer."}{" "}
         Aucun identifiant n'est envoyé à l'IA.
       </p>

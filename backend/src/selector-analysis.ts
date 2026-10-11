@@ -966,11 +966,11 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
         return {
           analyzedUrl: publicUrl,
           kind: input.kind,
-          complete: false,
-          missingFields: ["successSelector"],
+          complete: true,
+          missingFields: [],
           loginConfig: { loginUrl: publicUrl, ...parsed.data },
           message:
-            "Champs et bouton vérifiés. L'élément de réussite après connexion ne peut pas être déduit de la page publique : conservez votre réglage existant ou demandez de l'aide.",
+            "Champs et bouton vérifiés. Renseignez vos identifiants, enregistrez puis testez la connexion.",
         };
       } catch (error) {
         signal?.throwIfAborted();

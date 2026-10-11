@@ -53,7 +53,7 @@ export function journalFixture() {
       return {
         status: 200,
         cookies: [],
-        text: '<div id="account">Mon compte</div>',
+        text: '<a id="account" href="/account">Mon compte</a><button>Se déconnecter</button>',
         contentType: "text/html",
       };
     if (path === "/article") {
