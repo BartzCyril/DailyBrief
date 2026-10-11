@@ -8,6 +8,7 @@ const stages = {
   storage: "Articles",
   content: "Contenu de l'article",
   ai: "Résumé IA",
+  brief: "Daily Brief",
   newsletter: "Newsletter",
   email: "Email",
 };

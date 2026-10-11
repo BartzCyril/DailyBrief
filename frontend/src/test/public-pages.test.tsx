@@ -43,9 +43,11 @@ test("the documentation remains available when the backend is unreachable", asyn
   for (const link of within(nav).getAllByRole("link")) {
     expect(document.getElementById(link.getAttribute("href")!.slice(1))).toBeInTheDocument();
   }
-  expect(within(nav).getAllByRole("link")).toHaveLength(10);
+  expect(within(nav).getAllByRole("link")).toHaveLength(11);
   expect(document.title).toBe("Guide d’utilisation · DailyBrief");
-  expect(screen.getAllByRole("img")).toHaveLength(9);
+  expect(screen.getAllByRole("img")).toHaveLength(10);
+  expect(screen.getByRole("heading", { name: "Personnaliser votre veille" })).toBeInTheDocument();
+  expect(screen.getAllByRole("link", { name: "Réglages" })).not.toHaveLength(0);
 });
 test("the chapter search handles accents and shows empty results", async () => {
   mount("/documentation");

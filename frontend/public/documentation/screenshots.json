@@ -5,15 +5,15 @@
   },
   "rss": {
     "width": 820,
-    "height": 670
+    "height": 761
   },
   "scraping": {
     "width": 820,
-    "height": 1162
+    "height": 1257
   },
   "assistance": {
     "width": 1280,
-    "height": 1323
+    "height": 1418
   },
   "journaux": {
     "width": 1180,
@@ -25,11 +25,15 @@
   },
   "dashboard": {
     "width": 1180,
-    "height": 858
+    "height": 1622
+  },
+  "settings": {
+    "width": 820,
+    "height": 1078
   },
   "jobs": {
     "width": 1216,
-    "height": 758
+    "height": 778
   },
   "resume": {
     "width": 672,

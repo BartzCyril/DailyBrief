@@ -15,7 +15,8 @@ import { runDueCollections } from "../src/scheduler";
 import { createApp } from "../src/app";
 import { AppError } from "../src/errors";
 import { articleIdentity } from "../src/fingerprint";
-import type { SummaryProvider } from "../src/ai";
+import type { BriefInput, SummaryProvider } from "../src/ai";
+import { recentArticleWindow } from "../src/recent-articles";
 import { config, db, redis, connect, disconnect } from "./helpers";
 
 async function until<T>(read: () => Promise<T>, ready: (value: T) => boolean): Promise<T> {
@@ -41,11 +42,35 @@ describe("durable collection queue", () => {
   let gate = Promise.resolve();
   let summaryFailure: string | null = null;
   let transientFailures = 0;
+  let permanentTitle: string | null = null;
+  const briefInputs: BriefInput[] = [];
   const summary: SummaryProvider = {
+    async generateBrief(input) {
+      briefInputs.push(input);
+      return {
+        headline: "L’essentiel du jour",
+        lead: "Les actualités majeures.",
+        stories: [
+          {
+            title: "Sujet commun",
+            text: "Une synthèse des informations importantes.",
+            articleIds: input.articles.map((article) => article.id),
+          },
+        ],
+        otherNews: [],
+        trends: "",
+      };
+    },
     async summarize(article, observer) {
       calls++;
       observer?.("Résumé IA en cours");
       await gate;
+      if (article.title === permanentTitle)
+        throw new AppError(
+          503,
+          "Le modèle de test est indisponible pour cet article.",
+          "MODEL_MISSING",
+        );
       if (summaryFailure)
         throw new AppError(503, "Le modèle de test est indisponible.", summaryFailure);
       if (transientFailures-- > 0)
@@ -58,10 +83,26 @@ describe("durable collection queue", () => {
   );
   const journals = new JournalAccessService(db, content);
   const rss = new RssService(async (url) => {
+    if (url.includes("dates")) {
+      const window = recentArticleWindow("Europe/Paris");
+      return `<rss><channel><title>Dates</title>${[
+        ["recent", new Date().toUTCString()],
+        ["old", new Date(window.start.getTime() - 1000).toUTCString()],
+        ["undated", null],
+      ]
+        .map(
+          ([id, date]) =>
+            `<item><title>Article ${id}</title><link>https://date.example/${id}</link><description>Information ${id}</description>${date ? `<pubDate>${date}</pubDate>` : ""}</item>`,
+        )
+        .join("")}</channel></rss>`;
+    }
     const size = url.includes("first") ? 10 : 5;
-    return `<rss><channel><title>Test</title>${Array.from({ length: size }, (_, i) => `<item><title>${url.includes("first") ? "Premier" : "Second"} article ${i}</title><link>https://article.example/${url.includes("first") ? "a" : "b"}/${i}</link><description>Description distincte ${url} ${i}</description></item>`).join("")}</channel></rss>`;
+    return `<rss><channel><title>Test</title>${Array.from({ length: size }, (_, i) => `<item><title>${url.includes("first") ? "Premier" : "Second"} article ${i}</title><link>https://article.example/${url.includes("first") ? "a" : "b"}/${i}</link><description>Description distincte ${url} ${i}</description><pubDate>${new Date().toUTCString()}</pubDate></item>`).join("")}</channel></rss>`;
   });
-  const makePipeline = (dispatch?: ConstructorParameters<typeof DailyBriefPipelineService>[7]) =>
+  const makePipeline = (
+    dispatch?: ConstructorParameters<typeof DailyBriefPipelineService>[7],
+    finalize?: ConstructorParameters<typeof DailyBriefPipelineService>[8],
+  ) =>
     new DailyBriefPipelineService(
       db,
       new SourceCollector(db, rss, new ScrapingService(), content),
@@ -75,6 +116,7 @@ describe("durable collection queue", () => {
       content,
       journals,
       dispatch,
+      finalize,
     );
   async function start() {
     consumers = await startConsumers(
@@ -159,6 +201,9 @@ describe("durable collection queue", () => {
       const raw = await manager.summaries.getJobs(["active", "waiting"]);
       for (const job of raw)
         expect(Object.keys(job.data).sort()).toEqual(["articleId", "runId", "userId"]);
+      expect(raw.some((job) => job.name === "daily-brief")).toBe(false);
+      expect(briefInputs).toHaveLength(0);
+      expect(await manager.summaries.getGlobalConcurrency()).toBe(queueConfig.AI_CONCURRENCY);
       release();
       gate = Promise.resolve();
       const finished = await until(
@@ -166,10 +211,31 @@ describe("durable collection queue", () => {
         (value) => !value.active,
       );
       expect(finished.result?.status).toBe("SENT");
+      expect(finished.result?.briefStatus).toBe("READY");
       expect(finished.completed).toBe(15);
       expect(finished.failed).toBe(0);
       expect(calls).toBe(15);
       expect(sends).toBe(1);
+      expect(briefInputs).toHaveLength(1);
+      expect(briefInputs[0]!.articles).toHaveLength(15);
+      const completedRaw = (await manager.summaries.getJobs(["completed"])).filter(
+        (job) => job.data.runId === waiting.id,
+      );
+      const finalJobs = completedRaw.filter((job) => job.name === "daily-brief");
+      expect(finalJobs).toHaveLength(1);
+      expect(Object.keys(finalJobs[0]!.data).sort()).toEqual(["runId", "userId"]);
+      expect(finalJobs[0]!.processedOn!).toBeGreaterThanOrEqual(
+        Math.max(
+          ...completedRaw
+            .filter((job) => job.name === "scraping-summary")
+            .map((job) => job.finishedOn!),
+        ),
+      );
+      expect(
+        await db.dailyBrief.count({
+          where: { userId: owner.id, runId: waiting.id, status: "READY" },
+        }),
+      ).toBe(1);
       expect(await db.article.count({ where: { userId: owner.id, summary: { not: null } } })).toBe(
         15,
       );
@@ -418,6 +484,7 @@ describe("durable collection queue", () => {
             title: article.title,
             url: article.url,
             content: article.content,
+            publishedAt: article.publishedAt ? new Date(article.publishedAt) : null,
             ...articleIdentity(article),
           },
         }),
@@ -445,6 +512,11 @@ describe("durable collection queue", () => {
     expect(finished.completed).toBe(15);
     expect(calls - before).toBe(15);
     expect((await manager.jobs(owner.id, queued.id)).jobs[0]?.attempts).toBe(1);
+    const finalJobs = (await manager.summaries.getJobs(["completed"])).filter(
+      (job) => job.data.runId === queued.id && job.name === "daily-brief",
+    );
+    expect(finalJobs).toHaveLength(1);
+    expect(await db.dailyBrief.count({ where: { runId: queued.id } })).toBe(1);
   });
   queueTest("recovery never sends again a SENT or uncertain SENDING newsletter", async () => {
     for (const status of ["SENT", "SENDING"] as const) {
@@ -470,6 +542,218 @@ describe("durable collection queue", () => {
       if (status === "SENDING") expect(finished.error).toContain("incertain");
     }
   });
+  queueTest("only recent dated articles become summary jobs", async () => {
+    const owner = await user(false);
+    await db.source.create({
+      data: { userId: owner.id, url: "https://feed.example/dates", type: "RSS" },
+    });
+    const before = calls;
+    const queued = await manager.enqueue(owner.id);
+    const finished = await until(
+      () => manager.snapshot(owner.id, queued.id),
+      (value) => !value.active,
+    );
+    expect(finished.result).toMatchObject({
+      status: "SENT",
+      articlesCollected: 1,
+      articlesSummarized: 1,
+      briefStatus: "READY",
+    });
+    expect((await manager.jobs(owner.id, queued.id)).total).toBe(1);
+    expect(calls - before).toBe(1);
+    expect(await db.article.count({ where: { userId: owner.id } })).toBe(1);
+    const raw = (await manager.summaries.getJobs(["completed"])).filter(
+      (job) => job.data.runId === queued.id,
+    );
+    expect(raw.filter((job) => job.name === "scraping-summary")).toHaveLength(1);
+    expect(raw.filter((job) => job.name === "daily-brief")).toHaveLength(1);
+  });
+  queueTest(
+    "a non-relevant article is skipped permanently and excluded from both brief and newsletter",
+    async () => {
+      const owner = await user();
+      let analyses = 0;
+      const original = summary.analyze;
+      summary.analyze = async (input, observer) => {
+        analyses++;
+        if (input.title === "Premier article 0")
+          return { relevant: false, reason: "Hors des centres d’intérêt.", summary: null };
+        return {
+          relevant: true,
+          reason: "Sujet suivi.",
+          summary: await summary.summarize(input, observer),
+        };
+      };
+      try {
+        const queued = await manager.enqueue(owner.id);
+        const finished = await until(
+          () => manager.snapshot(owner.id, queued.id),
+          (value) => !value.active,
+        );
+        expect(finished.result).toMatchObject({
+          status: "SENT",
+          articlesSummarized: 14,
+          briefStatus: "READY",
+        });
+        expect(finished.skipped).toBe(1);
+        const ignored = await manager.jobs(owner.id, queued.id, 1, "skipped");
+        expect(ignored.total).toBe(1);
+        expect(ignored.jobs[0]).toMatchObject({
+          title: "Premier article 0",
+          summary: null,
+          relevanceReason: "Hors des centres d’intérêt.",
+        });
+        const article = await db.article.findUniqueOrThrow({
+          where: { id: ignored.jobs[0]!.articleId },
+        });
+        expect(article).toMatchObject({ relevant: false, summary: null, summarizedAt: null });
+        expect(article.analyzedAt).not.toBeNull();
+        expect(await db.newsletterArticle.count({ where: { articleId: article.id } })).toBe(0);
+        expect(await db.dailyBrief.findFirstOrThrow({ where: { runId: queued.id } })).toMatchObject(
+          { articleCount: 14 },
+        );
+        const again = await manager.enqueue(owner.id);
+        await until(
+          () => manager.snapshot(owner.id, again.id),
+          (value) => !value.active,
+        );
+        expect(analyses).toBe(15);
+        expect((await manager.jobs(owner.id, again.id)).total).toBe(0);
+        expect(await db.article.findUniqueOrThrow({ where: { id: article.id } })).toEqual(article);
+      } finally {
+        summary.analyze = original;
+      }
+    },
+  );
+  queueTest(
+    "a failed article leaves the final successful brief and other summaries intact",
+    async () => {
+      const owner = await user();
+      permanentTitle = "Premier article 0";
+      try {
+        const queued = await manager.enqueue(owner.id);
+        const finished = await until(
+          () => manager.snapshot(owner.id, queued.id),
+          (value) => !value.active,
+        );
+        expect(finished.result).toMatchObject({
+          status: "SENT",
+          articlesSummarized: 14,
+          briefStatus: "READY",
+        });
+        expect(finished.failed).toBe(1);
+        expect(await db.dailyBrief.findFirstOrThrow({ where: { runId: queued.id } })).toMatchObject(
+          { status: "READY", articleCount: 14 },
+        );
+        expect((await manager.jobs(owner.id, queued.id, 1, "failed")).total).toBe(1);
+        expect(
+          await db.article.count({ where: { userId: owner.id, summary: { not: null } } }),
+        ).toBe(14);
+      } finally {
+        permanentTitle = null;
+      }
+    },
+  );
+  queueTest(
+    "restart after final synthesis reuses the persisted brief and completed AI jobs",
+    async () => {
+      await consumers!.collections.pause();
+      const owner = await user();
+      const queued = await manager.enqueue(owner.id);
+      const run = await db.dailyBriefRun.findUniqueOrThrow({ where: { id: queued.id } });
+      const root = await manager.collections.getJob(run.queueJobId!);
+      const window = recentArticleWindow("Europe/Paris");
+      await db.dailyBriefRun.update({
+        where: { id: run.id },
+        data: {
+          periodStart: window.start,
+          periodEnd: window.end,
+          briefDate: window.date,
+          timezone: window.timezone,
+          interestPrompt: "",
+        },
+      });
+      const sources = await new SourceCollector(db, rss, new ScrapingService(), content).collect(
+        owner.id,
+      );
+      const articles = [];
+      for (const item of sources.flatMap((source) => source.articles)) {
+        articles.push(
+          await db.article.create({
+            data: {
+              userId: owner.id,
+              sourceId: item.sourceId,
+              title: item.title,
+              url: item.url,
+              description: item.description,
+              publishedAt: new Date(item.publishedAt!),
+              content: "Texte déjà extrait",
+              contentFetchedAt: new Date(),
+              contentUrl: item.url,
+              relevant: true,
+              analyzedAt: new Date(),
+              relevanceReason: "Sujet pertinent",
+              summary: `Résumé ${item.title}`,
+              summarizedAt: new Date(),
+              keyPoints: ["Point"],
+              ...articleIdentity(item),
+            },
+          }),
+        );
+      }
+      await root!.updateData({ ...root!.data, articleIds: articles.map((item) => item.id) });
+      const before = calls;
+      const beforeBriefs = briefInputs.length;
+      const jobs = await manager.summaries.addBulk(
+        articles.map((item) => ({
+          name: "scraping-summary",
+          data: { userId: owner.id, runId: run.id, articleId: item.id },
+          opts: { jobId: `${root!.id}-${item.id}` },
+        })),
+      );
+      await until(
+        async () => Promise.all(jobs.map((job) => job.getState())),
+        (states) => states.every((state) => state === "completed"),
+      );
+      const final = await manager.summaries.add(
+        "daily-brief",
+        { userId: owner.id, runId: run.id },
+        { jobId: `${root!.id}-daily-brief` },
+      );
+      await until(
+        () => final.getState(),
+        (state) => state === "completed",
+      );
+      expect(briefInputs.length - beforeBriefs).toBe(1);
+      await db.dailyBriefSettings.upsert({
+        where: { userId: owner.id },
+        create: {
+          userId: owner.id,
+          timezone: "America/New_York",
+          interestPrompt: "Nouvelles préférences.",
+        },
+        update: { timezone: "America/New_York", interestPrompt: "Nouvelles préférences." },
+      });
+      await consumers!.close();
+      consumers = undefined;
+      await manager.recover();
+      await start();
+      const done = await until(
+        () => manager.snapshot(owner.id, run.id),
+        (value) => !value.active,
+      );
+      expect(done.result).toMatchObject({ status: "SENT", briefStatus: "READY" });
+      expect(calls).toBe(before);
+      expect(briefInputs.length - beforeBriefs).toBe(1);
+      expect(await db.dailyBrief.count({ where: { runId: run.id } })).toBe(1);
+      expect(await db.dailyBriefRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
+        periodStart: window.start,
+        periodEnd: window.end,
+        timezone: "Europe/Paris",
+        interestPrompt: "",
+      });
+    },
+  );
   queueTest(
     "an interrupted producer is recovered from PostgreSQL without creating another run",
     async () => {

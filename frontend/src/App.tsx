@@ -25,6 +25,9 @@ const JobsPage = lazy(() =>
 const DashboardPage = lazy(() =>
   import("./pages/DashboardPage").then((module) => ({ default: module.DashboardPage })),
 );
+const SettingsPage = lazy(() =>
+  import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })),
+);
 const NewSourcePage = lazy(() =>
   import("./pages/NewSourcePage").then((module) => ({ default: module.NewSourcePage })),
 );
@@ -51,6 +54,7 @@ export function App() {
           <Route element={<ProtectedRoute />}>
             <Route element={<AppLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
               <Route path="/sources" element={<SourcesPage />} />
               <Route path="/journals" element={<JournalsPage />} />
               <Route path="/jobs" element={<JobsPage />} />

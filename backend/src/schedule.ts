@@ -11,6 +11,7 @@ export const settingsSchema = z
       .string()
       .refine((value) => IANAZone.isValidZone(value), "Fuseau IANA invalide")
       .optional(),
+    interestPrompt: z.string().trim().max(6000).optional(),
   })
   .strict();
 export function nextCollection(time: string, timezone: string, now = new Date()): Date {

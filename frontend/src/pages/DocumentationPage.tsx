@@ -25,10 +25,11 @@ const chapters = [
     "abonnement connexion mot de passe accès session domaine",
   ],
   ["workflow", "Tester de A à Z", "aperçu résumé test source"],
+  ["reglages", "Personnaliser votre veille", "réglages heure fuseau centres intérêt prompt filtre"],
   [
     "collecte",
     "Recevoir et suivre son brief",
-    "jobs collecte récupération automatique heure newsletter progression",
+    "jobs collecte récupération quotidienne newsletter progression pertinence synthèse jour date",
   ],
   ["depannage", "Résoudre un problème", "403 erreur lent doublon email aucun article"],
   ["glossaire", "Le petit lexique", "définition RSS scraping sélecteur job domaine"],
@@ -212,9 +213,10 @@ export function DocumentationPage() {
         <div className="doc-content">
           <Chapter id="premiers-pas" number="01" title="Votre premier brief, pas à pas">
             <p>
-              DailyBrief rassemble vos sources d’actualité, récupère les articles accessibles,
-              produit des résumés IA et vous envoie une newsletter personnelle. Vous choisissez les
-              sites et le rythme de collecte.
+              DailyBrief rassemble les articles d’aujourd’hui et d’hier, sélectionne ceux qui
+              correspondent à vos centres d’intérêt et en résume les points clés. Une revue
+              quotidienne met ensuite en avant les informations importantes, les sujets communs et
+              les tendances. Vous choisissez les sources et le rythme de collecte.
             </p>
             <Steps>
               <li>
@@ -237,6 +239,11 @@ export function DocumentationPage() {
                 <strong>Choisissez les journaux à activer.</strong> Pour les RSS avec notice
                 intermédiaire, les domaines découverts sont désactivés par défaut. Activez ceux que
                 vous souhaitez lire dans <Link to="/journals">Journaux</Link>.
+              </li>
+              <li>
+                <strong>Personnalisez votre veille.</strong> Ouvrez les{" "}
+                <Link to="/settings">Réglages</Link> pour choisir l’heure quotidienne et décrire les
+                sujets qui vous intéressent ou que vous souhaitez écarter.
               </li>
               <li>
                 <strong>Lancez votre première collecte.</strong> Sur le{" "}
@@ -307,6 +314,12 @@ export function DocumentationPage() {
               Ici, l’item RSS vient de <code>bibliotheques.inp.fr</code>, mais le journal recensé
               est <code>www.lemonde.fr</code>. DailyBrief conserve la notice et le lien externe ; le
               lien de lecture pointe vers le journal.
+            </p>
+            <p>
+              La collecte conserve les publications d’aujourd’hui et d’hier ; un item sans date
+              exploitable est signalé et ignoré. Vous pouvez activer{" "}
+              <b>Articles du plus récent au plus ancien</b> si le flux garantit cet ordre. Cela
+              autorise un arrêt dès les publications plus anciennes, sans parcourir les archives.
             </p>
             <Tip title="N’oubliez pas l’activation du journal">
               <p>
@@ -408,6 +421,20 @@ export function DocumentationPage() {
                 ],
               ]}
             />
+            <h3>Parcourir les articles récents</h3>
+            <p>
+              La collecte quotidienne conserve les articles publiés aujourd’hui ou hier, selon votre
+              fuseau horaire. Les dates absentes, illisibles ou futures sont ignorées et signalées
+              dans l’historique. Le sélecteur de date doit donc désigner la publication de chaque
+              article, plutôt que la date de mise à jour de la rubrique.
+            </p>
+            <p>
+              Si la source garantit un classement du plus récent au plus ancien, activez{" "}
+              <b>Articles du plus récent au plus ancien</b> dans son formulaire. DailyBrief pourra
+              arrêter le parcours et la pagination dès qu’il rencontre un article antérieur à hier.
+              Laissez ce réglage désactivé si des articles épinglés ou des dates dans le désordre
+              apparaissent : tous les articles parcourus seront alors vérifiés individuellement.
+            </p>
             <Tip title="Vérifiez plusieurs cartes">
               <p>
                 Un sélecteur doit fonctionner sur tous les articles de la rubrique. Un aperçu vide,
@@ -695,7 +722,49 @@ export function DocumentationPage() {
               </p>
             </Tip>
           </Chapter>
-          <Chapter id="collecte" number="08" title="Recevoir son brief et suivre la progression">
+          <Chapter id="reglages" number="08" title="Personnaliser votre veille">
+            <p>
+              La page <Link to="/settings">Réglages</Link> regroupe la planification et vos centres
+              d’intérêt. Le tableau de bord affiche la revue quotidienne et la prochaine collecte ;
+              les modifications se font dans cette page dédiée.
+            </p>
+            <h3>Choisir l’heure de récupération</h3>
+            <Steps>
+              <li>
+                Dans <b>Collecte automatique</b>, activez <b>Récupération automatique</b>.
+              </li>
+              <li>
+                Renseignez l’<b>Heure quotidienne</b> dans votre heure locale. Le navigateur détecte
+                automatiquement votre fuseau horaire : aucun choix manuel n’est nécessaire.
+              </li>
+              <li>
+                Cliquez sur <b>Enregistrer les réglages</b>, puis vérifiez la prochaine collecte. Le
+                bouton reste désactivé tant qu’aucun réglage n’a changé. La programmation continue
+                même lorsque votre navigateur est fermé.
+              </li>
+            </Steps>
+            <h3>Décrire vos centres d’intérêt</h3>
+            <p>
+              Dans <b>Vos centres d’intérêt</b>, expliquez ce que vous souhaitez suivre et ce que
+              vous préférez écarter. Vous pouvez préciser votre métier, vos thèmes favoris et le
+              niveau de détail attendu, jusqu’à 6 000 caractères. Exemple :
+            </p>
+            <pre>
+              <code>{`Je suis développeur web. Je souhaite suivre l’IA, React, Node.js, TypeScript et les outils pour développeurs. Ignore les faits divers et les actualités généralistes sans lien avec ces sujets.`}</code>
+            </pre>
+            <p>
+              L’IA compare ce texte au titre, à la description et au contenu de chaque article. Elle
+              résume uniquement les articles jugés pertinents. Laissez le champ vide pour suivre
+              tous les sujets de vos sources. Les articles déjà analysés conservent leur résultat ;
+              une modification du prompt s’applique aux articles restant à analyser.
+            </p>
+            <Screenshot
+              name="settings"
+              alt="Page Réglages avec collecte automatique, heure quotidienne et prompt de centres d’intérêt"
+              caption="Enregistrez la planification et vos centres d’intérêt au même endroit. Le fuseau horaire est détecté automatiquement."
+            />
+          </Chapter>
+          <Chapter id="collecte" number="09" title="Recevoir son brief et suivre la progression">
             <h3>À la demande</h3>
             <p>
               Sur le <Link to="/dashboard">Tableau de bord</Link>, cliquez sur{" "}
@@ -704,28 +773,35 @@ export function DocumentationPage() {
               recharger puis retrouver le suivi.
             </p>
             <h3>Chaque jour</h3>
-            <Steps>
-              <li>
-                Dans <b>Collecte automatique</b>, activez <b>Récupération automatique</b>.
-              </li>
-              <li>
-                Choisissez l’heure quotidienne dans votre heure locale. Votre fuseau horaire est
-                détecté automatiquement par le navigateur et enregistré à l’ouverture du tableau de
-                bord.
-              </li>
-              <li>
-                Cliquez sur <b>Enregistrer les réglages</b>. Le bouton reste désactivé tant qu’aucun
-                réglage n’a changé.
-              </li>
-              <li>
-                Vérifiez la prochaine collecte affichée. Vous pouvez désactiver la programmation
-                tout en conservant la récupération manuelle.
-              </li>
-            </Steps>
+            <p>
+              Activez la programmation dans les <Link to="/settings">Réglages</Link>. La collecte
+              traite les publications du jour et de la veille dans votre fuseau horaire. Les
+              doublons, les articles sans date exploitable et ceux déjà analysés sont écartés du
+              nouveau traitement. Un échec sur une source ou un article reste visible sans empêcher
+              le traitement des autres.
+            </p>
+            <h3>Lire l’essentiel dans le Daily Brief</h3>
+            <p>
+              Une fois tous les articles de la collecte traités, l’IA produit la revue quotidienne à
+              partir des résumés pertinents. Elle regroupe les articles sur un même sujet,
+              hiérarchise les informations et fait ressortir les tendances. Le nombre de sujets
+              dépend des actualités disponibles : le brief ne complète pas artificiellement une
+              liste avec des informations anecdotiques.
+            </p>
+            <p>
+              Le dernier brief apparaît en premier sur le{" "}
+              <Link to="/dashboard">Tableau de bord</Link>, avec la date, les informations à retenir
+              et les tendances. Utilisez <b>Lire les résumés individuels</b> pour approfondir les
+              articles utilisés dans ce brief. La fenêtre affiche leurs résumés et les liens de
+              lecture, par pages de cinq articles. Le brief peut réutiliser des résumés pertinents
+              déjà disponibles pour le jour et la veille, sans relancer leur analyse. Si aucun
+              article n’est pertinent, la page affiche un état vide ; si la génération échoue, une
+              erreur est affichée et les résumés réussis restent disponibles dans l’historique.
+            </p>
             <Screenshot
               name="dashboard"
-              alt="Tableau de bord montrant l’heure quotidienne locale et la collecte manuelle"
-              caption="Programmez l’heure qui vous convient ou déclenchez un brief immédiatement."
+              alt="Tableau de bord mettant en avant la revue quotidienne, les tendances et la récupération manuelle"
+              caption="Le Daily Brief rassemble l’essentiel. Les résumés individuels restent consultables dans l’historique."
             />
             <h3>Le détail dans l’Historique d’exécutions</h3>
             <p>
@@ -748,10 +824,12 @@ export function DocumentationPage() {
               de résumé.
             </p>
             <p>
-              Chaque article à traiter correspond à une tâche de récupération du contenu et de
-              résumé IA. Si deux sources apportent 10 et 5 articles distincts à traiter, la collecte
-              comporte 15 tâches. Les doublons et les résumés déjà disponibles peuvent réduire le
-              nombre de nouveaux travaux.
+              Chaque article récent à analyser correspond à une tâche de récupération du contenu, de
+              vérification de pertinence et de résumé éventuel. Si deux sources apportent 10 et 5
+              articles distincts à traiter, la collecte comporte 15 tâches d’article, puis une étape
+              finale de génération du Daily Brief. La pertinence et le résumé sont demandés ensemble
+              à l’IA ; un article non pertinent ne reçoit pas de résumé et n’est pas analysé à
+              nouveau aux collectes suivantes.
             </p>
             <Screenshot
               name="jobs"
@@ -778,19 +856,19 @@ export function DocumentationPage() {
                 ["Terminé", "Le traitement est terminé et le résumé enregistré est consultable."],
                 [
                   "Ignoré",
-                  "L’article n’a pas été traité, par exemple si sa source ou son journal est désactivé.",
+                  "L’article a été écarté : source ou journal désactivé, ou contenu jugé non pertinent selon vos centres d’intérêt. Consultez la raison dans le suivi.",
                 ],
                 ["Échec", "Consultez le message et corrigez la source ou l’accès si nécessaire."],
               ]}
             />
             <p>
               Les articles de domaines désactivés sont ignorés pour l’extraction complète, l’IA et
-              la newsletter. Les articles déjà envoyés ne sont pas inclus dans le prochain brief.
-              S’il n’y a aucun nouvel article à envoyer, DailyBrief affiche ce résultat et n’envoie
-              pas de newsletter vide.
+              la newsletter. Les articles déjà envoyés ne sont pas livrés une deuxième fois par
+              email. S’il n’y a aucun nouvel article à envoyer, DailyBrief affiche ce résultat et
+              n’envoie pas de newsletter vide.
             </p>
           </Chapter>
-          <Chapter id="depannage" number="09" title="Quand quelque chose ne fonctionne pas">
+          <Chapter id="depannage" number="10" title="Quand quelque chose ne fonctionne pas">
             {[
               [
                 "Aucun article n’apparaît",
@@ -813,8 +891,20 @@ export function DocumentationPage() {
                 "Vérifiez le résultat de la collecte dans l’Historique d’exécutions, les sources actives, les journaux activés et votre dossier spam. « Aucun nouvel article à envoyer » signifie qu’aucun email n’était prévu. Une erreur d’envoi doit être vérifiée avec l’administrateur.",
               ],
               [
+                "Les articles visibles sur le site ne sont pas collectés",
+                "La veille quotidienne se limite aux publications d’aujourd’hui et d’hier dans votre fuseau horaire. Les dates absentes, invalides et futures sont ignorées. Vérifiez le sélecteur de date et l’ordre des articles si vous avez activé le tri du plus récent au plus ancien.",
+              ],
+              [
+                "Tous les articles sont jugés non pertinents",
+                "Relisez vos centres d’intérêt dans Réglages. Un prompt trop restrictif peut écarter les articles récents. Laissez le champ vide pour suivre tous les sujets des prochains articles à analyser. Les décisions déjà enregistrées ne sont pas relancées automatiquement.",
+              ],
+              [
+                "Le Daily Brief n’est pas encore disponible",
+                "La revue commence après la fin de toutes les tâches d’article. Consultez l’Historique d’exécutions pour voir si un résumé est encore en cours, si aucun article n’est pertinent ou si l’étape de synthèse a rencontré une erreur. Les résumés déjà réussis restent consultables.",
+              ],
+              [
                 "La connexion au journal échoue",
-                "Enregistrez les réglages avant le test. Contrôlez l’URL HTTPS, les champs, le bouton et l’élément visible uniquement après connexion. Un CAPTCHA, une double authentification ou une session expirée peut demander une action supplémentaire.",
+                "Enregistrez les réglages avant le test. Contrôlez l’URL HTTPS, les champs et le bouton de connexion. Un CAPTCHA, une double authentification ou une session expirée peut demander une action supplémentaire.",
               ],
             ].map(([title, text]) => (
               <details className="doc-troubleshoot" key={title}>
@@ -823,10 +913,18 @@ export function DocumentationPage() {
               </details>
             ))}
           </Chapter>
-          <Chapter id="glossaire" number="10" title="Le petit lexique">
+          <Chapter id="glossaire" number="11" title="Le petit lexique">
             <dl className="doc-glossary">
               {[
                 ["Source", "Un flux RSS ou une page web dont vous souhaitez suivre les articles."],
+                [
+                  "Daily Brief",
+                  "Une revue quotidienne des sujets importants et des tendances, générée à partir des résumés pertinents.",
+                ],
+                [
+                  "Pertinence",
+                  "La décision de conserver ou d’écarter un article selon vos centres d’intérêt.",
+                ],
                 ["RSS", "Un format de flux qui publie une liste d’articles et leurs informations."],
                 [
                   "Scraping",

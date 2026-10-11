@@ -3,6 +3,7 @@ import type { RunResult, ArticleJobResult, CollectionProgress } from "@dailybrie
 import type { Db } from "../db";
 import type { ProgressObserver } from "../progress";
 import { DailyBriefPipelineService } from "../pipeline";
+import type { BriefDispatcher } from "../pipeline";
 import { AppError } from "../errors";
 import { failureFor } from "./failure";
 import { ScrapingSummaryProcessor } from "./scraping-summary";
@@ -11,7 +12,7 @@ import {
   queueConnection,
   initialProgress,
   type CollectionJobData,
-  type ArticleJobData,
+  type AiJobData,
   type StoredProgress,
 } from "./jobs-manager";
 
@@ -25,6 +26,7 @@ export async function startConsumers(
       ids: string[],
       observer?: ProgressObserver,
     ) => Promise<ArticleJobResult[]>,
+    finalize: BriefDispatcher,
   ) => DailyBriefPipelineService,
   processor: ScrapingSummaryProcessor,
 ) {
@@ -32,7 +34,7 @@ export async function startConsumers(
   // Across all worker processes, keep Ollama's heavy requests bounded.
   await manager.summaries.setGlobalConcurrency(manager.config.AI_CONCURRENCY);
   await manager.collections.setGlobalConcurrency(manager.config.COLLECTION_CONCURRENCY);
-  const summaries = new Worker<ArticleJobData, ArticleJobResult>(
+  const summaries = new Worker<AiJobData, ArticleJobResult>(
     "article-summaries",
     async (job) => {
       const run = await db.dailyBriefRun.findFirst({
@@ -43,7 +45,11 @@ export async function startConsumers(
         },
       });
       if (!run || run.finishedAt)
-        return { articleId: job.data.articleId, status: "skipped", newSummary: false };
+        return {
+          articleId: job.data.articleId ?? job.data.runId,
+          status: "skipped",
+          newSummary: false,
+        };
       let writes = Promise.resolve();
       let knownFailure: ArticleJobResult["failure"];
       const report: ProgressObserver = (event) => {
@@ -72,12 +78,19 @@ export async function startConsumers(
           );
       };
       try {
+        if (job.name === "daily-brief") {
+          await processor.brief(job.data.userId, job.data.runId, report, assertOwned);
+          await writes;
+          return { articleId: job.data.runId, status: "completed", newSummary: false };
+        }
+        if (!job.data.articleId) throw new UnrecoverableError("Le job d'article est invalide.");
         const outcome = await processor.run(
           job.data.userId,
           job.data.articleId,
           report,
           undefined,
           assertOwned,
+          run.interestPrompt ?? undefined,
         );
         await writes;
         if (outcome.status === "failed") {
@@ -106,7 +119,8 @@ export async function startConsumers(
         await writes;
         // Never expose unexpected exceptions, provider responses, cookies or secrets in Redis.
         if (error instanceof UnrecoverableError) throw error;
-        const failure = knownFailure ?? failureFor(error, "ai");
+        const failure =
+          knownFailure ?? failureFor(error, job.name === "daily-brief" ? "brief" : "ai");
         await job.updateProgress({
           stage: failure.stage,
           status: "failed",
@@ -114,6 +128,11 @@ export async function startConsumers(
           message: failure.message,
           failure,
         });
+        if (
+          job.name === "daily-brief" &&
+          ["MODEL_MISSING", "BRIEF_UNAVAILABLE", "COLLECTION_FINISHED"].includes(failure.code)
+        )
+          throw new UnrecoverableError(failure.message);
         throw new Error(failure.message);
       }
     },
@@ -140,8 +159,9 @@ export async function startConsumers(
         const snapshot = progress;
         writes = writes.then(() => job.updateProgress(snapshot));
       };
-      const pipeline = makePipeline((_userId, _runId, ids, observer) =>
-        manager.dispatch(job, ids, observer),
+      const pipeline = makePipeline(
+        (_userId, _runId, ids, observer) => manager.dispatch(job, ids, observer),
+        (_userId, _runId, observer) => manager.dispatchBrief(job, observer),
       );
       try {
         const result = await pipeline.run(

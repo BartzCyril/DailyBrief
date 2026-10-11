@@ -48,7 +48,7 @@ export function ManualCollection({ onComplete }: { onComplete: () => Promise<voi
         <Feedback message={error || failure || ""} error />
         <Feedback message={message} />
         <p className="text-xs text-muted-foreground">
-          Les articles déjà envoyés sont exclus de votre prochain brief.
+          Seuls les articles publiés aujourd’hui et hier sont pris en compte.
         </p>
       </CardContent>
     </Card>

@@ -4,6 +4,12 @@ import type { ArticlePreview, SourcePreview } from "@dailybrief/shared";
 import { fetchRemoteText, type FetchText } from "./network";
 import { AppError } from "./errors";
 import { prepareFeedXml } from "./feed-xml";
+import {
+  filterRecentArticles,
+  isNewestFirst,
+  parsePublicationDate,
+  type RecentArticleOptions,
+} from "./recent-articles";
 
 export function plainText(html: string): string {
   const $ = load(html);
@@ -31,11 +37,15 @@ export function articleUrl(value: string, base: string): string | null {
     return null;
   }
 }
-export function articleDate(value: string): string | null {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+export function articleDate(value: string, timezone = "UTC"): string | null {
+  return parsePublicationDate(value, timezone);
 }
-export function parseRss(xml: string, url: string, allItems = false): SourcePreview {
+export function parseRss(
+  xml: string,
+  url: string,
+  allItems = false,
+  options?: RecentArticleOptions,
+): SourcePreview {
   const prepared = prepareFeedXml(xml);
   const root = record(
     new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, parseTagValue: false }).parse(
@@ -46,9 +56,40 @@ export function parseRss(xml: string, url: string, allItems = false): SourcePrev
   const feed = record(rss.channel ?? root.feed);
   if (!rss.channel && !root.feed)
     throw new AppError(422, "Ce document n'est pas un flux RSS ou Atom.", "INVALID_FEED");
-  const articles: ArticlePreview[] = list(feed.item ?? feed.entry)
-    .slice(0, allItems ? undefined : 500)
-    .map((item) => {
+  const items = list(feed.item ?? feed.entry).slice(0, allItems || options ? undefined : 500);
+  if (!items.length) throw new AppError(422, "Le flux ne contient aucun article.", "EMPTY_FEED");
+  const dates = items.map((item) => {
+    const entry = record(item);
+    return articleDate(
+      text(
+        entry.pubDate ??
+          entry.published ??
+          entry.updated ??
+          record(record(entry.date).time)["@_datetime"] ??
+          entry.date,
+      ),
+      options?.window.timezone,
+    );
+  });
+  const warnings = [...prepared.warnings];
+  // The entire feed is already available. Validate its order rather than inferring
+  // it from a prefix, which could discard a recent item placed after an old one.
+  const sorted = isNewestFirst(dates.map((publishedAt) => ({ publishedAt })));
+  if (options?.newestFirst && !sorted)
+    warnings.push(
+      "L'ordre chronologique annoncé n'est pas respecté : tous les items ont été vérifiés.",
+    );
+  const cutoff =
+    options && sorted
+      ? dates.findIndex((date) => new Date(date!).getTime() < options.window.start.getTime())
+      : -1;
+  if (cutoff >= 0)
+    warnings.push(
+      "Lecture du flux arrêtée aux articles antérieurs à la veille (ordre chronologique vérifié).",
+    );
+  const articles: ArticlePreview[] = items
+    .slice(0, cutoff < 0 ? undefined : cutoff + 1)
+    .map((item, index) => {
       const entry = record(item);
       const atomLinks = list(entry.link).map(record);
       const link =
@@ -65,30 +106,27 @@ export function parseRss(xml: string, url: string, allItems = false): SourcePrev
       return {
         title: plainText(text(entry.title)) || "Sans titre",
         url: rawLink ? articleUrl(rawLink, url) : null,
-        publishedAt: articleDate(
-          text(
-            entry.pubDate ??
-              entry.published ??
-              entry.updated ??
-              record(record(entry.date).time)["@_datetime"] ??
-              entry.date,
-          ),
-        ),
+        publishedAt: dates[index] ?? null,
         description: description || null,
         content: content || null,
         guid: text(entry.guid ?? entry.id) || null,
       };
     });
-  if (!articles.length) throw new AppError(422, "Le flux ne contient aucun article.", "EMPTY_FEED");
+  const recent = options ? filterRecentArticles(articles, options.window) : null;
+  warnings.push(...(recent?.warnings ?? []));
   return {
     feed: { title: plainText(text(feed.title)) || "Flux RSS", url },
-    articles,
-    ...(prepared.warnings.length ? { warnings: prepared.warnings } : {}),
+    articles: recent?.articles ?? articles,
+    ...(warnings.length ? { warnings } : {}),
   };
 }
 export class RssService {
   constructor(private fetchText: FetchText = fetchRemoteText) {}
-  async collect(url: string, allItems = false): Promise<SourcePreview> {
-    return parseRss(await this.fetchText(url), url, allItems);
+  async collect(
+    url: string,
+    allItems = false,
+    options?: RecentArticleOptions,
+  ): Promise<SourcePreview> {
+    return parseRss(await this.fetchText(url), url, allItems, options);
   }
 }

@@ -31,7 +31,7 @@ const collector = new SourceCollector(db, new RssService(), new ScrapingService(
 const consumers = await startConsumers(
   db,
   manager,
-  (dispatch) =>
+  (dispatch, finalize) =>
     new DailyBriefPipelineService(
       db,
       collector,
@@ -41,6 +41,7 @@ const consumers = await startConsumers(
       content,
       journals,
       dispatch,
+      finalize,
     ),
   new ScrapingSummaryProcessor(db, summary, content, journals),
 );

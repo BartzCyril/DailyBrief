@@ -1,6 +1,14 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { BookOpen, History, LayoutDashboard, LogOut, Newspaper, Rss } from "lucide-react";
+import {
+  BookOpen,
+  History,
+  LayoutDashboard,
+  LogOut,
+  Newspaper,
+  Rss,
+  Settings2,
+} from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "./ui/button";
 import { Feedback } from "./Feedback";
@@ -14,6 +22,7 @@ const navigation = [
   { to: "/sources", label: "Sources", icon: Rss },
   { to: "/journals", label: "Journaux", icon: Newspaper },
   { to: "/jobs", label: "Historique d’exécutions", icon: History },
+  { to: "/settings", label: "Réglages", icon: Settings2 },
   { to: "/documentation", label: "Documentation", icon: BookOpen },
 ];
 

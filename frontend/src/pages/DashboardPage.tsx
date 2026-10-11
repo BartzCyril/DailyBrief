@@ -5,7 +5,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Feedback } from "@/components/Feedback";
 import { NavigationFeedback } from "@/components/NavigationFeedback";
 import { Statistics } from "@/dashboard/Statistics";
-import { CollectionSettings } from "@/dashboard/CollectionSettings";
+import { CollectionSchedule } from "@/dashboard/CollectionSchedule";
+import { DailyBriefCard } from "@/dashboard/DailyBriefCard";
 import { ManualCollection } from "@/dashboard/ManualCollection";
 import { useDashboard } from "@/dashboard/useDashboard";
 import { PageHeading } from "@/components/PageHeading";
@@ -20,7 +21,7 @@ export function DashboardPage() {
           </>
         }
         eyebrow="Votre espace de veille"
-        description="Vos sources, votre rythme, l'essentiel dans votre boîte mail."
+        description="L’essentiel de l’actualité, sélectionné pour vous."
         actions={
           <Button asChild variant="outline">
             <Link to="/documentation">
@@ -50,12 +51,13 @@ export function DashboardPage() {
       ) : (
         dashboard.data && (
           <>
+            <DailyBriefCard
+              brief={dashboard.data.latestBrief}
+              hasSources={dashboard.data.sources.enabled > 0}
+            />
             <Statistics sources={dashboard.data.sources} />
             <section className="grid lg:grid-cols-[1.6fr_1fr] items-start gap-5">
-              <CollectionSettings
-                collection={dashboard.data.collection}
-                onSaved={dashboard.refresh}
-              />
+              <CollectionSchedule collection={dashboard.data.collection} />
               <ManualCollection onComplete={dashboard.refresh} />
             </section>
           </>

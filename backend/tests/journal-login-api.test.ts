@@ -30,7 +30,7 @@ describe("configured journal login API and pipeline", () => {
   const journals = new JournalAccessService(db, content, cipher, browser);
   const rss = new RssService(
     async () =>
-      "<rss><channel><item><title>Article abonné</title><link>https://notice.example/one</link></item></channel></rss>",
+      `<rss><channel><item><title>Article abonné</title><link>https://notice.example/one</link><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`,
   );
   const summary = {
     summarize: async (input: { content: string }) => {

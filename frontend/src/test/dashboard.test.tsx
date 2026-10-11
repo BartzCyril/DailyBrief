@@ -62,6 +62,7 @@ function mockApi() {
         enabled: body.collectionEnabled ?? data.collection.enabled,
         time: body.collectionTime ?? data.collection.time,
         timezone: body.timezone ?? data.collection.timezone,
+        interestPrompt: body.interestPrompt ?? data.collection.interestPrompt,
         nextRunAt:
           (body.collectionEnabled ?? data.collection.enabled) ? "2026-10-07T05:30:00Z" : null,
       };
@@ -77,9 +78,9 @@ function mockApi() {
   vi.stubGlobal("fetch", mock);
   return mock;
 }
-function mount() {
+function mount(path = "/dashboard") {
   render(
-    <MemoryRouter initialEntries={["/dashboard"]}>
+    <MemoryRouter initialEntries={[path]}>
       <App />
     </MemoryRouter>,
   );
@@ -112,10 +113,45 @@ test("shows statistics and links to separate sources and journals pages", async 
   );
   expect(screen.queryByRole("heading", { name: "Vos journaux" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Ajouter un journal" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Réglages" })).toHaveAttribute("href", "/settings");
+  expect(screen.getByRole("link", { name: "Modifier les réglages" })).toHaveAttribute(
+    "href",
+    "/settings",
+  );
+  expect(screen.queryByLabelText("Heure quotidienne")).toBeNull();
+  expect(screen.queryByRole("switch", { name: "Récupération automatique" })).toBeNull();
+  expect(screen.queryByLabelText("Quels articles vous intéressent ?")).toBeNull();
+});
+test("persists the interest prompt together with scheduling and keeps the save disabled until a change", async () => {
+  data.collection.interestPrompt = "Suivre les actualités React et TypeScript.";
+  const mock = mockApi();
+  mount("/settings");
+  const user = userEvent.setup();
+  const prompt = await screen.findByLabelText("Quels articles vous intéressent ?");
+  const save = screen.getByRole("button", { name: "Enregistrer les réglages" });
+  expect(prompt).toHaveValue(data.collection.interestPrompt);
+  expect(save).toBeDisabled();
+  await user.clear(prompt);
+  await user.type(prompt, "Suivre les outils IA. Ignorer les faits divers.");
+  expect(save).toBeEnabled();
+  await user.click(save);
+  await screen.findByText("Réglages enregistrés.");
+  const call = mock.mock.calls.find(([url]) => url.endsWith("/settings/dailybrief"));
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+    collectionEnabled: false,
+    collectionTime: "07:30",
+    timezone: "Europe/Paris",
+    interestPrompt: "Suivre les outils IA. Ignorer les faits divers.",
+  });
+  expect(save).toBeDisabled();
+  await user.clear(prompt);
+  await user.click(save);
+  await waitFor(() => expect(data.collection.interestPrompt).toBe(""));
+  expect(save).toBeDisabled();
 });
 test("only enables saving when collection settings differ from their saved values", async () => {
   const mock = mockApi();
-  mount();
+  mount("/settings");
   const ui = userEvent.setup();
   const save = await screen.findByRole("button", { name: "Enregistrer les réglages" });
   const toggle = screen.getByRole("switch", { name: "Récupération automatique" });
@@ -138,7 +174,7 @@ test("saves activation and local time with the automatically detected timezone",
   detectTimezone("America/New_York");
   data.collection.timezone = "America/New_York";
   const mock = mockApi();
-  mount();
+  mount("/settings");
   const ui = userEvent.setup();
   await ui.click(await screen.findByRole("switch", { name: "Récupération automatique" }));
   const time = screen.getByLabelText("Heure quotidienne");
@@ -151,6 +187,7 @@ test("saves activation and local time with the automatically detected timezone",
     collectionEnabled: true,
     collectionTime: "08:45",
     timezone: "America/New_York",
+    interestPrompt: "",
   });
   const save = screen.getByRole("button", { name: "Enregistrer les réglages" });
   expect(save).toBeDisabled();
@@ -172,7 +209,7 @@ test("prevents duplicate settings saves and preserves changes after a failed sav
         : normal(url, init),
     ),
   );
-  mount();
+  mount("/settings");
   const ui = userEvent.setup();
   const toggle = await screen.findByRole("switch", { name: "Récupération automatique" });
   await ui.click(toggle);
@@ -189,7 +226,7 @@ test("prevents duplicate settings saves and preserves changes after a failed sav
 test("disables automatic collection and shows no planned run", async () => {
   data.collection.enabled = true;
   data.collection.nextRunAt = "2026-10-07T05:30:00Z";
-  mount();
+  mount("/settings");
   await userEvent.click(await screen.findByRole("switch", { name: "Récupération automatique" }));
   await userEvent.click(screen.getByRole("button", { name: "Enregistrer les réglages" }));
   await screen.findByText("Réglages enregistrés.");
@@ -304,7 +341,7 @@ test.each(["America/New_York", "UTC"])(
     data.collection.enabled = true;
     const mock = mockApi();
     mount();
-    const save = await screen.findByRole("button", { name: "Enregistrer les réglages" });
+    await screen.findByText("Sources totales");
     expect(screen.queryByLabelText("Fuseau horaire")).toBeNull();
     const writes = mock.mock.calls.filter(([url]) => url.endsWith("/settings/dailybrief"));
     expect(writes).toHaveLength(1);
@@ -314,7 +351,7 @@ test.each(["America/New_York", "UTC"])(
       time: "07:30",
       timezone,
     });
-    expect(save).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Enregistrer les réglages" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Récupérer maintenant" }));
     await screen.findByText("Aucun nouvel article à envoyer.");
     expect(mock.mock.calls.filter(([url]) => url.endsWith("/settings/dailybrief"))).toHaveLength(1);
@@ -326,7 +363,7 @@ test.each(["", "Unknown/Zone"])(
   async (zone) => {
     detectTimezone(zone);
     const mock = mockApi();
-    mount();
+    mount("/settings");
     const user = userEvent.setup();
     await user.click(await screen.findByRole("switch", { name: "Récupération automatique" }));
     expect(mock.mock.calls.some((call) => call[0].endsWith("/settings/dailybrief"))).toBe(false);
@@ -352,7 +389,7 @@ test("shows a synchronization failure and retries without treating it as a setti
         : normal(url, init),
     ),
   );
-  mount();
+  mount("/settings");
   await screen.findByText("Synchronisation indisponible");
   fail = false;
   await userEvent.click(screen.getByRole("button", { name: "Réessayer" }));

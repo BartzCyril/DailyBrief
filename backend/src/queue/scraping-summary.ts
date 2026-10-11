@@ -1,13 +1,15 @@
 import type { ArticleJobResult, CollectionStage } from "@dailybrief/shared";
 import type { Db } from "../db";
 import type { Source } from "@prisma/client";
-import type { SummaryProvider } from "../ai";
+import { analyzeArticle, type SummaryProvider } from "../ai";
 import type { CollectedArticle } from "../collection";
 import { ArticleContentService } from "../article-content";
 import { JournalAccessService, journalAccessVersion } from "../journal-access";
 import { AppError } from "../errors";
 import { reportProgress, type ProgressObserver } from "../progress";
 import { failureFor } from "./failure";
+import { getSettings } from "../collection";
+import { DailyBriefService } from "../daily-brief";
 
 // Redis contains only identifiers; article bodies and credentials are read server-side.
 export class ScrapingSummaryProcessor {
@@ -17,6 +19,19 @@ export class ScrapingSummaryProcessor {
     private articleContent = new ArticleContentService(),
     private journals = new JournalAccessService(db, articleContent),
   ) {}
+  async brief(
+    userId: string,
+    runId: string,
+    observer?: ProgressObserver,
+    assertOwned?: () => Promise<void>,
+  ) {
+    return new DailyBriefService(this.db, this.summary, this.journals).run(
+      userId,
+      runId,
+      observer,
+      assertOwned,
+    );
+  }
 
   async run(
     userId: string,
@@ -24,6 +39,7 @@ export class ScrapingSummaryProcessor {
     observer?: ProgressObserver,
     collected?: CollectedArticle,
     assertOwned: () => Promise<void> = async () => {},
+    interestPrompt?: string,
   ): Promise<ArticleJobResult> {
     let article = await this.db.article.findFirst({
       where: { id: articleId, userId },
@@ -33,6 +49,7 @@ export class ScrapingSummaryProcessor {
     if (
       !article ||
       !article.source.enabled ||
+      article.relevant === false ||
       (await this.db.newsletterArticle.findFirst({
         where: { articleId, newsletter: { status: { in: ["SENT", "SENDING"] } } },
       }))
@@ -137,6 +154,9 @@ export class ScrapingSummaryProcessor {
               keyPoints: [],
               summarizedAt: null,
               summaryError: null,
+              relevant: null,
+              relevanceReason: null,
+              analyzedAt: null,
             },
           })),
         };
@@ -199,32 +219,60 @@ export class ScrapingSummaryProcessor {
       }
     }
     stage = "ai";
-    if (!article.summary || !article.summarizedAt) {
+    if (!article.summary || !article.summarizedAt || !article.analyzedAt) {
       report({
         stage,
         status: "running",
-        message: `Envoi à l'IA : ${article.title}`,
+        message: `Analyse de pertinence et résumé : ${article.title}`,
         completed: processed,
         total: 1,
       });
       try {
         await assertCurrent();
-        const summary = await this.summary.summarize(
-          {
-            title: article.title,
-            content: article.content!,
-            url: article.contentUrl ?? article.url,
-          },
-          (message) =>
-            report({
-              stage: "ai",
-              status: "running",
-              message: `${article!.title} : ${message}`,
-              completed: processed,
-              total: 1,
-            }),
+        const input = {
+          title: article.title,
+          content: article.content!,
+          url: article.contentUrl ?? article.url,
+        };
+        const notify = (message: string) =>
+          report({
+            stage: "ai",
+            status: "running",
+            message: `${article!.title} : ${message}`,
+            completed: processed,
+            total: 1,
+          });
+        const prompt = interestPrompt ?? (await getSettings(this.db, userId)).interestPrompt;
+        const analysis = await analyzeArticle(
+          this.summary,
+          { ...input, description: article.description, interestPrompt: prompt },
+          notify,
         );
         await assertCurrent();
+        if (!analysis.relevant) {
+          await this.db.article.update({
+            where: { id: article.id },
+            data: {
+              relevant: false,
+              relevanceReason: analysis.reason,
+              analyzedAt: new Date(),
+              summaryTitle: null,
+              summary: null,
+              keyPoints: [],
+              summarizedAt: null,
+              summaryError: null,
+            },
+          });
+          report({
+            stage,
+            status: "skipped",
+            message: `Article non pertinent : ${article.title}. ${analysis.reason}`,
+            completed: processed + 1,
+            total: 1,
+          });
+          return { ...outcome, status: "skipped" };
+        }
+        const summary = analysis.summary;
         article = {
           ...article,
           ...(await this.db.article.update({
@@ -235,6 +283,9 @@ export class ScrapingSummaryProcessor {
               keyPoints: summary.keyPoints,
               summarizedAt: new Date(),
               summaryError: null,
+              relevant: true,
+              relevanceReason: analysis.reason,
+              analyzedAt: new Date(),
             },
           })),
         };

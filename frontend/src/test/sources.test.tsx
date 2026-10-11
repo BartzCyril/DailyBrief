@@ -107,7 +107,11 @@ test("saves the tested URL without userId and refreshes the list", async () => {
   const call = mock.mock.calls.find(
     (call) => call[0] === "/api/sources" && call[1]?.method === "POST",
   );
-  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ url: source.url, type: "RSS" });
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({
+    url: source.url,
+    type: "RSS",
+    newestFirst: false,
+  });
 });
 test("shows normalization warnings without blocking a usable RSS preview", async () => {
   warnings = ["Les esperluettes et entités HTML non échappées ont été normalisées."];
@@ -181,6 +185,7 @@ test("saves the optional RSS document selector and invalidates the preview when 
   expect(JSON.parse(String(saved?.[1]?.body))).toEqual({
     url: source.url,
     type: "RSS",
+    newestFirst: false,
     articleLinkSelector: "a.accessToPrimaryDoc.primarydoc.changed",
   });
 });
@@ -196,4 +201,29 @@ test("rejects invalid RSS document selector syntax before testing the feed", asy
   await userEvent.click(screen.getByRole("button", { name: "Tester" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("sélecteur CSS valide");
   expect(mock.mock.calls.some((call) => call[0].endsWith("/rss/test"))).toBe(false);
+});
+
+test("keeps chronological collection disabled by default and saves an explicit RSS opt-in", async () => {
+  const mock = mockApi();
+  mount();
+  await userEvent.type(await screen.findByLabelText("URL du flux RSS"), source.url);
+  const order = screen.getByRole("switch", { name: "Articles du plus récent au plus ancien" });
+  expect(order).not.toBeChecked();
+  expect(order).toHaveAccessibleDescription(/Activez uniquement si cet ordre est garanti/);
+  await userEvent.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Un article");
+  await userEvent.click(order);
+  expect(order).toBeChecked();
+  await userEvent.click(screen.getByRole("button", { name: "Enregistrer le flux" }));
+  await screen.findByText(source.url);
+  const tested = mock.mock.calls.find((call) => call[0].endsWith("/rss/test"));
+  expect(JSON.parse(String(tested?.[1]?.body))).toEqual({ url: source.url });
+  const saved = mock.mock.calls.find(
+    (call) => call[0] === "/api/sources" && call[1]?.method === "POST",
+  );
+  expect(JSON.parse(String(saved?.[1]?.body))).toEqual({
+    url: source.url,
+    type: "RSS",
+    newestFirst: true,
+  });
 });

@@ -31,9 +31,9 @@ const features = [
   },
   {
     icon: SlidersHorizontal,
-    tag: "VOTRE RYTHME",
+    tag: "VOS PRIORITÉS",
     title: "Gardez la main sur votre veille.",
-    text: "Activez vos sources, choisissez vos journaux et programmez l’heure de votre brief. Suivez chaque article pendant la collecte.",
+    text: "Décrivez vos centres d’intérêt, choisissez vos journaux et programmez la collecte. L’IA sélectionne les articles qui vous concernent.",
   },
 ];
 
@@ -53,8 +53,8 @@ export function HomePage() {
             Plus <em>d’essentiel.</em>
           </h1>
           <p className="hero-description">
-            Vos sources préférées, résumées par l’IA et réunies dans un email. Commencez la journée
-            avec les idées qui comptent pour vous.
+            L’actualité récente de vos sources, filtrée selon vos centres d’intérêt. L’IA regroupe
+            les sujets importants dans une revue quotidienne, à lire ici ou dans votre boîte mail.
           </p>
           <div className="hero-actions">
             <Link to={start} className="public-button">
@@ -172,14 +172,14 @@ export function HomePage() {
             [
               "02",
               Sparkles,
-              "Laissez l’IA synthétiser",
-              "Lancez la collecte : les articles accessibles sont récupérés et résumés avec leurs points clés.",
+              "Choisissez vos priorités",
+              "Décrivez vos centres d’intérêt. L’IA filtre les articles d’aujourd’hui et d’hier, puis résume ceux qui vous concernent.",
             ],
             [
               "03",
               Mail,
               "Ouvrez votre brief",
-              "Recevez les nouveaux articles dans votre boîte mail, à la demande ou à l’heure choisie.",
+              "Retrouvez une revue des sujets importants et des tendances sur le tableau de bord. Les résumés restent disponibles pour approfondir.",
             ],
           ].map(([number, Icon, title, text]) => {
             const StepIcon = Icon as typeof Mail;
@@ -205,8 +205,8 @@ export function HomePage() {
             <em>Vos règles.</em>
           </h2>
           <p>
-            Programmez votre rendez-vous quotidien ou lancez une collecte quand vous en avez besoin.
-            La progression reste disponible même après un rechargement.
+            Retrouvez l’essentiel en premier : les actualités regroupées par sujet et les tendances
+            du jour. Personnalisez votre veille dans Réglages ou lancez une collecte à la demande.
           </p>
           <Link className="public-text-link" to="/documentation#collecte">
             Découvrir le tableau de bord <ArrowRight size={18} aria-hidden="true" />
@@ -227,7 +227,7 @@ export function HomePage() {
             src="/documentation/dashboard.png"
             width={screenshots.dashboard.width}
             height={screenshots.dashboard.height}
-            alt="Tableau de bord de démonstration : réglages de collecte quotidienne et récupération manuelle"
+            alt="Tableau de bord de démonstration : Daily Brief, tendances du jour et récupération manuelle"
             loading="lazy"
           />
           <figcaption>Capture du produit avec des données de démonstration.</figcaption>

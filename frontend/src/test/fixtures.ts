@@ -23,5 +23,7 @@ export const emptyDashboard: Dashboard = {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     lastRunAt: null,
     nextRunAt: null,
+    interestPrompt: "",
   },
+  latestBrief: null,
 };

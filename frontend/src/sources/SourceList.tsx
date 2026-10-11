@@ -66,13 +66,14 @@ export function SourceList({
     url: string,
     config?: ScrapingConfig,
     articleLinkSelector?: string | null,
+    newestFirst?: boolean,
   ) {
     if (busy) return;
     setBusy(source.id);
     setError("");
     setMessage("");
     try {
-      await sourcesApi.update(source.id, url, config, articleLinkSelector);
+      await sourcesApi.update(source.id, url, config, articleLinkSelector, newestFirst);
       await onChanged?.();
       setEditingId("");
       setMessage("Source modifiée.");
@@ -224,8 +225,8 @@ export function SourceList({
                                 blocked ? source.id : current === source.id ? "" : current,
                               )
                             }
-                            onSave={(url, config, articleLinkSelector) =>
-                              updateSource(source, url, config, articleLinkSelector)
+                            onSave={(url, config, articleLinkSelector, newestFirst) =>
+                              updateSource(source, url, config, articleLinkSelector, newestFirst)
                             }
                             onCancel={() => {
                               setEditingId("");

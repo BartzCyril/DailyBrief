@@ -229,16 +229,25 @@ export function SourceWorkflowPage() {
               <Feedback inline message={test?.error ?? ""} error />
               {test?.result && (
                 <section
-                  aria-label={`Résumé IA de ${article.title}`}
+                  aria-label={`${test.result.summary ? "Résumé" : "Analyse"} IA de ${article.title}`}
                   className="space-y-3 rounded-md border bg-muted/30 p-4"
                 >
-                  <h3 className="font-semibold">{test.result.summary.title}</h3>
-                  <p className="whitespace-pre-wrap text-sm">{test.result.summary.summary}</p>
-                  <ul className="list-disc space-y-1 pl-5 text-sm">
-                    {test.result.summary.keyPoints.map((point, i) => (
-                      <li key={i}>{point}</li>
-                    ))}
-                  </ul>
+                  {test.result.summary ? (
+                    <>
+                      <h3 className="font-semibold">{test.result.summary.title}</h3>
+                      <p className="whitespace-pre-wrap text-sm">{test.result.summary.summary}</p>
+                      <ul className="list-disc space-y-1 pl-5 text-sm">
+                        {test.result.summary.keyPoints.map((point, i) => (
+                          <li key={i}>{point}</li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : (
+                    <div className="space-y-2">
+                      <h3 className="font-semibold">Article non pertinent</h3>
+                      <p className="text-sm text-muted-foreground">{test.result.reason}</p>
+                    </div>
+                  )}
                   <details>
                     <summary className="cursor-pointer text-sm font-medium">
                       Voir le texte extrait ({test.result.content.length} caractères)

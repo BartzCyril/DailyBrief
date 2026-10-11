@@ -190,7 +190,9 @@ test.each([
           "https://example.com/news/page/{page}",
         );
     }
-    for (const element of document.querySelectorAll("input, button[role=combobox]")) {
+    for (const element of document.querySelectorAll(
+      "input:not([aria-hidden=true]), button[role=combobox]",
+    )) {
       const hintId = element.getAttribute("aria-describedby");
       expect(hintId).toBeTruthy();
       expect(document.getElementById(hintId!)).toHaveTextContent(/\S/);
@@ -198,6 +200,9 @@ test.each([
     expect(screen.getByLabelText("Sélecteur du lien")).toHaveAccessibleDescription(
       "Le lien doit porter un attribut href.",
     );
+    expect(
+      screen.getByRole("switch", { name: "Articles du plus récent au plus ancien" }),
+    ).toHaveAccessibleDescription(/cet ordre est garanti/);
     expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Tester" }));
     await screen.findByText(preview.articles[0]!.title);

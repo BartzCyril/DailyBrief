@@ -64,7 +64,7 @@ const noticeHtml =
   '<article><p>Notice de bibliothèque à ne pas résumer.</p><a class="accessToPrimaryDoc primarydoc" target="_blank" href="https://publisher.example/full-article">Consulter le document</a></article>';
 const testRss = new RssService(
   async () =>
-    "<rss><channel><title>Flux de test</title><item><title>Article RSS</title><link>https://fixture.example/rss-article</link><description>Informations RSS contrôlées.</description></item></channel></rss>",
+    `<rss><channel><title>Flux de test</title><item><title>Article RSS</title><link>https://fixture.example/rss-article</link><description>Informations RSS contrôlées.</description><pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`,
 );
 const selectorPage: FetchPage = async (url, options) => {
   assert(
@@ -87,7 +87,7 @@ const selectorPage: FetchPage = async (url, options) => {
     contentType: "text/html",
     text: url.includes("rss-article")
       ? noticeHtml
-      : '<main><article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p><time datetime="2026-10-09">9 octobre 2026</time></article><button class="more">Charger plus</button></main>',
+      : `<main><article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p><time datetime="${new Date().toISOString()}">Aujourd'hui</time></article><button class="more">Charger plus</button></main>`,
   };
 };
 const selectorClient = new OllamaClient(config, async (_url, init) => {
@@ -150,7 +150,7 @@ const services = {
           ? '<article><h2>Article supplémentaire</h2><a href="/scraped-next">Lire</a></article>'
           : '<article><h2>Dernier article chargé</h2><a href="/scraped-last">Lire</a></article>',
       });
-    return `<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p><time datetime="2026-10-09">9 octobre 2026</time></article><button id="more" class="more">Plus</button><script>
+    return `<article><h2>Article scraping</h2><a href="/scraped-article">Lire</a><p>Informations scraping contrôlées.</p><time datetime="${new Date().toISOString()}">Aujourd'hui</time></article><button id="more" class="more">Plus</button><script>
       let batch=0; const button=document.querySelector('#more');
       button.onclick=async()=>{
         if(button.classList.contains('fetching')) return;
@@ -163,6 +163,14 @@ const services = {
       };</script>`;
   }),
   summary: {
+    analyze: async (input) => {
+      await summaryGate;
+      return {
+        relevant: true,
+        reason: "Article pertinent pour les centres d'intérêt de test.",
+        summary: { title: input.title, summary: input.content, keyPoints: ["Point clé de test"] },
+      };
+    },
     summarize: async (input) => {
       await summaryGate;
       return {
@@ -171,6 +179,19 @@ const services = {
         keyPoints: ["Point clé de test"],
       };
     },
+    generateBrief: async (input) => ({
+      headline: "Votre Daily Brief de test",
+      lead: "Les informations importantes de la veille, regroupées et expliquées.",
+      stories: [
+        {
+          title: "Les nouvelles du cloud",
+          text: "Les articles éclairent les évolutions du cloud et des outils numériques.",
+          articleIds: input.articles.map((article) => article.id),
+        },
+      ],
+      otherNews: [],
+      trends: "Les outils numériques continuent d'évoluer.",
+    }),
   },
   email: {
     send: async (message) => {
@@ -189,7 +210,7 @@ const journals = new JournalAccessService(
 const consumers = await startConsumers(
   db,
   manager,
-  (dispatch) =>
+  (dispatch, finalize) =>
     new DailyBriefPipelineService(
       db,
       new SourceCollector(db, services.rss, services.scraping, services.articleContent),
@@ -199,6 +220,7 @@ const consumers = await startConsumers(
       services.articleContent,
       journals,
       dispatch,
+      finalize,
     ),
   new ScrapingSummaryProcessor(db, services.summary, services.articleContent, journals),
 );
@@ -788,9 +810,18 @@ try {
   await page.getByRole("link", { name: "Tableau de bord", exact: true }).click();
   await page.waitForURL("**/dashboard");
   await page.setViewportSize({ width: 1440, height: 1000 });
+  assert.equal(await page.getByLabel("Heure quotidienne").count(), 0);
+  await page
+    .getByRole("navigation", { name: "Navigation principale" })
+    .getByRole("link", { name: "Réglages", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "Réglages", exact: true }).waitFor();
   await page.getByRole("switch", { name: "Récupération automatique", exact: true }).click();
   assert.equal(await page.getByLabel("Fuseau horaire", { exact: true }).count(), 0);
   await page.getByLabel("Heure quotidienne").fill("08:45");
+  await page
+    .getByLabel("Quels articles vous intéressent ?")
+    .fill("Suivre le cloud, React et les outils de développement.");
   await page.getByRole("button", { name: "Enregistrer les réglages" }).click();
   await page.getByText("Réglages enregistrés.").waitFor();
   const automaticSettings = await db.dailyBriefSettings.findUniqueOrThrow({
@@ -799,9 +830,15 @@ try {
   assert.equal(automaticSettings.timezone, "America/New_York");
   assert.equal(automaticSettings.collectionTime, "08:45");
   assert.equal(automaticSettings.collectionEnabled, true);
+  assert.equal(
+    automaticSettings.interestPrompt,
+    "Suivre le cloud, React et les outils de développement.",
+  );
+  assert(await page.getByRole("button", { name: "Enregistrer les réglages" }).isDisabled());
+  await page.getByRole("link", { name: "Tableau de bord", exact: true }).click();
   scrapingRequests.length = 0;
   await page.getByRole("button", { name: "Récupérer maintenant" }).click();
-  await page.getByText("Envoi à l'IA : Article RSS", { exact: true }).waitFor();
+  await page.getByText("Analyse de pertinence et résumé : Article RSS", { exact: true }).waitFor();
   assert.deepEqual(
     scrapingRequests,
     [
@@ -872,6 +909,7 @@ try {
     .getByText("Newsletter acceptée par le serveur mail.")
     .waitFor();
   assert.equal(messages.length, 1);
+  await page.getByRole("heading", { name: "Votre Daily Brief de test", exact: true }).waitFor();
   assert.equal(messages[0]?.to, email);
   assert(messages[0]?.text.includes("Information finale conservée."));
   assert(messages[0]?.text.includes("Article RSS"));

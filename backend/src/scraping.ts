@@ -13,6 +13,7 @@ import { articleDate, articleUrl } from "./rss";
 import { AppError, UpstreamHttpError } from "./errors";
 import { ConcurrencyLimiter } from "./concurrency";
 import { createHash } from "node:crypto";
+import { filterRecentArticles, type RecentArticleOptions } from "./recent-articles";
 
 export function paginationUrl(url: string, config: ScrapingConfig, page: number): string {
   const pagination = config.pagination!;
@@ -44,7 +45,11 @@ function samePage(first: string, second: string): boolean {
   };
   return normalize(first) === normalize(second);
 }
-async function extract(page: Page, config: ScrapingConfig): Promise<ArticlePreview[]> {
+async function extract(
+  page: Page,
+  config: ScrapingConfig,
+  timezone = "UTC",
+): Promise<ArticlePreview[]> {
   const entries = await page.evaluate(
     (config) =>
       Array.from(document.querySelectorAll(config.articleSelector)).map((element) => ({
@@ -72,7 +77,7 @@ async function extract(page: Page, config: ScrapingConfig): Promise<ArticlePrevi
     .map((item) => ({
       ...item,
       url: item.url ? articleUrl(item.url, page.url()) : null,
-      publishedAt: item.publishedAt ? articleDate(item.publishedAt) : null,
+      publishedAt: item.publishedAt ? articleDate(item.publishedAt, timezone) : null,
     }));
 }
 export class ScrapingService {
@@ -81,8 +86,12 @@ export class ScrapingService {
     private fetchText?: FetchText,
     private createNetwork: BrowserNetworkFactory = () => BrowserNetwork.create(),
   ) {}
-  async collect(url: string, input: ScrapingConfig): Promise<SourcePreview> {
-    return this.scrape(url, input, false);
+  async collect(
+    url: string,
+    input: ScrapingConfig,
+    options?: RecentArticleOptions,
+  ): Promise<SourcePreview> {
+    return this.scrape(url, input, false, options);
   }
   async validateFirstPage(url: string, input: ScrapingConfig): Promise<void> {
     await this.scrape(url, input, true);
@@ -91,6 +100,7 @@ export class ScrapingService {
     url: string,
     input: ScrapingConfig,
     firstPageOnly: boolean,
+    options?: RecentArticleOptions,
   ): Promise<SourcePreview> {
     const config = scrapingSchema.parse(input);
     return this.limiter.run(async () => {
@@ -293,13 +303,47 @@ export class ScrapingService {
         }
         const articles: ArticlePreview[] = [];
         const warnings: string[] = [];
+        const readArticles = () => extract(page, config, options?.window.timezone);
+        let ordered = Boolean(options?.newestFirst);
+        let previousDate = Infinity;
+        const observed = new Set<string>();
+        const reachedArchives = (entries: ArticlePreview[]) => {
+          if (!ordered || !options) return false;
+          let old = false;
+          // Repeated DOM entries after a scroll/click must not look like a date inversion.
+          // Check the complete loaded batch before applying a cutoff.
+          for (const entry of entries) {
+            const key = previewKey(entry);
+            if (observed.has(key)) continue;
+            observed.add(key);
+            const timestamp = entry.publishedAt ? new Date(entry.publishedAt).getTime() : NaN;
+            if (!Number.isFinite(timestamp) || timestamp > previousDate) {
+              ordered = false;
+              warnings.push(
+                "L'ordre chronologique annoncé ne peut pas être confirmé : le parcours continue sans arrêt anticipé.",
+              );
+              return false;
+            }
+            previousDate = timestamp;
+            if (timestamp < options.window.start.getTime()) old = true;
+          }
+          if (old)
+            warnings.push(
+              "Parcours arrêté aux articles antérieurs à la veille : source déclarée du plus récent au plus ancien.",
+            );
+          return old;
+        };
         if (config.mode === "SCROLL") {
           await navigate(url);
-          articles.push(...(await extract(page, config)));
-          for (let i = 0; i < (firstPageOnly ? 0 : config.scroll!.maxScrolls); i++) {
+          const initial = await readArticles();
+          articles.push(...initial);
+          let stop = reachedArchives(initial);
+          for (let i = 0; !stop && i < (firstPageOnly ? 0 : config.scroll!.maxScrolls); i++) {
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
             await page.waitForTimeout(config.scroll!.waitAfterScrollMs);
-            articles.push(...(await extract(page, config)));
+            const entries = await readArticles();
+            articles.push(...entries);
+            stop = reachedArchives(entries);
           }
         } else if (config.mode === "LOAD_MORE") {
           await navigate(url);
@@ -316,10 +360,12 @@ export class ScrapingService {
               "INVALID_LOAD_MORE_BUTTON",
             );
           }
-          articles.push(...deduplicatePreviews(await extract(page, config)));
+          const initial = deduplicatePreviews(await readArticles());
+          articles.push(...initial);
           const seen = new Set(articles.map(previewKey));
           let clicks = 0;
-          while (!firstPageOnly) {
+          let stop = reachedArchives(initial);
+          while (!firstPageOnly && !stop) {
             const buttons = page.locator(buttonSelector).filter({ visible: true });
             const count = await buttons.count();
             if (!count) {
@@ -398,7 +444,7 @@ export class ScrapingService {
                   let previous = "";
                   let changedAt = Date.now();
                   while (Date.now() < deadline) {
-                    const entries = await extract(page, config);
+                    const entries = await readArticles();
                     const snapshot = JSON.stringify(entries);
                     if (snapshot !== previous) {
                       previous = snapshot;
@@ -429,7 +475,7 @@ export class ScrapingService {
             }
             if (!entries) {
               // Check extraction again so an invalid selector cannot pass as an exhausted button.
-              await extract(page, config);
+              await readArticles();
               warnings.push(
                 `Chargement arrêté après ${clicks} clic(s) : aucun nouvel article dans le délai de ${waitTimeoutMs} ms. Les articles déjà récupérés sont conservés.`,
               );
@@ -461,6 +507,7 @@ export class ScrapingService {
               );
               break;
             }
+            stop = reachedArchives(entries);
           }
         } else {
           const seenPages = new Set<string>();
@@ -484,7 +531,7 @@ export class ScrapingService {
               }
               throw error;
             }
-            const entries = await extract(page, config);
+            const entries = await readArticles();
             if (!entries.length) break;
             // Ignore ordering changes when a site repeats a page or cycles through
             // previous pages instead of honouring the requested page number.
@@ -504,7 +551,7 @@ export class ScrapingService {
               seenArticles.add(key);
               articles.push(article);
             }
-            if (firstPageOnly) break;
+            if (firstPageOnly || reachedArchives(entries)) break;
           }
         }
         const result = deduplicatePreviews(articles);
@@ -514,7 +561,13 @@ export class ScrapingService {
             "Aucun article trouvé. Vérifiez les sélecteurs CSS.",
             "EMPTY_SCRAPING",
           );
-        return { mode: config.mode, articles: result, ...(warnings.length ? { warnings } : {}) };
+        const recent = options ? filterRecentArticles(result, options.window) : null;
+        warnings.push(...(recent?.warnings ?? []));
+        return {
+          mode: config.mode,
+          articles: recent?.articles ?? result,
+          ...(warnings.length ? { warnings } : {}),
+        };
       } catch (error) {
         if (networkError instanceof AppError) throw networkError;
         if (error instanceof AppError) throw error;

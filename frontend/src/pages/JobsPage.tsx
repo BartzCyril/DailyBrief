@@ -28,10 +28,10 @@ const labels: Record<QueueState, string> = {
 export function JobsPage() {
   const { run: current, busy, start, error: collectionError } = useCollection();
   const [history, setHistory] = useState<CollectionRunSnapshot[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
   const [run, setRun] = useState<CollectionRunSnapshot | null>(null);
   const [result, setResult] = useState<{ data: ArticleJobsPage; key: string } | null>(null);
   const [params, setParams] = useSearchParams();
+  const selected = params.get("run");
   const requestedPage = Number(params.get("page") ?? 1);
   const page =
     Number.isInteger(requestedPage) && requestedPage >= 1 && requestedPage <= 100000
@@ -47,6 +47,18 @@ export function JobsPage() {
   const id = selected ?? current?.id;
   const key = JSON.stringify([id, page, status]);
   const jobs = result?.key === key ? result.data : null;
+  function selectRun(next: string | null, replace = false, resetPage = true) {
+    setParams(
+      (previous) => {
+        const updated = new URLSearchParams(previous);
+        if (resetPage) updated.delete("page");
+        if (next) updated.set("run", next);
+        else updated.delete("run");
+        return updated;
+      },
+      { replace },
+    );
+  }
   function setPage(next: number, replace = false) {
     setParams(
       (previous) => {
@@ -78,12 +90,15 @@ export function JobsPage() {
         const [runs, detail, rows] = await Promise.all([
           api<CollectionRunSnapshot[]>("/collection/runs", { signal: controller.signal }),
           id
-            ? api<CollectionRunSnapshot>(`/collection/runs/${id}`, { signal: controller.signal })
-            : null,
-          id
-            ? api<ArticleJobsPage>(`/collection/runs/${id}/jobs?page=${page}&status=${status}`, {
+            ? api<CollectionRunSnapshot>(`/collection/runs/${encodeURIComponent(id)}`, {
                 signal: controller.signal,
               })
+            : null,
+          id
+            ? api<ArticleJobsPage>(
+                `/collection/runs/${encodeURIComponent(id)}/jobs?page=${page}&status=${status}`,
+                { signal: controller.signal },
+              )
             : null,
         ]);
         if (stopped) return;
@@ -93,7 +108,7 @@ export function JobsPage() {
         if (rows && rows.page !== page) setPage(rows.page, true);
         setError("");
         active = Boolean(detail?.active);
-        if (!id && runs[0]) setSelected(runs[0].id);
+        if (!id && runs[0]) selectRun(runs[0].id, true, false);
       } catch (error) {
         if (!stopped) setError(errorMessage(error));
       } finally {
@@ -117,12 +132,11 @@ export function JobsPage() {
     <main id="app-content" tabIndex={-1} className="app-page app-page-wide">
       <PageHeading
         title="Historique d’exécutions"
-        description="Suivez l'extraction, les résumés IA et l'envoi de votre brief."
+        description="Suivez la collecte, les résumés IA et votre revue quotidienne."
         actions={
           <Button
             onClick={() => {
-              setSelected(null);
-              setPage(1);
+              selectRun(null);
               void start();
             }}
             disabled={busy}
@@ -158,8 +172,7 @@ export function JobsPage() {
                 id="collection-run"
                 value={id ?? ""}
                 onChange={(event) => {
-                  setSelected(event.target.value);
-                  setPage(1);
+                  selectRun(event.target.value);
                   setResult(null);
                   setRun(null);
                 }}
@@ -269,7 +282,7 @@ export function JobsPage() {
                       </td>
                       <td className="px-4 py-4">{job.attempts}</td>
                       <td className="min-w-40 px-4 py-4">
-                        {job.error ?? job.progress?.message ?? "—"}
+                        {job.error ?? job.relevanceReason ?? job.progress?.message ?? "—"}
                       </td>
                       <td className="px-4 py-4">
                         {job.summary ? (

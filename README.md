@@ -39,12 +39,12 @@ L’accueil public se trouve sur `http://localhost:5173/` et le guide détaillé
 `http://localhost:5173/documentation`. Ces pages sont accessibles sans compte.
 Le guide explique la création des sources RSS et scraping, la recherche de
 sélecteurs dans Chrome/Edge, l’assistance IA et la demande d’aide, les accès aux
-journaux, les tests du workflow et le suivi des collectes. Un exercice de
+journaux, les tests du workflow, les réglages de centres d’intérêt et le suivi des collectes. Un exercice de
 sélecteurs fonctionne localement dans le navigateur, sans requête IA.
 
 Les captures versionnées dans `frontend/public/documentation/` utilisent les
 vrais écrans avec des réponses API de démonstration : sources paginées, switches des
-journaux, formulaire d’accès, historique et fenêtre du résumé IA. Les notifications
+journaux, formulaire d’accès, réglages, Daily Brief du dashboard, historique et fenêtre du résumé IA. Les notifications
 temporaires sont fermées avant les captures des formulaires ; l’exemple d’échec de
 l’assistance conserve sa notification complète. Pour les régénérer et
 vérifier l’accueil et le guide sur ordinateur et mobile :
@@ -61,7 +61,7 @@ Les pages publiques et le guide n’exigent aucune nouvelle variable d’environ
 
 L’espace utilisateur reprend la palette, le logo et les composants du site public :
 navigation, en-têtes, cartes, boutons et formulaires. Le script de capture vérifie aussi
-les pages du dashboard, des sources, des journaux et de l’historique jusqu’à 320px,
+les pages du dashboard, des réglages, des sources, des journaux et de l’historique jusqu’à 320px,
 ainsi que l’accès au contenu au clavier.
 
 ## Authentification et sources
@@ -86,7 +86,7 @@ une suppression rend la page demandée inexistante, la dernière page disponible
 est renvoyée. La recherche traite `%` et `_` comme des caractères littéraux.
 Le tableau `/sources` transmet ces critères à chaque changement et ne charge
 que la page affichée. `PATCH /sources/:id` accepte `{enabled}`
-ou `{url?, scrapingConfig?}` pour modifier son adresse et sa configuration.
+ou `{url?, scrapingConfig?, newestFirst?}` pour modifier son adresse et sa configuration.
 L'ancien champ `urlTemplate` reste accepté avec `url` pour les clients précédents.
 `DELETE /sources/:id` supprime une source du compte et ses articles associés.
 
@@ -164,9 +164,39 @@ avec un transport contrôlé, jamais des sites publics instables.
 
 ## Collecte, IA et newsletter
 
-L'utilisateur règle uniquement l'heure quotidienne (`HH:mm`). Le navigateur détecte
-son fuseau IANA avec `Intl.DateTimeFormat().resolvedOptions().timeZone` et le
-synchronise automatiquement à l'ouverture ou à l'actualisation du tableau de bord,
+La collecte manuelle et la collecte programmée partagent le même pipeline :
+
+```text
+RSS / scraping → dates J et J−1 → déduplication → pertinence et résumé IA
+    → fin de toutes les tâches d’article → Daily Brief → affichage / newsletter
+```
+
+La période est figée au début de l’exécution dans le fuseau du compte, de minuit la veille
+à minuit le lendemain. Ce sont des jours calendaires, y compris aux changements d’heure,
+plutôt qu’une durée glissante de 48 heures. Un article sans date exploitable, ancien ou
+daté après cette période est ignoré et signalé avant la récupération de son contenu complet.
+Les dates françaises affichées par les pages de scraping sont prises en charge, ainsi que
+les dates ISO et RSS. Le workflow de test conserve son aperçu de configuration indépendant.
+
+Une source peut déclarer explicitement `newestFirst=true` avec le switch **Articles du plus
+récent au plus ancien**. Ce réglage est désactivé par défaut : activez-le uniquement si le
+site garantit cet ordre, sans articles épinglés anciens au début. En collecte, rencontrer
+une publication antérieure à J−1 arrête le parcours, la pagination et les chargements
+supplémentaires de cette source. Sans cette garantie, le collecteur parcourt la source
+normalement et filtre les dates individuellement. Les autres sources continuent même si
+une source rencontre une erreur.
+
+La page **Réglages** (`/settings`) permet d’activer la récupération quotidienne, de choisir
+l’heure locale (`HH:mm`) et de décrire ses **centres d’intérêt** (6 000 caractères maximum).
+Le tableau de bord conserve l’affichage du planning et la collecte manuelle ; les réglages
+ne s’y modifient plus. Un prompt vide conserve tous les sujets. Les préférences orientent
+uniquement les articles jamais analysés : une modification ne réanalyse pas automatiquement
+les décisions et résumés existants. `PATCH /settings/dailybrief` accepte `interestPrompt`
+avec `collectionEnabled`, `collectionTime` et `timezone`.
+
+Le navigateur détecte son fuseau IANA avec `Intl.DateTimeFormat().resolvedOptions().timeZone`
+et le synchronise automatiquement à l'ouverture ou à l'actualisation du tableau de bord
+ou de la page Réglages,
 via `GET /dashboard` et `PATCH /settings/dailybrief` uniquement s'il a changé.
 Le serveur conserve ce fuseau et recalcule la prochaine échéance sans modifier
 l'heure ni l'activation. La programmation reste valable lorsque le navigateur est
@@ -219,6 +249,39 @@ Les résumés demandent explicitement `think: false` afin que Qwen3 fournisse
 directement le JSON final. Un contenu de raisonnement seul ne sert jamais de résumé.
 Les réponses vides, interrompues par la limite de génération ou mal formatées sont
 signalées séparément dans le journal de collecte ; les articles restent réessayables.
+
+En collecte, l’analyse demande la **pertinence et le résumé éventuel ensemble** :
+`{relevant, reason, summary}`. Si `relevant=false`, `summary` doit être `null` ; aucun résumé
+n’est produit et l’article est persisté comme non pertinent avec sa raison et `analyzedAt`.
+Ces articles apparaissent comme ignorés dans l’historique et ne sont pas retraités à chaque
+collecte. Pour un article pertinent, le même résultat contient le titre du résumé, le texte
+et les points clés. Les longues pages restent traitées intégralement par portions : la
+décision et la synthèse suivent le mécanisme de découpage existant. Un JSON invalide,
+une pertinence ambiguë ou une synthèse tronquée échouent explicitement et restent réessayables.
+Les identifiants de journaux et les cookies ne sont jamais inclus dans ces prompts.
+
+Après la fin de toutes les tâches d’article, une **tâche finale Daily Brief** produit une revue
+globale des articles pertinents et résumés de la période. Le prompt regroupe les sujets,
+élimine les répétitions, hiérarchise les faits et les explique brièvement ; il ne concatène
+pas les résumés et n’impose aucun nombre minimal de sujets. Les références sont validées
+contre les articles fournis. Le résultat structuré (`headline`, `lead`, `stories`, `otherNews`,
+`trends`) est sauvegardé dans `DailyBrief`, lié à l’exécution par une contrainte unique sur
+`runId`. La date, le fuseau, la période et le prompt sont figés pour l’exécution : une reprise
+après interruption n’utilise pas soudainement les réglages d’une autre journée.
+
+Le dernier Daily Brief apparaît en priorité sur `/dashboard`. **Lire les résumés individuels**
+ouvre les articles utilisés pour cette édition dans une fenêtre paginée par cinq, avec leur
+résumé, leurs points clés et leur lien de lecture. Le brief peut réutiliser des résumés déjà
+analysés lors d’une collecte précédente, tant qu’ils appartiennent à J / J−1 ; ils ne sont pas
+analysés à nouveau. `GET /dailybrief/:id/articles?page=1` charge au plus cinq résumés de cette
+édition, avec les contrôles du propriétaire et de l’accès actuel aux articles ; le navigateur
+ne reçoit pas la liste entière. `GET /dashboard` retourne `latestBrief` uniquement pour le compte
+connecté. Aucun article pertinent et résumé disponible pour la période donne un brief
+`EMPTY`, sans appel IA de synthèse ni email vide.
+Un échec de génération donne un brief `FAILED` avec une erreur ; les résumés déjà sauvegardés
+restent consultables. Une reprise réutilise un brief terminé au lieu de le générer deux fois.
+Appliquez les migrations avec `bun run db:migrate` et régénérez le client avec
+`bun run db:generate` après la mise à jour ; aucune nouvelle variable d’environnement n’est requise.
 
 `POST /collection/run` et le scheduler mettent la collecte dans la même queue Redis. GUID, URL
 canonique sans tracking et hash détectent les doublons. Le fingerprint déterministe
@@ -293,12 +356,15 @@ Le processus `bun run dev:worker` récupère les sources, enregistre les entrée
 puis crée **un job `scraping-summary` par article restant à traiter**, RSS comme
 scraping. Par exemple, 10 articles uniques dans la première source et 5 dans la
 seconde créent 15 jobs. Les doublons et les articles déjà envoyés ne créent pas de
-nouveaux jobs. Les articles anciens encore en attente sont également repris.
-Le worker extrait le contenu complet, appelle l'IA si aucun résumé valide n'est
-déjà sauvegardé et enregistre le résultat en PostgreSQL. Les journaux désactivés
+nouveaux jobs. Les articles encore en attente sont repris uniquement s’ils appartiennent
+à la période J / J−1 et n’ont pas déjà été jugés non pertinents.
+Le worker extrait le contenu complet, analyse la pertinence selon le prompt figé de
+l’exécution et résume uniquement les articles retenus. Les résultats sont enregistrés
+en PostgreSQL avant la revue finale. Les journaux désactivés
 restent recensés ; leurs jobs sont indiqués comme ignorés sans extraction ni IA.
-La newsletter est préparée une fois les jobs terminés, avec les articles autorisés
-et résumés avec succès. Les tests « A à Z » gardent leur fonctionnement indépendant.
+Le Daily Brief commence une fois tous les jobs d’article terminés ; la newsletter est
+ensuite préparée avec les articles autorisés et résumés avec succès. Les tests « A à Z »
+gardent leur fonctionnement indépendant.
 
 L'organisation reprend le gestionnaire et les consommateurs des exemples fournis,
 adaptés à **BullMQ** : `backend/src/queue/jobs-manager.ts`, `consumers.ts` et
@@ -391,9 +457,11 @@ des jobs : les consommateurs lisent les données et accès protégés côté ser
 
 ### Modifier une source
 
-La navigation commune propose « Tableau de bord », « Sources » (`/sources`) et
-« Journaux » (`/journals`). Le tableau de bord conserve les statistiques et les
-réglages de collecte ; chaque page de configuration se charge indépendamment.
+La navigation commune propose « Tableau de bord », « Sources » (`/sources`),
+« Journaux » (`/journals`), « Historique d’exécutions » (`/jobs`) et « Réglages » (`/settings`).
+Le tableau de bord met le dernier Daily Brief en avant, avec les statistiques,
+le planning en lecture seule et la récupération manuelle ; chaque page de configuration
+se charge indépendamment.
 
 La page « Sources » sépare les flux RSS et les sites de scraping en deux onglets.
 Chaque tableau affiche au plus cinq sources par page, avec recherche par URL et

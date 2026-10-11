@@ -7,6 +7,7 @@ import type {
   CollectionRunSnapshot,
   Source,
   JournalPreview,
+  DailyBriefSnapshot,
 } from "@dailybrief/shared";
 
 const root = resolve(import.meta.dir, "../..");
@@ -122,7 +123,7 @@ const run: CollectionRunSnapshot = {
   total: 15,
   completed: 10,
   failed: 0,
-  skipped: 0,
+  skipped: 1,
   events: [
     {
       stage: "collection",
@@ -141,6 +142,41 @@ const run: CollectionRunSnapshot = {
   ],
   result: null,
   error: null,
+};
+const brief: DailyBriefSnapshot = {
+  id: "demo-brief",
+  runId: run.id,
+  date: "2026-10-10",
+  timezone: "Europe/Paris",
+  status: "READY",
+  articleCount: 3,
+  error: null,
+  createdAt: day,
+  content: {
+    headline: "L’IA et le cloud passent à l’échelle des équipes",
+    lead: "Des outils plus accessibles et des infrastructures mieux adaptées rapprochent les nouveaux usages du quotidien des organisations.",
+    stories: [
+      {
+        title: "Le cloud évolue pour accompagner les nouveaux usages",
+        text: "Les acteurs du cloud présentent des offres adaptées aux besoins des équipes. La souplesse des infrastructures devient un enjeu central pour déployer de nouveaux outils sans multiplier les contraintes.",
+        articleIds: ["article-demo-1"],
+      },
+      {
+        title: "L’IA se rapproche des métiers",
+        text: "Les équipes expérimentent des assistants dans leurs tâches courantes. Le sujet dépasse la performance du modèle : l’intégration aux méthodes de travail détermine son utilité.",
+        articleIds: ["article-demo-2"],
+      },
+    ],
+    otherNews: [
+      {
+        title: "La culture explore d’autres formes de transmission",
+        text: "De nouvelles initiatives facilitent la découverte et le partage des œuvres.",
+        articleIds: ["article-demo-3"],
+      },
+    ],
+    trends:
+      "Un fil commun : rendre les nouveaux outils accessibles et privilégier des usages concrets plutôt que la seule nouveauté technique.",
+  },
 };
 const manifest: Record<string, { width: number; height: number }> = {};
 let authenticated = true;
@@ -211,6 +247,7 @@ try {
     if (path === "/collection/runs/demo-collection/jobs") {
       const jobs: ArticleJobSnapshot[] = Array.from({ length: 15 }, (_, i) => {
         const completed = i < 2 || (i >= 5 && i < 13);
+        const skipped = i === 1;
         return {
           id: `demo-job-${i}`,
           articleId: `article-demo-${i + 1}`,
@@ -218,28 +255,34 @@ try {
           sourceUrl: sources[i % 2]!.url,
           state: completed ? "completed" : i === 2 ? "active" : "waiting",
           attempts: completed || i === 2 ? 1 : 0,
-          skipped: false,
+          skipped,
           progress:
             i === 2
               ? { stage: "ai", status: "running", message: "Résumé IA en cours", at: day }
               : null,
           error: null,
-          summary: completed
-            ? {
-                title: titles[i % titles.length]!,
-                summary:
-                  "Les acteurs du secteur présentent de nouvelles solutions. Cet exemple illustre le résumé IA enregistré après la récupération complète de l’article.",
-                keyPoints: [
-                  "Les informations essentielles sont conservées.",
-                  "Le résumé peut être consulté sans relancer l’IA.",
-                ],
-              }
-            : null,
+          relevanceReason: skipped ? "Article sans lien avec les centres d’intérêt choisis." : null,
+          summary:
+            completed && !skipped
+              ? {
+                  title: titles[i % titles.length]!,
+                  summary:
+                    "Les acteurs du secteur présentent de nouvelles solutions. Cet exemple illustre le résumé IA enregistré après la récupération complète de l’article.",
+                  keyPoints: [
+                    "Les informations essentielles sont conservées.",
+                    "Le résumé peut être consulté sans relancer l’IA.",
+                  ],
+                }
+              : null,
         };
       });
       const params = new URL(route.request().url()).searchParams;
       const status = params.get("status") ?? "all";
-      const filtered = jobs.filter((job) => status === "all" || job.state === status);
+      const filtered = jobs.filter(
+        (job) =>
+          status === "all" ||
+          (status === "skipped" ? job.skipped : job.state === status && !job.skipped),
+      );
       const page = Math.min(
         Number(params.get("page") ?? 1),
         Math.max(1, Math.ceil(filtered.length / 5)),
@@ -270,6 +313,21 @@ try {
     }
     if (path === "/journals")
       return respond({ journals, lastInventoriedAt: day, unresolvedCount: 0 });
+    if (path === `/dailybrief/${brief.id}/articles`) {
+      const articles = titles.map((title, index) => ({
+        id: `article-demo-${index + 1}`,
+        title,
+        url: `https://articles.exemple.fr/article-${index + 1}`,
+        publishedAt: day,
+        summary:
+          "Cet exemple présente les informations essentielles de l’article retenu pour la revue quotidienne. Le résumé reste accessible sans nouvel appel à l’IA.",
+        keyPoints: [
+          "Les faits principaux sont synthétisés.",
+          "Le lien original permet d’approfondir.",
+        ],
+      }));
+      return respond({ articles, total: articles.length, page: 1, pageSize: 5 });
+    }
     if (path === "/dashboard")
       return respond({
         sources: {
@@ -284,7 +342,10 @@ try {
           timezone: "Europe/Paris",
           lastRunAt: day,
           nextRunAt: "2026-10-11T05:30:00.000Z",
+          interestPrompt:
+            "Je souhaite suivre l’IA, le cloud et les nouveaux outils pour les équipes. Je m’intéresse aussi aux initiatives culturelles. Ignore les faits divers et les actualités sans rapport avec ces thèmes.",
         },
+        latestBrief: brief,
       });
     if (path === "/ai/selectors/analyze" && assistanceIncomplete)
       return respond(
@@ -330,11 +391,24 @@ try {
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto(`${origin}/dashboard`);
   await page.getByRole("heading", { name: "Votre DailyBrief" }).waitFor();
-  await page.getByLabel("Heure quotidienne").waitFor();
+  await page.getByRole("heading", { name: brief.content!.headline, exact: true }).waitFor();
   await capture(page, "dashboard");
+  await page.getByRole("button", { name: "Lire les résumés individuels", exact: true }).click();
+  const briefDialog = page.getByRole("dialog", { name: "Résumés individuels", exact: true });
+  await briefDialog.getByText("1–3 sur 3 articles", { exact: true }).waitFor();
+  await briefDialog.locator("summary").filter({ hasText: titles[0]! }).click();
+  await briefDialog.getByRole("heading", { name: "Points clés", exact: true }).waitFor();
+  if (await briefDialog.getByRole("button", { name: "Page suivante des résumés" }).isEnabled())
+    throw new Error("Une édition de trois articles doit tenir sur une seule page.");
+  await page.keyboard.press("Escape");
+  await briefDialog.waitFor({ state: "hidden" });
+  await page.goto(`${origin}/settings`);
+  await page.getByLabel("Heure quotidienne").waitFor();
+  await page.getByLabel("Quels articles vous intéressent ?").waitFor();
+  await capture(page, "settings");
   showRun = true;
   await page.goto(`${origin}/jobs`);
-  await page.getByText("10/15 articles traités · 0 en échec · 0 ignorés").waitFor();
+  await page.getByText("10/15 articles traités · 0 en échec · 1 ignorés").waitFor();
   await page.getByText("1–5 sur 15 articles", { exact: true }).waitFor();
   await capture(page, "jobs");
   await page
@@ -351,6 +425,7 @@ try {
     await page.setViewportSize({ width, height: 1000 });
     for (const path of [
       "/dashboard",
+      "/settings",
       "/sources",
       "/journals",
       "/jobs",
@@ -360,7 +435,9 @@ try {
       await page.goto(`${origin}${path}`);
       await page.locator("main h1").waitFor();
       await page.getByRole("navigation", { name: "Navigation principale" }).waitFor();
-      if (path === "/dashboard") await page.getByLabel("Heure quotidienne").waitFor();
+      if (path === "/dashboard")
+        await page.getByRole("heading", { name: brief.content!.headline, exact: true }).waitFor();
+      else if (path === "/settings") await page.getByLabel("Heure quotidienne").waitFor();
       else if (path === "/sources")
         await page.getByText("1–5 sur 6 sources", { exact: true }).waitFor();
       else if (path === "/journals")
@@ -369,6 +446,16 @@ try {
         await page.getByText("1–5 sur 15 articles", { exact: true }).waitFor();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
       if (overflow) throw new Error(`Débordement de l’espace utilisateur : ${path} à ${width}px`);
+      if (path === "/dashboard") {
+        await page
+          .getByRole("button", { name: "Lire les résumés individuels", exact: true })
+          .click();
+        await briefDialog.getByText("1–3 sur 3 articles", { exact: true }).waitFor();
+        if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth))
+          throw new Error(`Débordement de la fenêtre des résumés : ${width}px`);
+        await page.keyboard.press("Escape");
+        await briefDialog.waitFor({ state: "hidden" });
+      }
       if (["/dashboard", "/sources", "/jobs"].includes(path) && (width === 1440 || width === 390))
         await page.screenshot({
           path: `/tmp/dailybrief-app-${path.slice(1)}-${width}.png`,
@@ -378,7 +465,7 @@ try {
     }
   }
   await page.goto(`${origin}/dashboard`);
-  await page.getByLabel("Heure quotidienne").waitFor();
+  await page.getByRole("heading", { name: brief.content!.headline, exact: true }).waitFor();
   await page.keyboard.press("Tab");
   const skip = page.getByRole("link", { name: "Aller au contenu", exact: true });
   if (!(await skip.evaluate((element) => element === document.activeElement)))

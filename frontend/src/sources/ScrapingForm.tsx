@@ -17,10 +17,12 @@ import {
   type ScrapingDraft,
 } from "./ScrapingFields";
 import { SelectorAssistance } from "./SelectorAssistance";
+import { SourceOrderField } from "./SourceOrderField";
 export function ScrapingForm() {
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
   const [draft, setDraft] = useState(defaultDraft);
+  const [newestFirst, setNewestFirst] = useState(false);
   const [tested, setTested] = useState<{
     preview: SourcePreview;
     url: string;
@@ -72,7 +74,7 @@ export function ScrapingForm() {
     setBusy("save");
     setError("");
     try {
-      await sourcesApi.saveScraping(tested.url, tested.config);
+      await sourcesApi.saveScraping(tested.url, tested.config, newestFirst);
       navigate("/sources?type=scraping", { state: { message: "Source de scraping ajoutée." } });
     } catch (error) {
       setError(errorMessage(error));
@@ -112,6 +114,7 @@ export function ScrapingForm() {
         />
         <fieldset disabled={pending} className="space-y-5">
           <ScrapingFields draft={draft} update={update} />
+          <SourceOrderField checked={newestFirst} onChange={setNewestFirst} disabled={pending} />
         </fieldset>
         <div className="flex flex-wrap gap-3">
           <Button type="submit" disabled={pending}>

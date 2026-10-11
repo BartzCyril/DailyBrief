@@ -17,6 +17,7 @@ model User {
   articles Article[]
   newsletters Newsletter[]
   runs DailyBriefRun[]
+  briefs DailyBrief[]
   journalAccess JournalAccess[]
 }
 model JournalAccess {
@@ -44,6 +45,7 @@ model DailyBriefSettings {
   collectionEnabled Boolean @default(false)
   collectionTime String @default("07:30")
   timezone String @default("Europe/Paris")
+  interestPrompt String @default("")
   lastCollectionAt DateTime?
   nextCollectionAt DateTime?
   createdAt DateTime @default(now())
@@ -64,6 +66,7 @@ model Source {
   articleLinkSelector String?
   journalInventory Json?
   enabled Boolean @default(true)
+  newestFirst Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   articles Article[]
@@ -94,6 +97,9 @@ model Article {
   keyPoints String[] @default([])
   summarizedAt DateTime?
   summaryError String?
+  relevant Boolean?
+  relevanceReason String?
+  analyzedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   newsletters NewsletterArticle[]
@@ -101,6 +107,7 @@ model Article {
   @@unique([userId, contentHash])
   @@unique([sourceId, guid])
   @@index([userId, summarizedAt])
+  @@index([userId, publishedAt, relevant])
 }
 enum NewsletterStatus {
   GENERATING
@@ -150,6 +157,30 @@ model DailyBriefRun {
   emailSent Boolean @default(false)
   error String?
   sourceResults Json?
+  periodStart DateTime?
+  periodEnd DateTime?
+  briefDate String?
+  timezone String?
+  interestPrompt String?
+  brief DailyBrief?
   @@index([userId, startedAt])
   @@index([queuePrefix, finishedAt])
+}
+
+model DailyBrief {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runId String @unique
+  run DailyBriefRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  date String
+  timezone String
+  status String @default("GENERATING")
+  content Json?
+  articleCount Int @default(0)
+  articleIds String[] @default([])
+  error String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([userId, date, createdAt])
 }

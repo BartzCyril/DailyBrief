@@ -7,7 +7,7 @@ import type { Redis } from "./redis";
 import type { RssService } from "./rss";
 import type { ScrapingService } from "./scraping";
 import type { ArticleContentService } from "./article-content";
-import type { SummaryProvider } from "./ai";
+import { analyzeArticle, type SummaryProvider } from "./ai";
 import { requireAuth } from "./auth";
 import { AppError } from "./errors";
 import { scrapingSchema } from "../../shared/src/scraping";
@@ -15,6 +15,7 @@ import { startEventStream } from "./event-stream";
 import { reportProgress } from "./progress";
 import { JournalAccessService, journalAccessVersion } from "./journal-access";
 import { recordJournalInventory } from "./journal-inventory";
+import { getSettings } from "./collection";
 
 const PREVIEW_TTL_SECONDS = 1800;
 const previewKey = (userId: string, sourceId: string, id: string) =>
@@ -86,7 +87,7 @@ export function sourceWorkflowRouter(
     const { send, close } = startEventStream<WorkflowSummaryEvent>(res);
     const report = (
       stage: "content" | "ai",
-      status: "running" | "completed" | "failed",
+      status: "running" | "completed" | "failed" | "skipped",
       message: string,
     ) =>
       reportProgress((progress) => send({ type: "progress", progress }), {
@@ -128,11 +129,35 @@ export function sourceWorkflowRouter(
       }
       stage = "ai";
       report(stage, "running", `Envoi à l'IA : ${article.title}`);
-      const result = await summary.summarize({ title: article.title, content, url }, (message) =>
-        report("ai", "running", message),
+      const settings = await getSettings(db, userId);
+      const result = await analyzeArticle(
+        summary,
+        {
+          title: article.title,
+          description: article.description,
+          content,
+          url,
+          interestPrompt: settings.interestPrompt,
+        },
+        (message) => report("ai", "running", message),
       );
-      report(stage, "completed", "Résumé IA terminé.");
-      send({ type: "result", result: { content, url, summary: result } });
+      report(
+        stage,
+        result.relevant ? "completed" : "skipped",
+        result.relevant
+          ? "Résumé IA terminé."
+          : "Article non pertinent pour vos centres d'intérêt.",
+      );
+      send({
+        type: "result",
+        result: {
+          content,
+          url,
+          summary: result.summary,
+          relevant: result.relevant,
+          reason: result.reason,
+        },
+      });
     } catch (error) {
       const message =
         error instanceof AppError ? error.message : "Le test de cet article a échoué.";

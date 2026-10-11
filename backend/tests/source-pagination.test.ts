@@ -58,6 +58,7 @@ describe("server-side source pagination", () => {
       "articleLinkSelector",
       "enabled",
       "id",
+      "newestFirst",
       "scrapingConfig",
       "type",
       "url",

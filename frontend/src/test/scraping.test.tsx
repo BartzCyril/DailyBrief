@@ -266,7 +266,27 @@ test("saves a tested scraping source without userId and opens the scraping tab",
   );
   const body = JSON.parse(String(call?.[1]?.body));
   expect(body.type).toBe("SCRAPING");
+  expect(body.newestFirst).toBe(false);
   expect(body.userId).toBeUndefined();
+});
+
+test("saves chronological scraping opt-in without changing the extraction preview request", async () => {
+  const mock = mockApi();
+  mount();
+  const ui = await fill();
+  const order = screen.getByRole("switch", { name: "Articles du plus récent au plus ancien" });
+  expect(order).not.toBeChecked();
+  await ui.click(order);
+  await ui.click(screen.getByRole("button", { name: "Tester" }));
+  await screen.findByText("Article extrait");
+  await ui.click(screen.getByRole("button", { name: "Enregistrer la source" }));
+  await screen.findByText("SCRAPING");
+  const tested = mock.mock.calls.find((call) => call[0].endsWith("/scraping/test"));
+  expect(JSON.parse(String(tested?.[1]?.body)).newestFirst).toBeUndefined();
+  const saved = mock.mock.calls.find(
+    (call) => call[0].endsWith("/sources") && call[1]?.method === "POST",
+  );
+  expect(JSON.parse(String(saved?.[1]?.body)).newestFirst).toBe(true);
 });
 test("shows scraping errors and keeps save disabled", async () => {
   fail = true;

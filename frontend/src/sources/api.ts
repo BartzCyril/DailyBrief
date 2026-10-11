@@ -50,19 +50,23 @@ export const sourcesApi = {
       method: "POST",
       body: { url, ...(articleLinkSelector !== undefined ? { articleLinkSelector } : {}) },
     }),
-  saveRss: (url: string, articleLinkSelector?: string | null) =>
+  saveRss: (url: string, articleLinkSelector?: string | null, newestFirst = false) =>
     api<Source>("/sources", {
       method: "POST",
       body: {
         url,
         type: "RSS",
+        newestFirst,
         ...(articleLinkSelector !== undefined ? { articleLinkSelector } : {}),
       },
     }),
   testScraping: (url: string, config: ScrapingConfig) =>
     api<SourcePreview>("/sources/scraping/test", { method: "POST", body: { url, config } }),
-  saveScraping: (url: string, scrapingConfig: ScrapingConfig) =>
-    api<Source>("/sources", { method: "POST", body: { url, type: "SCRAPING", scrapingConfig } }),
+  saveScraping: (url: string, scrapingConfig: ScrapingConfig, newestFirst = false) =>
+    api<Source>("/sources", {
+      method: "POST",
+      body: { url, type: "SCRAPING", scrapingConfig, newestFirst },
+    }),
   setEnabled: (id: string, enabled: boolean) =>
     api<void>(`/sources/${id}`, { method: "PATCH", body: { enabled } }),
   update: (
@@ -70,6 +74,7 @@ export const sourcesApi = {
     url: string,
     scrapingConfig?: ScrapingConfig,
     articleLinkSelector?: string | null,
+    newestFirst?: boolean,
   ) =>
     api<void>(`/sources/${id}`, {
       method: "PATCH",
@@ -77,6 +82,7 @@ export const sourcesApi = {
         url,
         ...(scrapingConfig !== undefined ? { scrapingConfig } : {}),
         ...(articleLinkSelector !== undefined ? { articleLinkSelector } : {}),
+        ...(newestFirst !== undefined ? { newestFirst } : {}),
       },
     }),
   workflow: (sourceId: string, signal?: AbortSignal) =>

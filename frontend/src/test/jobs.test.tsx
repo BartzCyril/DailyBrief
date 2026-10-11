@@ -115,6 +115,21 @@ function mount(path = "/jobs") {
     </MemoryRouter>,
   );
 }
+test("opens the collection requested from a Daily Brief and displays the reason for ignored articles", async () => {
+  articleJobs[1]!.relevanceReason = "Hors des centres d’intérêt : faits divers.";
+  mount("/jobs?run=old&status=skipped");
+  expect(await screen.findByRole("cell", { name: "Ignoré" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("cell", { name: "Hors des centres d’intérêt : faits divers." }),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("Récupération")).toHaveValue("old");
+  expect(
+    fetchMock.mock.calls.some(([url]) =>
+      url.endsWith("/collection/runs/old/jobs?page=1&status=skipped"),
+    ),
+  ).toBe(true);
+  expect(screen.getByLabelText("Récupération en cours", { exact: true })).toBeInTheDocument();
+});
 test("restores scheduled progress and shows five server-paginated articles at a time", async () => {
   const user = userEvent.setup();
   mount();

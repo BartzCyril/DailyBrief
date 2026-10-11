@@ -71,6 +71,7 @@ const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
             ...(body.articleLinkSelector !== undefined
               ? { articleLinkSelector: body.articleLinkSelector }
               : {}),
+            ...(body.newestFirst !== undefined ? { newestFirst: body.newestFirst } : {}),
           },
     );
     if (pauseSave)
@@ -133,6 +134,58 @@ test("edits a scraping URL without replacing its extraction configuration", asyn
   expect(
     screen.getByRole("switch", { name: "Activer https://example.com/new-news" }),
   ).toBeChecked();
+});
+
+test.each([rss, scraping])(
+  "tracks and persists chronological collection changes for $type without changing the source URL",
+  async (source) => {
+    stored = [source];
+    render(<Harness />);
+    const ui = userEvent.setup();
+    await ui.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
+    const order = screen.getByRole("switch", { name: "Articles du plus récent au plus ancien" });
+    const save = screen.getByRole("button", { name: "Enregistrer les modifications" });
+    expect(order).not.toBeChecked();
+    expect(save).toBeDisabled();
+    await ui.click(order);
+    expect(save).toBeEnabled();
+    await ui.click(order);
+    expect(save).toBeDisabled();
+    await ui.click(order);
+    await ui.click(save);
+    await screen.findByText("Source modifiée.");
+    expect(stored[0]?.newestFirst).toBe(true);
+    expect(stored[0]?.url).toBe(source.url);
+    expect(stored[0]?.enabled).toBe(source.enabled);
+    await ui.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
+    const restored = screen.getByRole("switch", {
+      name: "Articles du plus récent au plus ancien",
+    });
+    expect(restored).toBeChecked();
+    expect(screen.getByRole("button", { name: "Enregistrer les modifications" })).toBeDisabled();
+    await ui.click(restored);
+    await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+    await screen.findByText("Source modifiée.");
+    expect(stored[0]?.newestFirst).toBe(false);
+    const calls = fetcher.mock.calls.filter((call) => call[1]?.method === "PATCH");
+    expect(calls).toHaveLength(2);
+    expect(JSON.parse(String(calls[0]?.[1]?.body)).newestFirst).toBe(true);
+    expect(JSON.parse(String(calls[1]?.[1]?.body)).newestFirst).toBe(false);
+  },
+);
+
+test("preserves an existing chronological setting when only the URL changes", async () => {
+  stored = [{ ...rss, newestFirst: true }];
+  render(<Harness />);
+  const ui = await edit(rss, "https://example.com/new-feed");
+  expect(
+    screen.getByRole("switch", { name: "Articles du plus récent au plus ancien" }),
+  ).toBeChecked();
+  await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
+  await screen.findByText("Source modifiée.");
+  expect(stored[0]?.newestFirst).toBe(true);
+  const call = fetcher.mock.calls.find((call) => call[1]?.method === "PATCH");
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({ url: "https://example.com/new-feed" });
 });
 test("cancels editing and refuses invalid URLs without a server mutation", async () => {
   render(<Harness />);

@@ -23,6 +23,7 @@ export type Source = {
   enabled: boolean;
   scrapingConfig: ScrapingConfig | null;
   articleLinkSelector?: string | null;
+  newestFirst?: boolean;
 };
 export type SourceListQuery = {
   type?: Source["type"];
@@ -66,12 +67,48 @@ export type Dashboard = {
     timezone: string;
     lastRunAt: string | null;
     nextRunAt: string | null;
+    interestPrompt?: string;
   };
+  latestBrief?: DailyBriefSnapshot | null;
 };
 export type SettingsInput = {
   collectionEnabled: boolean;
   collectionTime: string;
   timezone: string;
+  interestPrompt?: string;
+};
+export type BriefStory = { title: string; text: string; articleIds: string[] };
+export type DailyBriefContent = {
+  headline: string;
+  lead: string;
+  stories: BriefStory[];
+  otherNews: BriefStory[];
+  trends: string;
+};
+export type DailyBriefSnapshot = {
+  id: string;
+  runId: string;
+  date: string;
+  timezone: string;
+  status: "READY" | "EMPTY" | "FAILED";
+  content: DailyBriefContent | null;
+  articleCount: number;
+  error: string | null;
+  createdAt: string;
+};
+export type DailyBriefArticle = {
+  id: string;
+  title: string;
+  url: string | null;
+  summary: string;
+  keyPoints: string[];
+  publishedAt: string | null;
+};
+export type DailyBriefArticlesPage = {
+  articles: DailyBriefArticle[];
+  total: number;
+  page: number;
+  pageSize: number;
 };
 export type RunResult = {
   status: "SENT" | "NO_NEW_ARTICLES" | "FAILED";
@@ -82,10 +119,12 @@ export type RunResult = {
   articlesSummarized: number;
   emailSent: boolean;
   newsletterId?: string;
+  briefId?: string;
+  briefStatus?: DailyBriefSnapshot["status"];
   failure?: CollectionFailure;
 };
 export type CollectionStage =
-  "collection" | "source" | "storage" | "content" | "ai" | "newsletter" | "email";
+  "collection" | "source" | "storage" | "content" | "ai" | "brief" | "newsletter" | "email";
 export type CollectionFailure = {
   stage: CollectionStage;
   code: string;
@@ -145,6 +184,7 @@ export type ArticleJobSnapshot = {
   progress: CollectionProgress | null;
   error: string | null;
   summary: { title: string; summary: string; keyPoints: string[] } | null;
+  relevanceReason?: string | null;
 };
 export type ArticleJobsPage = {
   jobs: ArticleJobSnapshot[];
@@ -185,7 +225,9 @@ export type JournalList = {
 export type WorkflowSummary = {
   content: string;
   url?: string;
-  summary: { title: string; summary: string; keyPoints: string[] };
+  summary: { title: string; summary: string; keyPoints: string[] } | null;
+  relevant?: boolean;
+  reason?: string;
 };
 export type WorkflowSummaryEvent =
   | { type: "progress"; progress: CollectionProgress }

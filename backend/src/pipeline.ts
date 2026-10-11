@@ -21,6 +21,9 @@ import { JournalAccessService, journalAccessVersion } from "./journal-access";
 import { failureFor } from "./queue/failure";
 import { ScrapingSummaryProcessor } from "./queue/scraping-summary";
 import type { ArticleJobResult } from "@dailybrief/shared";
+import type { DailyBriefSnapshot } from "@dailybrief/shared";
+import { DailyBriefService } from "./daily-brief";
+import { recentArticleWindow } from "./recent-articles";
 export type ArticleDispatcher = (
   userId: string,
   runId: string,
@@ -28,6 +31,11 @@ export type ArticleDispatcher = (
   observer?: ProgressObserver,
 ) => Promise<ArticleJobResult[]>;
 export type DailyBriefRunResult = RunResult;
+export type BriefDispatcher = (
+  userId: string,
+  runId: string,
+  observer?: ProgressObserver,
+) => Promise<DailyBriefSnapshot>;
 
 export class DailyBriefPipelineService implements CollectionRunner {
   constructor(
@@ -39,6 +47,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
     private articleContent = new ArticleContentService(),
     private journals = new JournalAccessService(db, articleContent),
     private dispatch?: ArticleDispatcher,
+    private dispatchBrief?: BriefDispatcher,
   ) {}
   private async persist(userId: string, article: CollectedArticle): Promise<boolean> {
     const identity = articleIdentity(article);
@@ -80,7 +89,13 @@ export class DailyBriefPipelineService implements CollectionRunner {
   private async finish(runId: string, userId: string, trigger: RunTrigger, result: RunResult) {
     const now = new Date();
     const currentSettings = await getSettings(this.db, userId);
-    const { newsletterId, failure, ...runData } = result;
+    const {
+      newsletterId,
+      failure,
+      briefId: _briefId,
+      briefStatus: _briefStatus,
+      ...runData
+    } = result;
     await this.db.$transaction([
       this.db.dailyBriefRun.update({
         where: { id: runId },
@@ -116,7 +131,10 @@ export class DailyBriefPipelineService implements CollectionRunner {
       const user = await this.db.user.findUniqueOrThrow({ where: { id: userId } });
       const settings = await getSettings(this.db, userId);
       const previous = queuedRunId
-        ? await this.db.dailyBriefRun.findFirstOrThrow({ where: { id: queuedRunId, userId } })
+        ? await this.db.dailyBriefRun.findFirstOrThrow({
+            where: { id: queuedRunId, userId },
+            include: { brief: true },
+          })
         : null;
       const restored = (): RunResult => ({
         status: previous!.status as RunResult["status"],
@@ -127,6 +145,12 @@ export class DailyBriefPipelineService implements CollectionRunner {
         articlesSummarized: previous!.articlesSummarized,
         emailSent: previous!.emailSent,
         ...(previous!.newsletterId ? { newsletterId: previous!.newsletterId } : {}),
+        ...(previous!.brief
+          ? {
+              briefId: previous!.brief.id,
+              briefStatus: previous!.brief.status as DailyBriefSnapshot["status"],
+            }
+          : {}),
         ...(previous!.error
           ? {
               failure: { stage: "collection", code: "COLLECTION_FAILED", message: previous!.error },
@@ -183,6 +207,27 @@ export class DailyBriefPipelineService implements CollectionRunner {
             data: { status: "RUNNING" },
           })
         : await this.db.dailyBriefRun.create({ data: { userId, trigger } });
+      const window =
+        run.periodStart && run.periodEnd && run.timezone && run.briefDate
+          ? {
+              start: run.periodStart,
+              end: run.periodEnd,
+              timezone: run.timezone,
+              date: run.briefDate,
+            }
+          : recentArticleWindow(settings.timezone);
+      const interestPrompt = run.interestPrompt ?? settings.interestPrompt;
+      if (!run.periodStart)
+        await this.db.dailyBriefRun.update({
+          where: { id: run.id },
+          data: {
+            periodStart: window.start,
+            periodEnd: window.end,
+            timezone: window.timezone,
+            briefDate: window.date,
+            interestPrompt,
+          },
+        });
       const result: DailyBriefRunResult = {
         status: "FAILED",
         sourcesProcessed: 0,
@@ -203,7 +248,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
           status: "running",
           message: "Démarrage de la collecte des sources actives.",
         });
-        const sources = await this.collector.collect(userId, observer);
+        const sources = await this.collector.collect(userId, observer, window);
         result.sourcesProcessed = sources.length;
         result.sourcesFailed = sources.filter((source) => !source.success).length;
         const articles = sources.flatMap((source) => source.articles);
@@ -248,6 +293,8 @@ export class DailyBriefPipelineService implements CollectionRunner {
         const pending = await this.db.article.findMany({
           where: {
             userId,
+            publishedAt: { gte: window.start, lt: window.end },
+            OR: [{ relevant: null }, { relevant: true }],
             source: { enabled: true },
             newsletters: { none: { newsletter: { status: { in: ["SENT", "SENDING"] } } } },
           },
@@ -285,6 +332,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
               observer,
               collected,
               assertOwned,
+              interestPrompt,
             );
             outcomes.push(outcome);
             if (
@@ -302,7 +350,8 @@ export class DailyBriefPipelineService implements CollectionRunner {
               where: { id: outcome.articleId, userId, source: { enabled: true } },
               include: { source: true },
             });
-            if (article?.summary && article.summarizedAt) included.push(article);
+            if (article?.summary && article.summarizedAt && article.relevant === true)
+              included.push(article);
           }
         }
         if (this.dispatch)
@@ -361,6 +410,30 @@ export class DailyBriefPipelineService implements CollectionRunner {
               message: `${article.title} : ${failure.message}`,
             });
           }
+        }
+        // All article jobs have settled before the final synthesis is dispatched.
+        stage = "brief";
+        try {
+          await assertOwned();
+          const brief = this.dispatchBrief
+            ? await this.dispatchBrief(userId, run.id, observer)
+            : await new DailyBriefService(this.db, this.summary, this.journals).run(
+                userId,
+                run.id,
+                observer,
+                assertOwned,
+              );
+          result.briefId = brief.id;
+          result.briefStatus = brief.status;
+        } catch (error) {
+          if (
+            error instanceof AppError &&
+            ["LOCK_LOST", "COLLECTION_FINISHED"].includes(error.code)
+          )
+            throw error;
+          result.briefStatus = "FAILED";
+          report({ stage, status: "failed", message: failureFor(error, "brief").message });
+          // Keep successful article summaries and the existing newsletter delivery path usable.
         }
         if (!included.length) {
           result.status = summaryFailure || result.sourcesFailed ? "FAILED" : "NO_NEW_ARTICLES";

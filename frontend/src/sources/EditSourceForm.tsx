@@ -10,6 +10,7 @@ import { sourcesApi, validHttpUrl } from "./api";
 import { ArticlePreview } from "./ArticlePreview";
 import { RssArticleLinkField, validArticleLinkSelector } from "./RssArticleLinkField";
 import { SelectorAssistance } from "./SelectorAssistance";
+import { SourceOrderField } from "./SourceOrderField";
 import {
   ScrapingFields,
   createScrapingDraft,
@@ -30,6 +31,7 @@ export function EditSourceForm({
     url: string,
     config?: ScrapingConfig,
     articleLinkSelector?: string | null,
+    newestFirst?: boolean,
   ) => Promise<void>;
   onCancel: () => void;
   onBlockingChange?: (blocked: boolean) => void;
@@ -37,6 +39,7 @@ export function EditSourceForm({
   const [url, setUrl] = useState(source.url);
   const [articleLinkSelector, setArticleLinkSelector] = useState(source.articleLinkSelector ?? "");
   const [draft, setDraft] = useState(() => createScrapingDraft(source.scrapingConfig));
+  const [newestFirst, setNewestFirst] = useState(source.newestFirst ?? false);
   const [templateEdited, setTemplateEdited] = useState(false);
   const [error, setError] = useState("");
   const [testing, setTesting] = useState(false);
@@ -45,6 +48,7 @@ export function EditSourceForm({
   const pending = busy || testing || assistanceBusy;
   const unchanged =
     url.trim() === source.url &&
+    newestFirst === (source.newestFirst ?? false) &&
     (source.type === "RSS"
       ? articleLinkSelector.trim() === (source.articleLinkSelector ?? "")
       : JSON.stringify(buildScrapingConfig(draft)) ===
@@ -136,7 +140,13 @@ export function EditSourceForm({
     event.preventDefault();
     if (pending || unchanged) return;
     const input = validate();
-    if (input) await onSave(input.url, input.config, input.articleLinkSelector);
+    if (input)
+      await onSave(
+        input.url,
+        input.config,
+        input.articleLinkSelector,
+        newestFirst !== (source.newestFirst ?? false) ? newestFirst : undefined,
+      );
   }
   return (
     <form
@@ -190,6 +200,7 @@ export function EditSourceForm({
             }}
           />
         )}
+        <SourceOrderField checked={newestFirst} onChange={setNewestFirst} disabled={pending} />
       </fieldset>
       <Feedback message={error} error />
       <Feedback inline message={preview?.warnings?.join(" ") ?? ""} />

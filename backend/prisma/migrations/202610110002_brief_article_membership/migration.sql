@@ -1,0 +1,1 @@
+ALTER TABLE "DailyBrief" ADD COLUMN "articleIds" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

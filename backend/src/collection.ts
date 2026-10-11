@@ -8,6 +8,7 @@ import { reportProgress, type ProgressObserver } from "./progress";
 import { ArticleContentService } from "./article-content";
 import { JournalAccessService } from "./journal-access";
 import { recordJournalInventory } from "./journal-inventory";
+import { filterRecentArticles, type RecentArticleWindow } from "./recent-articles";
 
 export type CollectedArticle = ArticlePreview & { sourceId: string };
 export type SourceResult = {
@@ -25,7 +26,11 @@ export class SourceCollector {
     private scraping: ScrapingService,
     private articleContent = new ArticleContentService(),
   ) {}
-  async collect(userId: string, observer?: ProgressObserver): Promise<SourceResult[]> {
+  async collect(
+    userId: string,
+    observer?: ProgressObserver,
+    window?: RecentArticleWindow,
+  ): Promise<SourceResult[]> {
     const sources = await this.db.source.findMany({
       where: { userId, enabled: true },
       orderBy: { createdAt: "asc" },
@@ -42,10 +47,21 @@ export class SourceCollector {
       });
       const start = Date.now();
       try {
+        const options = window ? { window, newestFirst: source.newestFirst } : undefined;
         const preview =
           source.type === "RSS"
-            ? await this.rss.collect(source.url, Boolean(source.articleLinkSelector))
-            : await this.scraping.collect(source.url, scrapingSchema.parse(source.scrapingConfig));
+            ? await this.rss.collect(source.url, Boolean(source.articleLinkSelector), options)
+            : await this.scraping.collect(
+                source.url,
+                scrapingSchema.parse(source.scrapingConfig),
+                options,
+              );
+        // Also enforce the boundary for injected collectors and legacy service implementations.
+        if (window) {
+          const recent = filterRecentArticles(preview.articles, window);
+          preview.articles = recent.articles;
+          preview.warnings = [...new Set([...(preview.warnings ?? []), ...recent.warnings])];
+        }
         if (source.type === "RSS" && source.articleLinkSelector) {
           const inventory = await new JournalAccessService(this.db, this.articleContent).inventory(
             userId,

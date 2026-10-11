@@ -9,12 +9,14 @@ import type {
   CollectionRunSnapshot,
   QueueState,
   RunResult,
+  DailyBriefSnapshot,
 } from "@dailybrief/shared";
 import type { Db } from "../db";
 import type { Config } from "../config";
 import type { RunTrigger } from "../collection";
 import type { ProgressObserver } from "../progress";
 import { AppError } from "../errors";
+import { briefSnapshot } from "../daily-brief";
 
 export type CollectionJobData = {
   userId: string;
@@ -23,6 +25,8 @@ export type CollectionJobData = {
   articleIds?: string[];
 };
 export type ArticleJobData = { userId: string; runId: string; articleId: string };
+export type BriefJobData = { userId: string; runId: string; articleId?: never };
+export type AiJobData = ArticleJobData | BriefJobData;
 export type StoredProgress = {
   total: number | null;
   completed: number;
@@ -56,7 +60,7 @@ const retention = { age: 30 * 24 * 60 * 60 };
 export class JobsManager {
   readonly connection: IORedis;
   readonly collections: Queue<CollectionJobData, RunResult>;
-  readonly summaries: Queue<ArticleJobData, ArticleJobResult>;
+  readonly summaries: Queue<AiJobData, ArticleJobResult>;
   private events?: QueueEvents;
   private eventsConnection?: IORedis;
   constructor(
@@ -272,6 +276,12 @@ export class JobsManager {
             articlesSummarized: run.articlesSummarized,
             emailSent: run.emailSent,
             ...(run.newsletterId ? { newsletterId: run.newsletterId } : {}),
+            ...(run.brief
+              ? {
+                  briefId: run.brief.id,
+                  briefStatus: run.brief.status as DailyBriefSnapshot["status"],
+                }
+              : {}),
             ...(run.error
               ? { failure: { stage: "collection", code: "COLLECTION_FAILED", message: run.error } }
               : {}),
@@ -296,6 +306,7 @@ export class JobsManager {
   private async ownedRun(userId: string, id: string) {
     const run = await this.db.dailyBriefRun.findFirst({
       where: { id, userId, queueJobId: { not: null }, queuePrefix: this.config.QUEUE_PREFIX },
+      include: { brief: true },
     });
     if (!run) throw new AppError(404, "Collecte introuvable.", "NOT_FOUND");
     return run;
@@ -365,6 +376,7 @@ export class JobsManager {
               summary: true,
               keyPoints: true,
               summarizedAt: true,
+              relevanceReason: true,
             },
           }),
         ]);
@@ -389,6 +401,7 @@ export class JobsManager {
             state === "failed"
               ? (progress?.message ?? "Le traitement de l'article a échoué.")
               : null,
+          relevanceReason: skipped ? (article?.relevanceReason ?? null) : null,
           summary:
             state === "completed" && !skipped && article?.summary && article.summarizedAt
               ? {
@@ -461,7 +474,7 @@ export class JobsManager {
                 ? (fresh.progress as CollectionProgress & { failure?: ArticleJobResult["failure"] })
                 : null;
             outcome = {
-              articleId: job.data.articleId,
+              articleId: job.data.articleId!,
               status: "failed",
               newSummary: false,
               failure: event?.failure ?? {
@@ -489,6 +502,54 @@ export class JobsManager {
           });
           return outcome;
         }),
+      );
+    } finally {
+      this.events.off("progress", relay);
+    }
+  }
+  async dispatchBrief(
+    root: Job<CollectionJobData, RunResult>,
+    observer?: ProgressObserver,
+  ): Promise<DailyBriefSnapshot> {
+    if (!this.events) {
+      this.eventsConnection = queueConnection(this.config, true);
+      this.events = new QueueEvents("article-summaries", {
+        connection: this.eventsConnection,
+        prefix: this.config.QUEUE_PREFIX,
+      });
+      this.events.on("error", () => {});
+      this.events.setMaxListeners(0);
+    }
+    await this.events.waitUntilReady();
+    const job = await this.summaries.add(
+      "daily-brief",
+      { userId: root.data.userId, runId: root.data.runId },
+      {
+        jobId: `${root.id}-daily-brief`,
+        attempts: 3,
+        backoff: { type: "exponential", delay: 5000 },
+      },
+    );
+    const relay = ({ jobId, data }: { jobId: string; data: unknown }) => {
+      if (jobId === job.id && typeof data === "object" && data) {
+        const progress = data as CollectionProgress;
+        if (progress.stage === "brief" && progress.message && progress.at) observer?.(progress);
+      }
+    };
+    this.events.on("progress", relay);
+    try {
+      await job.waitUntilFinished(this.events);
+      const brief = await this.db.dailyBrief.findFirst({
+        where: { userId: root.data.userId, runId: root.data.runId },
+      });
+      if (!brief || !["READY", "EMPTY"].includes(brief.status))
+        throw new AppError(502, "La génération du Daily Brief a échoué.", "BRIEF_FAILED");
+      return briefSnapshot(brief);
+    } catch {
+      throw new AppError(
+        502,
+        "La génération du Daily Brief a échoué après plusieurs tentatives. Les résumés restent disponibles.",
+        "BRIEF_FAILED",
       );
     } finally {
       this.events.off("progress", relay);

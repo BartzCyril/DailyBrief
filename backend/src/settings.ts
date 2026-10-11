@@ -9,12 +9,74 @@ import { articleJobStatuses } from "@dailybrief/shared";
 import { AppError } from "./errors";
 import { startEventStream } from "./event-stream";
 import type { JobsManager } from "./queue/jobs-manager";
+import { latestBrief, briefSnapshot } from "./daily-brief";
 export function settingsRouter(db: Db, runner: CollectionRunner, collections?: JobsManager) {
   const router = Router();
   router.use(requireAuth);
   router.get("/settings/dailybrief", async (req, res) =>
     res.json(await getSettings(db, req.session.userId!)),
   );
+  router.get("/dailybrief/latest", async (req, res) =>
+    res.json(await latestBrief(db, req.session.userId!)),
+  );
+  router.get("/dailybrief/:id", async (req, res) => {
+    const brief = await db.dailyBrief.findFirst({
+      where: {
+        id: req.params.id!,
+        userId: req.session.userId!,
+        status: { in: ["READY", "EMPTY", "FAILED"] },
+      },
+    });
+    if (!brief) throw new AppError(404, "Daily Brief introuvable.", "NOT_FOUND");
+    res.json(briefSnapshot(brief));
+  });
+  router.get("/dailybrief/:id/articles", async (req, res) => {
+    const input = z
+      .object({ page: z.coerce.number().int().min(1).max(100000).default(1) })
+      .strict()
+      .parse(req.query);
+    const userId = req.session.userId!;
+    const brief = await db.dailyBrief.findFirst({
+      where: { id: req.params.id!, userId, status: "READY" },
+    });
+    if (!brief) throw new AppError(404, "Daily Brief introuvable.", "NOT_FOUND");
+    const where = { id: { in: brief.articleIds }, userId, summary: { not: null } };
+    const response = await db.$transaction(
+      async (tx) => {
+        const total = await tx.article.count({ where });
+        const pageSize = 5;
+        const page = Math.min(input.page, Math.max(1, Math.ceil(total / pageSize)));
+        const articles = await tx.article.findMany({
+          where,
+          orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+          select: {
+            id: true,
+            title: true,
+            summaryTitle: true,
+            url: true,
+            contentUrl: true,
+            summary: true,
+            keyPoints: true,
+            publishedAt: true,
+          },
+        });
+        return {
+          articles: articles.map(({ summaryTitle, contentUrl, ...article }) => ({
+            ...article,
+            title: summaryTitle ?? article.title,
+            url: contentUrl ?? article.url,
+          })),
+          total,
+          page,
+          pageSize,
+        };
+      },
+      { isolationLevel: "RepeatableRead" },
+    );
+    res.json(response);
+  });
   router.patch("/settings/dailybrief", async (req, res) => {
     const input = settingsSchema.parse(req.body);
     const userId = req.session.userId!;
@@ -25,9 +87,15 @@ export function settingsRouter(db: Db, runner: CollectionRunner, collections?: J
         where: { userId },
         data: {
           ...input,
-          nextCollectionAt: merged.collectionEnabled
-            ? nextCollection(merged.collectionTime, merged.timezone)
-            : null,
+          ...(merged.collectionEnabled !== settings.collectionEnabled ||
+          merged.collectionTime !== settings.collectionTime ||
+          merged.timezone !== settings.timezone
+            ? {
+                nextCollectionAt: merged.collectionEnabled
+                  ? nextCollection(merged.collectionTime, merged.timezone)
+                  : null,
+              }
+            : {}),
         },
       }),
     );
@@ -52,7 +120,9 @@ export function settingsRouter(db: Db, runner: CollectionRunner, collections?: J
         timezone: settings.timezone,
         lastRunAt: settings.lastCollectionAt,
         nextRunAt: settings.nextCollectionAt,
+        interestPrompt: settings.interestPrompt,
       },
+      latestBrief: await latestBrief(db, userId),
     });
   });
   router.post("/collection/run", async (req, res) => {
