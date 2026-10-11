@@ -532,13 +532,13 @@ export function JournalTable({
         </p>
       )}
       <div
-        className={management ? "overflow-x-auto rounded-lg border" : "overflow-x-auto"}
+        className="app-table-frame"
         tabIndex={0}
         role="region"
         aria-label="Tableau des journaux, défilement horizontal"
       >
         <table
-          className={management ? "w-full min-w-[32rem] table-fixed text-sm" : "w-full text-sm"}
+          className={management ? "w-full min-w-[40rem] table-fixed text-sm" : "w-full text-sm"}
           aria-busy={loading}
         >
           <caption className="sr-only">
@@ -559,7 +559,7 @@ export function JournalTable({
                   scope="col"
                   className={
                     management
-                      ? `p-3 font-medium ${label === "Domaine du journal" ? "text-left" : label === "Actions" ? "w-48 text-right" : label === "Nombre d'articles" ? "w-24 text-center" : "w-16 text-center"}`
+                      ? `p-3 font-medium ${label === "Domaine du journal" ? "text-left" : label === "Actions" ? "w-52 text-right" : label === "Nombre d'articles" ? "w-24 text-center" : "w-16 text-center"}`
                       : "p-3 text-left"
                   }
                 >

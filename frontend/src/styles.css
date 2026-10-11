@@ -7,16 +7,16 @@
   --color-popover: var(--card);
   --color-popover-foreground: var(--foreground);
   --color-primary: var(--primary);
-  --color-primary-foreground: #fff;
-  --color-secondary: #e8ede9;
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--foreground);
-  --color-muted: #eef1ed;
-  --color-muted-foreground: #626d65;
-  --color-accent: #edf3ed;
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
   --color-accent-foreground: var(--primary);
-  --color-destructive: #b33232;
-  --color-border: #dfe5de;
-  --color-input: #d6ded5;
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
   --color-ring: #659b76;
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
@@ -24,11 +24,70 @@
   --radius-xl: 1rem;
 }
 :root {
-  --background: #f7f8f4;
-  --foreground: #1d3027;
+  --brand-paper: #f8f7f2;
+  --brand-ink: #243c30;
+  --brand-soft: #647065;
+  --brand-lime: #d6ed9c;
+  --background: var(--brand-paper);
+  --foreground: var(--brand-ink);
   --card: #fff;
-  --primary: #234c39;
+  --primary: var(--brand-ink);
+  --primary-foreground: #fff;
+  --secondary: #edf2e5;
+  --muted: #f0f2e9;
+  --muted-foreground: var(--brand-soft);
+  --accent: #edf2e5;
+  --destructive: #b33232;
+  --border: #dfe4d8;
+  --input: #d5ddce;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--brand-ink);
+  font-weight: 750;
+  font-size: 23px;
+  letter-spacing: -1px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.brand-symbol {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: var(--brand-lime);
+  color: var(--brand-ink);
+}
+.brand-dot {
+  color: #6d8743;
+  margin-left: -8px;
+}
+.skip-link {
+  position: fixed;
+  top: -100px;
+  left: 20px;
+  z-index: 100;
+  background: var(--brand-ink);
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 8px;
+}
+.skip-link:focus {
+  top: 12px;
+}
+@media (max-width: 640px) {
+  [data-slot="button"]:not([data-size^="icon"]) {
+    max-width: 100%;
+    white-space: normal;
+    height: auto;
+    min-height: 40px;
+  }
 }
 @layer base {
   * {

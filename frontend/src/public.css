@@ -1,8 +1,8 @@
 .public-site {
-  --paper: #f8f7f2;
-  --ink: #243c30;
-  --soft: #647065;
-  --lime: #d6ed9c;
+  --paper: var(--brand-paper);
+  --ink: var(--brand-ink);
+  --soft: var(--brand-soft);
+  --lime: var(--brand-lime);
   background: var(--paper);
   color: var(--ink);
   font-size: 15px;
@@ -61,31 +61,6 @@
   justify-content: space-between;
   gap: 28px;
   min-height: 88px;
-}
-.public-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--ink);
-  font-weight: 750;
-  font-size: 23px;
-  letter-spacing: -1px;
-  text-decoration: none;
-  white-space: nowrap;
-}
-.brand-symbol {
-  width: 38px;
-  height: 38px;
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  border-radius: 12px;
-  background: var(--lime);
-  color: var(--ink);
-}
-.brand-dot {
-  color: #6d8743;
-  margin-left: -8px;
 }
 .public-links {
   display: flex;
@@ -1196,7 +1171,7 @@
     padding-block: 18px;
     min-height: 0;
   }
-  .public-brand {
+  .public-site .brand-mark {
     font-size: 21px;
   }
   .public-links {

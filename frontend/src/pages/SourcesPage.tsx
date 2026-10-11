@@ -9,6 +9,7 @@ import { NavigationFeedback } from "@/components/NavigationFeedback";
 import { SourceList } from "@/sources/SourceList";
 import { sourcesApi } from "@/sources/api";
 import { errorMessage } from "@/lib/api";
+import { PageHeading } from "@/components/PageHeading";
 
 export function SourcesPage() {
   const [data, setData] = useState<{ result: SourcePage; key: string } | null>(null);
@@ -90,20 +91,18 @@ export function SourcesPage() {
     );
   }
   return (
-    <main className="mx-auto max-w-6xl space-y-7 px-5 py-9">
-      <div className="flex flex-wrap items-center justify-between gap-5">
-        <div className="space-y-2">
-          <h1 tabIndex={-1} className="text-3xl font-semibold">
-            Sources
-          </h1>
-        </div>
-        <Button asChild>
-          <Link to={type === "RSS" ? "/sources/new/rss" : "/sources/new/scraping"}>
-            <Plus aria-hidden="true" />
-            {type === "RSS" ? "Ajouter un flux RSS" : "Ajouter une source de scraping"}
-          </Link>
-        </Button>
-      </div>
+    <main id="app-content" tabIndex={-1} className="app-page">
+      <PageHeading
+        title="Sources"
+        actions={
+          <Button asChild>
+            <Link to={type === "RSS" ? "/sources/new/rss" : "/sources/new/scraping"}>
+              <Plus aria-hidden="true" />
+              {type === "RSS" ? "Ajouter un flux RSS" : "Ajouter une source de scraping"}
+            </Link>
+          </Button>
+        }
+      />
       <NavigationFeedback />
       <Feedback error message={error} />
       {error && (
@@ -124,16 +123,9 @@ export function SourcesPage() {
         }}
         className="space-y-6"
       >
-        <Tabs.List
-          aria-label="Type de sources"
-          className="inline-flex gap-2 rounded-lg bg-muted p-1"
-        >
+        <Tabs.List aria-label="Type de sources" className="app-source-tabs">
           {(["RSS", "SCRAPING"] as const).map((value) => (
-            <Tabs.Trigger
-              key={value}
-              value={value}
-              className="flex cursor-pointer items-center gap-2 rounded-md px-4 py-2 text-sm font-medium text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
+            <Tabs.Trigger key={value} value={value} className="app-source-tab">
               {value === "RSS" ? (
                 <Rss className="size-4" aria-hidden="true" />
               ) : (

@@ -1,7 +1,8 @@
 import { useEffect } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { ArrowUpRight, Mail } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
+import { Brand } from "./Brand";
 
 export function PublicLayout() {
   const { user } = useAuth();
@@ -40,12 +41,7 @@ export function PublicLayout() {
       </a>
       <header className="public-header">
         <div className="public-nav public-container">
-          <Link to="/" className="public-brand" aria-label="DailyBrief, accueil">
-            <span className="brand-symbol">
-              <Mail aria-hidden="true" size={21} />
-            </span>
-            DailyBrief<span className="brand-dot">.</span>
-          </Link>
+          <Brand />
           <nav aria-label="Navigation publique" className="public-links">
             <NavLink to="/" end>
               Le produit
@@ -61,9 +57,7 @@ export function PublicLayout() {
       <Outlet />
       <footer className="public-footer public-container">
         <div>
-          <Link to="/" className="public-brand">
-            <Mail size={20} aria-hidden="true" /> DailyBrief.
-          </Link>
+          <Brand />
           <p>Un peu moins d’onglets. Un peu plus de recul.</p>
         </div>
         <nav aria-label="Navigation de pied de page">

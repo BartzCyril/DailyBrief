@@ -9,8 +9,15 @@ import { JournalTable } from "@/sources/JournalTable";
 import { sourcesApi } from "@/sources/api";
 import { errorMessage } from "@/lib/api";
 import { notify } from "@/components/Toaster";
+import { PageHeading } from "@/components/PageHeading";
 
-export function JournalManager({ refreshKey = 0 }: { refreshKey?: number }) {
+export function JournalManager({
+  refreshKey = 0,
+  showHeading = false,
+}: {
+  refreshKey?: number;
+  showHeading?: boolean;
+}) {
   const [data, setData] = useState<JournalList | null>(null);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -117,12 +124,19 @@ export function JournalManager({ refreshKey = 0 }: { refreshKey?: number }) {
     </div>
   );
   return (
-    <div className="space-y-5">
+    <div className="space-y-7">
+      {showHeading && (
+        <PageHeading
+          title="Journaux"
+          description="Gérez les domaines, leur activation et leur accès pour toutes vos sources."
+          actions={actions}
+        />
+      )}
       <JournalTable
         management
         loading={loading}
         journals={data?.journals ?? []}
-        headerActions={actions}
+        headerActions={showHeading ? undefined : actions}
         onStructureChange={refresh}
         onChange={(journal) => {
           requestId.current++;

@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { Feedback } from "@/components/Feedback";
 import { ArticleSummaryDialog } from "@/collection/ArticleSummaryDialog";
 import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
+import { PageHeading } from "@/components/PageHeading";
 
 const labels: Record<QueueState, string> = {
   waiting: "En attente",
@@ -112,27 +114,23 @@ export function JobsPage() {
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const offset = (currentPage - 1) * pageSize;
   return (
-    <main className="mx-auto max-w-7xl space-y-7 px-5 py-9">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-2">
-          <h1 className="text-3xl font-semibold" tabIndex={-1}>
-            Historique d’exécutions
-          </h1>
-          <p className="text-muted-foreground">
-            Suivez l'extraction, les résumés IA et l'envoi de votre brief.
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setSelected(null);
-            setPage(1);
-            void start();
-          }}
-          disabled={busy}
-        >
-          {busy ? "Récupération en cours…" : "Récupérer maintenant"}
-        </Button>
-      </div>
+    <main id="app-content" tabIndex={-1} className="app-page app-page-wide">
+      <PageHeading
+        title="Historique d’exécutions"
+        description="Suivez l'extraction, les résumés IA et l'envoi de votre brief."
+        actions={
+          <Button
+            onClick={() => {
+              setSelected(null);
+              setPage(1);
+              void start();
+            }}
+            disabled={busy}
+          >
+            {busy ? "Récupération en cours…" : "Récupérer maintenant"}
+          </Button>
+        }
+      />
       <Feedback error message={error || collectionError} />
       {error && (
         <Button variant="outline" onClick={() => setRetry((value) => value + 1)}>
@@ -155,10 +153,8 @@ export function JobsPage() {
         >
           {!!history.length && (
             <div className="space-y-2">
-              <label htmlFor="collection-run" className="text-sm font-medium">
-                Récupération
-              </label>
-              <select
+              <Label htmlFor="collection-run">Récupération</Label>
+              <NativeSelect
                 id="collection-run"
                 value={id ?? ""}
                 onChange={(event) => {
@@ -167,7 +163,6 @@ export function JobsPage() {
                   setResult(null);
                   setRun(null);
                 }}
-                className="flex min-h-10 w-full rounded-md border bg-background px-3 py-2"
               >
                 {history.map((item) => (
                   <option key={item.id} value={item.id}>
@@ -176,14 +171,11 @@ export function JobsPage() {
                     {labels[item.state]}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
           )}
           {run && (
-            <section
-              className="space-y-4 rounded-lg border p-4"
-              aria-label="État de la récupération"
-            >
+            <section className="app-panel space-y-4" aria-label="État de la récupération">
               <div className="flex flex-wrap justify-between gap-3">
                 <p className="font-medium">{labels[run.state]}</p>
                 <p className="text-sm">
@@ -203,11 +195,10 @@ export function JobsPage() {
           <section className="min-w-0 flex-1 space-y-4" aria-label="Traitement des articles">
             <div className="grid max-w-xs gap-2">
               <Label htmlFor="article-job-status">Statut des articles</Label>
-              <select
+              <NativeSelect
                 id="article-job-status"
                 value={status}
                 onChange={(event) => setStatus(event.target.value as ArticleJobStatus)}
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
               >
                 <option value="all">Tous les statuts</option>
                 <option value="waiting">En attente</option>
@@ -215,9 +206,15 @@ export function JobsPage() {
                 <option value="completed">Terminé</option>
                 <option value="failed">Échec</option>
                 <option value="skipped">Ignoré</option>
-              </select>
+              </NativeSelect>
             </div>
-            <div className="overflow-x-auto rounded-lg border" aria-busy={loading}>
+            <div
+              className="app-table-frame"
+              aria-busy={loading}
+              tabIndex={0}
+              role="region"
+              aria-label="Tableau des articles, défilement horizontal"
+            >
               <table className="w-full text-left text-sm">
                 <thead className="border-b bg-muted/40">
                   <tr>
@@ -247,7 +244,7 @@ export function JobsPage() {
                       <td className="min-w-44 px-4 py-4">
                         <p className="font-medium">{job.title}</p>
                       </td>
-                      <td className="px-4 py-4">
+                      <td className="min-w-36 px-4 py-4">
                         {job.sourceUrl && (
                           <a
                             href={job.sourceUrl}
@@ -261,7 +258,7 @@ export function JobsPage() {
                       </td>
                       <td className="px-4 py-4">
                         <span
-                          className={`inline-flex items-center gap-2 ${job.state === "failed" ? "text-destructive" : ""}`}
+                          className={`inline-flex items-center gap-2 whitespace-nowrap ${job.state === "failed" ? "text-destructive" : ""}`}
                         >
                           <span
                             aria-hidden="true"
@@ -271,7 +268,7 @@ export function JobsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-4">{job.attempts}</td>
-                      <td className="min-w-52 px-4 py-4">
+                      <td className="min-w-40 px-4 py-4">
                         {job.error ?? job.progress?.message ?? "—"}
                       </td>
                       <td className="px-4 py-4">

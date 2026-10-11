@@ -59,6 +59,11 @@ dans le cloud). Elle simule toutes les réponses API : aucune connexion à une
 base, aucun appel IA et aucun email. Les images n’exposent aucun identifiant.
 Les pages publiques et le guide n’exigent aucune nouvelle variable d’environnement.
 
+L’espace utilisateur reprend la palette, le logo et les composants du site public :
+navigation, en-têtes, cartes, boutons et formulaires. Le script de capture vérifie aussi
+les pages du dashboard, des sources, des journaux et de l’historique jusqu’à 320px,
+ainsi que l’accès au contenu au clavier.
+
 ## Authentification et sources
 
 `bun run services:up` démarre PostgreSQL et Redis. Générez un secret de session

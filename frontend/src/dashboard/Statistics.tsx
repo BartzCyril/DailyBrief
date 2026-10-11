@@ -13,13 +13,15 @@ export function Statistics({ sources }: { sources: Dashboard["sources"] }) {
         { label: "Sources scraping", count: sources.scraping, icon: Globe },
         { label: "Sources actives", count: sources.enabled, icon: CheckCircle2 },
       ].map(({ label, count, icon: Icon }) => (
-        <Card key={label} className="shadow-none">
-          <CardContent className="pt-6">
-            <div className="flex justify-between gap-2 text-muted-foreground">
-              <span className="text-sm">{label}</span>
-              <Icon className="size-4" />
+        <Card key={label}>
+          <CardContent className="metric-body">
+            <div className="metric-top">
+              <p className="metric-value">{count}</p>
+              <span className="metric-icon">
+                <Icon className="size-4" aria-hidden="true" />
+              </span>
             </div>
-            <p className="text-3xl font-semibold mt-3">{count}</p>
+            <p className="metric-label">{label}</p>
           </CardContent>
         </Card>
       ))}

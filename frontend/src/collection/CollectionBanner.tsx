@@ -8,8 +8,8 @@ export function CollectionBanner() {
   const total = run?.total;
   const percent = total ? Math.min(100, Math.round((run!.completed / total) * 100)) : 0;
   return (
-    <aside aria-label="Récupération en cours" className="mx-auto mt-5 max-w-6xl px-5">
-      <div className="space-y-3 rounded-lg border bg-primary/5 p-4">
+    <aside aria-label="Récupération en cours" className="app-banner">
+      <div className="app-banner-panel space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p role="status" className="flex items-center gap-2 font-medium">
             <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />

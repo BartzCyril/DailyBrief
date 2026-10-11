@@ -4,7 +4,7 @@ import { RssForm } from "@/sources/RssForm";
 import { ScrapingForm } from "@/sources/ScrapingForm";
 export function NewSourcePage({ scraping = false }: { scraping?: boolean }) {
   return (
-    <main className="max-w-3xl mx-auto px-5 py-8 space-y-6">
+    <main id="app-content" tabIndex={-1} className="app-page app-page-form">
       <div className="flex flex-wrap justify-between gap-4">
         <Link
           to={scraping ? "/sources?type=scraping" : "/sources"}
@@ -21,7 +21,7 @@ export function NewSourcePage({ scraping = false }: { scraping?: boolean }) {
       </div>
       <Card>
         <CardHeader>
-          <h1 tabIndex={-1} className="text-2xl font-semibold">
+          <h1 tabIndex={-1} className="app-page-title">
             {scraping ? "Ajouter une source de scraping" : "Ajouter un flux RSS"}
           </h1>
           <CardDescription>

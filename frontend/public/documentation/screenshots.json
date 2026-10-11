@@ -1,38 +1,38 @@
 {
   "sources": {
-    "width": 1152,
-    "height": 729
+    "width": 1180,
+    "height": 819
   },
   "rss": {
-    "width": 768,
-    "height": 570
+    "width": 820,
+    "height": 670
   },
   "scraping": {
-    "width": 768,
-    "height": 1030
+    "width": 820,
+    "height": 1162
   },
   "assistance": {
     "width": 1280,
-    "height": 1191
+    "height": 1323
   },
   "journaux": {
-    "width": 1152,
-    "height": 461
+    "width": 1180,
+    "height": 460
   },
   "acces": {
     "width": 672,
-    "height": 1208
+    "height": 1288
   },
   "dashboard": {
-    "width": 1152,
-    "height": 776
+    "width": 1180,
+    "height": 858
   },
   "jobs": {
-    "width": 1280,
-    "height": 705
+    "width": 1216,
+    "height": 758
   },
   "resume": {
     "width": 672,
-    "height": 342
+    "height": 358
   }
 }

@@ -16,7 +16,7 @@ export function ManualCollection({ onComplete }: { onComplete: () => Promise<voi
   }, [run, onComplete]);
   const failure =
     run?.result?.status === "FAILED"
-      ? (run.result.failure?.message ?? "La collecte n'a pas pu aboutir. Consultez les jobs.")
+      ? (run.result.failure?.message ?? "La collecte n'a pas pu aboutir. Consultez l’historique.")
       : !run?.active
         ? run?.error
         : null;
@@ -27,9 +27,14 @@ export function ManualCollection({ onComplete }: { onComplete: () => Promise<voi
         ? "Aucun nouvel article à envoyer."
         : "";
   return (
-    <Card className="shadow-none">
+    <Card className="manual-collection-card">
       <CardHeader>
-        <CardTitle>Un brief, maintenant</CardTitle>
+        <div className="panel-heading">
+          <span className="panel-icon">
+            <RefreshCw className="size-5" aria-hidden="true" />
+          </span>
+          <CardTitle>Un brief, maintenant</CardTitle>
+        </div>
         <CardDescription>
           Récupérez les nouveaux articles sans attendre la prochaine collecte.
         </CardDescription>

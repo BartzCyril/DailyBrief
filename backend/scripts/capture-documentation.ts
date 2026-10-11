@@ -346,6 +346,48 @@ try {
   await page.keyboard.press("Escape");
   await writeFile(resolve(output, "screenshots.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
+  // Exercise the authenticated shell and table/form widths, including narrow phones.
+  for (const width of [1440, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const path of [
+      "/dashboard",
+      "/sources",
+      "/journals",
+      "/jobs",
+      "/sources/new/rss",
+      "/sources/new/scraping",
+    ]) {
+      await page.goto(`${origin}${path}`);
+      await page.locator("main h1").waitFor();
+      await page.getByRole("navigation", { name: "Navigation principale" }).waitFor();
+      if (path === "/dashboard") await page.getByLabel("Heure quotidienne").waitFor();
+      else if (path === "/sources")
+        await page.getByText("1–5 sur 6 sources", { exact: true }).waitFor();
+      else if (path === "/journals")
+        await page.getByText("www.lemonde.fr", { exact: true }).waitFor();
+      else if (path === "/jobs")
+        await page.getByText("1–5 sur 15 articles", { exact: true }).waitFor();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+      if (overflow) throw new Error(`Débordement de l’espace utilisateur : ${path} à ${width}px`);
+      if (["/dashboard", "/sources", "/jobs"].includes(path) && (width === 1440 || width === 390))
+        await page.screenshot({
+          path: `/tmp/dailybrief-app-${path.slice(1)}-${width}.png`,
+          fullPage: true,
+          animations: "disabled",
+        });
+    }
+  }
+  await page.goto(`${origin}/dashboard`);
+  await page.getByLabel("Heure quotidienne").waitFor();
+  await page.keyboard.press("Tab");
+  const skip = page.getByRole("link", { name: "Aller au contenu", exact: true });
+  if (!(await skip.evaluate((element) => element === document.activeElement)))
+    throw new Error("Le lien d’évitement de l’espace utilisateur doit être accessible au clavier.");
+  await page.keyboard.press("Enter");
+  if (!(await page.locator("main").evaluate((element) => element === document.activeElement)))
+    throw new Error("Le lien d’évitement de l’espace utilisateur doit donner le focus au contenu.");
+  await page.goto("about:blank");
+
   // Public routes also work without a session or a backend; test at desktop and mobile sizes.
   authenticated = false;
   for (const width of [1440, 768, 390, 320]) {
@@ -418,7 +460,7 @@ try {
   await page.getByRole("heading", { name: "Créer votre compte" }).waitFor();
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(
-    `Accueil et guide vérifiés à 1440, 768, 390 et 320px. Sélecteurs, ancres, recherche et clavier vérifiés. ${requests} requêtes API simulées, aucun envoi réel.`,
+    `Espace utilisateur, accueil et guide vérifiés à 1440, 768, 390 et 320px. Navigation, sélecteurs, ancres, recherche et clavier vérifiés. ${requests} requêtes API simulées, aucun envoi réel.`,
   );
 } finally {
   await browser?.close();

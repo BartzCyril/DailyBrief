@@ -6,6 +6,7 @@ import { AuthPage } from "./pages/AuthPage";
 import { AppLayout } from "./components/AppLayout";
 import { PublicLayout } from "./components/PublicLayout";
 import "./public.css";
+import "./app.css";
 const HomePage = lazy(() =>
   import("./pages/HomePage").then((module) => ({ default: module.HomePage })),
 );

@@ -651,7 +651,7 @@ test("blocks closing a source modal during help delivery and unlocks it after SM
   await user.keyboard("{Escape}");
   expect(screen.getByRole("dialog")).toBeInTheDocument();
   await act(async () => fail?.(new Error("SMTP unavailable")));
-  expect(await screen.findByRole("alert")).toHaveTextContent("Connexion impossible");
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Connexion impossible"));
   expect(screen.getByRole("button", { name: "Fermer la fenêtre" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Annuler" })).toBeEnabled();
   await user.keyboard("{Escape}");

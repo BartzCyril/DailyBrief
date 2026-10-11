@@ -3,9 +3,9 @@ import { Dialog } from "radix-ui";
 import { X } from "lucide-react";
 import { Button } from "./ui/button";
 
-export const modalOverlay = "fixed inset-0 z-40 bg-black/50";
+export const modalOverlay = "fixed inset-0 z-40 bg-foreground/40 backdrop-blur-sm";
 export const modalContent =
-  "fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border bg-background p-5 shadow-xl sm:p-6";
+  "fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border bg-background p-5 shadow-xl sm:p-8";
 
 export function restoreFocusAfterRemoval(event: Event, target: HTMLElement | null) {
   if (target && !target.isConnected) {

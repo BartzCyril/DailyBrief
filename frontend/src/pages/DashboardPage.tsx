@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Globe, Newspaper } from "lucide-react";
+import { ArrowUpRight, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Feedback } from "@/components/Feedback";
@@ -8,21 +8,29 @@ import { Statistics } from "@/dashboard/Statistics";
 import { CollectionSettings } from "@/dashboard/CollectionSettings";
 import { ManualCollection } from "@/dashboard/ManualCollection";
 import { useDashboard } from "@/dashboard/useDashboard";
+import { PageHeading } from "@/components/PageHeading";
 export function DashboardPage() {
   const dashboard = useDashboard();
   return (
-    <main className="max-w-6xl mx-auto px-5 py-9 space-y-7">
-      <div>
-        <p className="uppercase tracking-widest text-xs text-muted-foreground mb-2">
-          Votre espace de veille
-        </p>
-        <h1 tabIndex={-1} className="text-3xl font-semibold">
-          Votre DailyBrief
-        </h1>
-        <p className="mt-2 text-muted-foreground">
-          Vos sources, votre rythme, l'essentiel dans votre boîte mail.
-        </p>
-      </div>
+    <main id="app-content" tabIndex={-1} className="app-page">
+      <PageHeading
+        title={
+          <>
+            Votre <em>DailyBrief</em>
+          </>
+        }
+        eyebrow="Votre espace de veille"
+        description="Vos sources, votre rythme, l'essentiel dans votre boîte mail."
+        actions={
+          <Button asChild variant="outline">
+            <Link to="/documentation">
+              <BookOpen aria-hidden="true" />
+              Guide d’utilisation
+              <ArrowUpRight aria-hidden="true" />
+            </Link>
+          </Button>
+        }
+      />
       <NavigationFeedback />
       <Feedback error message={dashboard.error} />
       {dashboard.error && (

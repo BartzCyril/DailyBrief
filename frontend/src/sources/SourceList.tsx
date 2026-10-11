@@ -8,6 +8,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Field } from "@/components/Field";
+import { NativeSelect } from "@/components/ui/native-select";
 import { IconButton } from "@/components/IconButton";
 import { Pencil, Trash2, Play, ExternalLink, ChevronLeft, ChevronRight } from "lucide-react";
 import { EditSourceForm } from "./EditSourceForm";
@@ -114,9 +115,9 @@ export function SourceList({
               controls.onQueryChange(event.target.value);
             }}
           />
-          <div className="grid gap-2">
+          <div className="grid content-start gap-2">
             <Label htmlFor={statusId}>Statut des sources</Label>
-            <select
+            <NativeSelect
               id={statusId}
               value={controls.status}
               disabled={!!busy}
@@ -125,16 +126,21 @@ export function SourceList({
                   event.target.value as NonNullable<SourceListQuery["status"]>,
                 );
               }}
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
             >
               <option value="all">Toutes les sources</option>
               <option value="active">Actives</option>
               <option value="inactive">Inactives</option>
-            </select>
+            </NativeSelect>
           </div>
         </div>
       )}
-      <div className="overflow-x-auto rounded-lg border" aria-busy={loading}>
+      <div
+        className="app-table-frame"
+        aria-busy={loading}
+        tabIndex={0}
+        role="region"
+        aria-label="Tableau des sources, défilement horizontal"
+      >
         <table className="w-full min-w-[32rem] table-fixed text-sm">
           <caption className="sr-only">Sources configurées</caption>
           <thead className="border-b bg-muted/50">
@@ -145,7 +151,7 @@ export function SourceList({
               <th scope="col" className="w-20 px-3 py-3 text-center font-medium">
                 Statut
               </th>
-              <th scope="col" className="w-48 px-3 py-3 text-right font-medium">
+              <th scope="col" className="w-52 px-3 py-3 text-right font-medium">
                 Actions
               </th>
             </tr>

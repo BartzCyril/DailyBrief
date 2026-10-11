@@ -95,7 +95,7 @@ export function SourceWorkflowPage() {
   }
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 px-5 py-8">
+    <main id="app-content" tabIndex={-1} className="app-page app-page-workflow">
       <Link
         to={preview?.source.type === "SCRAPING" ? "/sources?type=scraping" : "/sources"}
         className="text-sm text-primary underline"
@@ -104,7 +104,7 @@ export function SourceWorkflowPage() {
       </Link>
       <Card>
         <CardHeader>
-          <h1 tabIndex={-1} className="text-2xl font-semibold">
+          <h1 tabIndex={-1} className="app-page-title">
             Tester le workflow de A à Z
           </h1>
           <CardDescription>

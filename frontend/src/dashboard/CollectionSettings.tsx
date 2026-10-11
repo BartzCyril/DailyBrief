@@ -64,11 +64,15 @@ export function CollectionSettings({
   return (
     <Card className="shadow-none">
       <CardHeader>
-        <CardTitle className="flex gap-2 items-center">
-          <Clock className="size-5" />
-          Collecte automatique
-        </CardTitle>
-        <CardDescription>Votre veille à l'heure qui vous convient.</CardDescription>
+        <div className="panel-heading">
+          <span className="panel-icon">
+            <Clock className="size-5" aria-hidden="true" />
+          </span>
+          <div className="space-y-1">
+            <CardTitle>Collecte automatique</CardTitle>
+            <CardDescription>Votre veille à l'heure qui vous convient.</CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <form onSubmit={save} className="space-y-5">
