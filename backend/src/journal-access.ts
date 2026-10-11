@@ -16,7 +16,7 @@ import {
   extractArticleContent,
   hasSubscriptionMetadata,
 } from "./article-content";
-import { JournalLoginBrowser } from "./journal-login";
+import { JournalLoginBrowser, type JournalLogin, type JournalPage } from "./journal-login";
 import { isIP } from "node:net";
 import { isPublicAddress } from "./network";
 import { requireAuth } from "./auth";
@@ -103,6 +103,11 @@ export function publicJournal(row: StoredAccess): JournalAccess {
     loginConfig: journalLoginConfig(row),
   };
 }
+
+export type AuthenticatedArticleReader = (
+  url: string,
+  observer?: (message: string) => void,
+) => Promise<{ content: string; url: string; accessVersion: string }>;
 
 export class JournalAccessService {
   constructor(
@@ -206,26 +211,63 @@ export class JournalAccessService {
         "JOURNAL_ACCESS_CHANGED",
       );
   }
+  private authenticatedContent(rendered: JournalPage, login: JournalLogin) {
+    if (hasSubscriptionMetadata(rendered.html) && !login.config.articleContentSelector)
+      throw new AppError(
+        422,
+        "Le contenu intégral de cet article réservé aux abonnés n'a pas pu être confirmé après connexion.",
+        "JOURNAL_FULL_CONTENT_UNVERIFIED",
+      );
+    const content = extractArticleContent(rendered.contentHtml ?? rendered.html, rendered.url);
+    if (content.includes(login.password))
+      throw new AppError(
+        422,
+        "La réponse du journal ne peut pas être utilisée comme contenu d'article.",
+        "JOURNAL_CONTENT_INVALID",
+      );
+    return { content, url: rendered.url };
+  }
+  async withAuthenticatedSession<T>(
+    userId: string,
+    domain: string,
+    use: (read: AuthenticatedArticleReader) => Promise<T>,
+    observer?: (message: string) => void,
+    expectedVersion?: string,
+  ): Promise<T> {
+    const access = await this.assertAccessible(userId, `https://${domain}`);
+    if (expectedVersion && journalAccessVersion(access) !== expectedVersion)
+      throw new AppError(
+        409,
+        "L'accès au journal a changé. Relancez la récupération.",
+        "JOURNAL_ACCESS_CHANGED",
+      );
+    const login = this.login(access);
+    return this.browser.withSession(
+      domain,
+      login,
+      async (readPage) =>
+        use(async (url, notify) => {
+          if (journalDomain(url) !== domain)
+            throw new AppError(
+              400,
+              "Adresse d'article incompatible avec cet accès journal.",
+              "JOURNAL_UNSAFE_TARGET",
+            );
+          await this.checkUnchanged(userId, url, access);
+          const result = this.authenticatedContent(await readPage(url, notify), login);
+          await this.checkUnchanged(userId, url, access);
+          return { ...result, accessVersion: journalAccessVersion(access) };
+        }),
+      observer,
+    );
+  }
   async fetchArticle(userId: string, url: string, observer?: (message: string) => void) {
     const access = await this.assertAccessible(userId, url);
     let result: { content: string; url: string };
     if (access.encryptedPassword) {
       const login = this.login(access);
       const rendered = await this.browser.run(access.domain, login, url, observer);
-      if (hasSubscriptionMetadata(rendered.html) && !login.config.articleContentSelector)
-        throw new AppError(
-          422,
-          "Le contenu intégral de cet article réservé aux abonnés n'a pas pu être confirmé après connexion.",
-          "JOURNAL_FULL_CONTENT_UNVERIFIED",
-        );
-      const content = extractArticleContent(rendered.contentHtml ?? rendered.html, rendered.url);
-      if (content.includes(login.password))
-        throw new AppError(
-          422,
-          "La réponse du journal ne peut pas être utilisée comme contenu d'article.",
-          "JOURNAL_CONTENT_INVALID",
-        );
-      result = { content, url: rendered.url };
+      result = this.authenticatedContent(rendered, login);
     } else result = await this.content.fetchWithUrl(url, observer, null, access.domain);
     await this.checkUnchanged(userId, url, access);
     return { ...result, accessVersion: journalAccessVersion(access) };

@@ -56,7 +56,7 @@ export function journalFixture() {
         text: '<a id="account" href="/account">Mon compte</a><button>Se déconnecter</button>',
         contentType: "text/html",
       };
-    if (path === "/article") {
+    if (path === "/article" || path.startsWith("/article-")) {
       if (state.expired)
         return {
           status: 200,

@@ -819,10 +819,35 @@ propres aux journaux.
 « Tester la connexion » appelle `POST /journals/:domain/test` avec `{}`. L'endpoint
 est réservé au propriétaire, vérifie la connexion et ferme la session de
 test sans lire d'article, modifier la collecte ou envoyer d'email. Son résultat est
-temporaire. Le workflow et le pipeline ouvrent chacun un nouveau contexte Chromium,
-se connectent puis lisent l'article **dans le même contexte et avec ses cookies**.
-Les cookies ne sont jamais enregistrés en base, dans Redis ou sur disque ; le
-contexte est fermé après chaque opération et isolé entre utilisateurs et journaux.
+temporaire. Le test de connexion et les lectures individuelles du workflow ouvrent
+chacun un contexte Chromium isolé. Lors d'une lecture, l'article est ouvert avec
+les cookies de cette session.
+
+Les collectes manuelles et programmées regroupent tous les articles à récupérer
+par **utilisateur, exécution et hôte exact du journal**, même s'ils proviennent de
+sources différentes. Lorsqu'un journal possède des identifiants configurés, un
+seul navigateur et un seul contexte se connectent, puis lisent ses articles dans
+la même session. Les flux RSS directs et les sources scraping qui pointent vers
+cet hôte utilisent également cet accès configuré. La lecture publique conserve
+son fonctionnement habituel en l'absence d'identifiants.
+
+Le job de collecte sauvegarde le contenu en PostgreSQL et ferme le navigateur
+avant de créer les jobs IA individuels. Ceux-ci utilisent le contenu préparé,
+y compris avec plusieurs processus consumers : aucun job IA ne se reconnecte
+pour ce lot. Redis conserve uniquement les identifiants d'articles, le résultat
+de préparation et les empreintes des réglages ; ni HTML ni secrets. Les cookies
+restent en mémoire et ne sont enregistrés ni en base, ni dans Redis, ni sur disque.
+Les hôtes avec et sans `www` gardent des sessions distinctes.
+
+Un article inaccessible est signalé sans empêcher les suivants. Un échec de
+connexion ou une session expirée ne déclenche pas une nouvelle connexion pour
+chaque article : les jobs concernés échouent explicitement. Toute modification
+des accès entre la préparation et l'IA bloque les résumés concernés. Le contenu
+déjà sauvegardé avec les mêmes réglages est réutilisé sans ouvrir de navigateur.
+Après un arrêt du consumer pendant la préparation, la reprise peut nécessiter
+une nouvelle session pour les articles restants ; les cookies ne sont pas persistés.
+Les logs `journal.batch_started` et `journal.batch_finished` indiquent le domaine
+et le nombre d'articles du lot sans exposer d'identifiants.
 
 Les identifiants sont envoyés uniquement par POST à l'origine HTTPS de l'URL de
 connexion configurée. Les navigations sont limitées à cette origine et à l'origine

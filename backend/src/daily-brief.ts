@@ -77,10 +77,14 @@ export class DailyBriefService {
       });
       const articles: typeof candidates = [];
       for (const article of candidates) {
-        if (article.source.type === "RSS" && article.source.articleLinkSelector) {
+        if (
+          (article.source.type === "RSS" && article.source.articleLinkSelector) ||
+          article.contentAccessVersion
+        ) {
           if (
             !article.contentUrl ||
-            article.contentLinkSelector !== article.source.articleLinkSelector
+            article.contentLinkSelector !==
+              (article.source.type === "RSS" ? article.source.articleLinkSelector : null)
           )
             continue;
           try {
@@ -150,11 +154,7 @@ export class DailyBriefService {
             "Les articles ont changé pendant la génération du brief. Réessayez.",
             "BRIEF_INPUT_CHANGED",
           );
-        if (
-          article.source.type === "RSS" &&
-          article.source.articleLinkSelector &&
-          article.contentUrl
-        ) {
+        if (article.contentAccessVersion && article.contentUrl) {
           const access = await this.journals.assertAccessible(userId, article.contentUrl);
           if (journalAccessVersion(access) !== article.contentAccessVersion)
             throw new AppError(

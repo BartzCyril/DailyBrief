@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
+import { chromium, type Browser } from "playwright";
 import { JournalLoginBrowser } from "../src/journal-login";
 import { journalFixture, loginConfig, fullText } from "./fixtures/journal-login";
 
@@ -8,6 +9,83 @@ const credentials = {
   password: "journal-test-password",
   config: loginConfig,
 };
+
+test("reads concurrent batch requests in one browser, authenticates once, and closes before returning", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(fixture.fetch);
+  const launch = spyOn(chromium, "launch");
+  const ids = Array.from({ length: 13 }, (_, index) => index + 1);
+  try {
+    const pages = await browser.withSession("publisher.example", credentials, (read) =>
+      Promise.all(ids.map((id) => read(`https://publisher.example/article-${id}`))),
+    );
+    expect(pages.map((page) => page.url)).toEqual(
+      ids.map((id) => `https://publisher.example/article-${id}`),
+    );
+    expect(pages.every((page) => page.contentHtml?.includes(fullText))).toBe(true);
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect((await (launch.mock.results[0]!.value as Promise<Browser>)).isConnected()).toBe(false);
+    expect(fixture.requests.filter((request) => request.options?.method === "POST")).toHaveLength(
+      1,
+    );
+    expect(
+      fixture.requests
+        .filter((request) => request.url.includes("/article-"))
+        .map((request) => request.options?.cookie),
+    ).toEqual(Array(ids.length).fill("sid=own-session"));
+  } finally {
+    launch.mockRestore();
+  }
+}, 90000);
+
+test("a missing article does not discard the authenticated session or prevent the next read", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) =>
+    url.endsWith("/missing")
+      ? { status: 404, cookies: [], text: "Absent", contentType: "text/html" }
+      : fixture.fetch(url, options),
+  );
+  await browser.withSession("publisher.example", credentials, async (read) => {
+    await assert.rejects(read("https://publisher.example/missing"), {
+      code: "JOURNAL_ARTICLE_UNAVAILABLE",
+    });
+    expect((await read("https://publisher.example/article")).contentHtml).toContain(fullText);
+  });
+  expect(fixture.requests.filter((request) => request.options?.method === "POST")).toHaveLength(1);
+}, 45000);
+
+test("an expired batch session fails subsequent reads without attempting another login and closes on callback failure", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(fixture.fetch);
+  const launch = spyOn(chromium, "launch");
+  try {
+    await assert.rejects(
+      browser.withSession("publisher.example", credentials, async (read) => {
+        await read("https://publisher.example/article-1");
+        fixture.state.expired = true;
+        await assert.rejects(read("https://publisher.example/article-2"), {
+          code: "JOURNAL_SESSION_EXPIRED",
+        });
+        await assert.rejects(read("https://publisher.example/article-3"), {
+          code: "JOURNAL_SESSION_EXPIRED",
+        });
+        throw new Error("Batch callback stopped");
+      }),
+      /Batch callback stopped/,
+    );
+    expect(
+      fixture.requests
+        .filter((request) => request.url.includes("/article-"))
+        .map((request) => request.url),
+    ).toEqual(["https://publisher.example/article-1", "https://publisher.example/article-2"]);
+    expect(fixture.requests.filter((request) => request.options?.method === "POST")).toHaveLength(
+      1,
+    );
+    expect((await (launch.mock.results[0]!.value as Promise<Browser>)).isConnected()).toBe(false);
+  } finally {
+    launch.mockRestore();
+  }
+}, 60000);
 
 test("confirms a newly visible logout control without a user-supplied success selector despite unrelated malformed links", async () => {
   const fixture = journalFixture();

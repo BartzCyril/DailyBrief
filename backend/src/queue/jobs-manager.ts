@@ -18,6 +18,7 @@ import type { ProgressObserver } from "../progress";
 import { AppError } from "../errors";
 import { briefSnapshot } from "../daily-brief";
 import { logger } from "../logger";
+import type { AuthenticatedPreparation, AuthenticatedPreparations } from "./scraping-summary";
 
 export type CollectionJobData = {
   userId: string;
@@ -25,8 +26,18 @@ export type CollectionJobData = {
   trigger: RunTrigger;
   articleIds?: string[];
 };
-export type ArticleJobData = { userId: string; runId: string; articleId: string };
-export type BriefJobData = { userId: string; runId: string; articleId?: never };
+export type ArticleJobData = {
+  userId: string;
+  runId: string;
+  articleId: string;
+  authenticatedPreparation?: AuthenticatedPreparation;
+};
+export type BriefJobData = {
+  userId: string;
+  runId: string;
+  articleId?: never;
+  authenticatedPreparation?: never;
+};
 export type AiJobData = ArticleJobData | BriefJobData;
 export type StoredProgress = {
   total: number | null;
@@ -435,6 +446,7 @@ export class JobsManager {
     root: Job<CollectionJobData, RunResult>,
     articleIds: string[],
     observer?: ProgressObserver,
+    preparations?: AuthenticatedPreparations,
   ): Promise<ArticleJobResult[]> {
     if (!this.events) {
       this.eventsConnection = queueConnection(this.config, true);
@@ -451,7 +463,14 @@ export class JobsManager {
     const jobs = await this.summaries.addBulk(
       ids.map((articleId) => ({
         name: "scraping-summary",
-        data: { userId: root.data.userId, runId: root.data.runId, articleId },
+        data: {
+          userId: root.data.userId,
+          runId: root.data.runId,
+          articleId,
+          ...(preparations?.[articleId]
+            ? { authenticatedPreparation: preparations[articleId] }
+            : {}),
+        },
         opts: {
           jobId: `${root.id}-${articleId}`,
           attempts: 3,

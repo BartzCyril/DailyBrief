@@ -6,6 +6,29 @@ import { articleBrowserLimiter } from "./article-browser";
 import { MAX_REMOTE_BYTES } from "./remote-response";
 
 export type JournalLogin = { config: JournalLoginConfig; email: string; password: string };
+export type JournalPage = { html: string; url: string; contentHtml?: string };
+export type JournalPageReader = (
+  url: string,
+  observer?: (message: string) => void,
+) => Promise<JournalPage>;
+
+function articleTarget(domain: string, url: string) {
+  const target = new URL(url);
+  if (
+    target.hostname.toLowerCase().replace(/\.$/, "") !== domain ||
+    target.username ||
+    target.password ||
+    !["http:", "https:"].includes(target.protocol) ||
+    target.port
+  )
+    throw new AppError(
+      400,
+      "Adresse d'article incompatible avec cet accès journal.",
+      "JOURNAL_UNSAFE_TARGET",
+    );
+  target.protocol = "https:";
+  return target;
+}
 
 function loginError(code = "JOURNAL_LOGIN_FAILED") {
   const messages: Record<string, string> = {
@@ -21,6 +44,8 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
       "La connexion redirige vers une origine non autorisée. Vérifiez l'URL du formulaire et le domaine du journal.",
     JOURNAL_LOGIN_REQUEST_BLOCKED:
       "Le formulaire tente d'envoyer une requête non autorisée. La connexion doit utiliser l'origine HTTPS configurée.",
+    JOURNAL_ARTICLE_UNAVAILABLE:
+      "Le journal n'a pas permis de charger cet article avec la session authentifiée.",
     JOURNAL_SESSION_EXPIRED:
       "La session du journal a expiré ou l'article renvoie au formulaire de connexion. Vérifiez les identifiants et l'accès de votre compte.",
   };
@@ -32,7 +57,7 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
   );
 }
 
-// Cookies exist only in a fresh context for this operation; none are persisted or logged.
+// One ephemeral context per batch: cookies are never persisted or shared with another user/run.
 export class JournalLoginBrowser {
   constructor(
     private fetchPage: FetchPage = fetchRemotePage,
@@ -43,27 +68,26 @@ export class JournalLoginBrowser {
     login: JournalLogin,
     articleUrl?: string,
     observer?: (message: string) => void,
-  ): Promise<{ html: string; url: string; contentHtml?: string }> {
+  ): Promise<JournalPage> {
+    if (articleUrl) articleTarget(domain, articleUrl);
+    return this.withSession(
+      domain,
+      login,
+      async (read) =>
+        articleUrl ? read(articleUrl, observer) : { html: "", url: `https://${domain}` },
+      observer,
+    );
+  }
+  async withSession<T>(
+    domain: string,
+    login: JournalLogin,
+    use: (read: JournalPageReader) => Promise<T>,
+    observer?: (message: string) => void,
+  ): Promise<T> {
     return articleBrowserLimiter.run(async () => {
       const loginOrigin = new URL(login.config.loginUrl).origin;
       const journalOrigin = `https://${domain}`;
       const origins = new Set([loginOrigin, journalOrigin]);
-      let target = articleUrl ? new URL(articleUrl) : null;
-      if (target) {
-        if (
-          target.hostname.toLowerCase().replace(/\.$/, "") !== domain ||
-          target.username ||
-          target.password ||
-          !["http:", "https:"].includes(target.protocol) ||
-          target.port
-        )
-          throw new AppError(
-            400,
-            "Adresse d'article incompatible avec cet accès journal.",
-            "JOURNAL_UNSAFE_TARGET",
-          );
-        target.protocol = "https:";
-      }
       let browser;
       try {
         browser = await chromium.launch({
@@ -77,24 +101,28 @@ export class JournalLoginBrowser {
           "JOURNAL_BROWSER_UNAVAILABLE",
         );
       }
-      const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
-      const timer = setTimeout(
-        () => {
-          void context.close().catch(() => {});
-        },
-        this.timeoutMs * 3 + 10000,
-      );
+      const context = await browser
+        .newContext({ serviceWorkers: "block", acceptDownloads: false })
+        .catch(async () => {
+          await browser.close().catch(() => {});
+          throw loginError();
+        });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let expired = false;
+      let callbackStarted = false;
       let authenticating = true;
       let secretsEntered = false;
       let navigations = 0;
+      let operationId = 0;
       let networkError: AppError | undefined;
       let rejectNetwork = (_error: unknown) => {};
-      const networkFailure = new Promise<never>((_resolve, reject) => {
+      let networkFailure = new Promise<never>((_resolve, reject) => {
         rejectNetwork = reject;
       });
       void networkFailure.catch(() => {});
       try {
         await context.route("**/*", async (route) => {
+          const requestOperationId = operationId;
           const request = route.request();
           const url = new URL(request.url());
           const navigation = request.isNavigationRequest();
@@ -150,7 +178,10 @@ export class JournalLoginBrowser {
               // Every redirect returns to interception before a new request is made.
               followRedirects: false,
             });
-            if (response.status >= 400) throw loginError();
+            if (response.status >= 400)
+              throw loginError(
+                authenticating ? "JOURNAL_LOGIN_FAILED" : "JOURNAL_ARTICLE_UNAVAILABLE",
+              );
             let html = response.text;
             let status = response.status;
             let contentType =
@@ -184,6 +215,10 @@ export class JournalLoginBrowser {
           } catch (error) {
             // Transport/Playwright errors can contain passwords, tokens or query parameters.
             // Only fixed messages and codes leave this browser operation.
+            if (requestOperationId !== operationId) {
+              await route.abort().catch(() => {});
+              return;
+            }
             if (navigation || (authenticating && method === "POST" && secretsEntered))
               networkError = loginError(
                 error instanceof AppError && error.code.startsWith("JOURNAL_")
@@ -197,86 +232,165 @@ export class JournalLoginBrowser {
         await context.routeWebSocket("**/*", (socket) => socket.close());
         const page = await context.newPage();
         page.setDefaultTimeout(this.timeoutMs);
-        return await Promise.race([
-          (async () => {
-            observer?.("Ouverture du formulaire de connexion du journal.");
-            await page.goto(login.config.loginUrl, { waitUntil: "domcontentloaded" });
-            const email = await uniqueVisible(page, login.config.emailSelector);
-            const password = await uniqueVisible(page, login.config.passwordSelector);
-            const submit = await uniqueVisible(page, login.config.submitSelector);
-            const previousSignals = login.config.successSelector
-              ? []
-              : (await page.evaluate(connectionStateInPage)).signals;
-            if (
-              login.config.successSelector &&
-              (await page.locator(login.config.successSelector).isVisible())
-            )
-              throw loginError("JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID");
-            if (
-              (await password.getAttribute("type")) !== "password" ||
-              (await password.evaluate(
-                (node) =>
-                  node instanceof HTMLInputElement && node.form?.method.toLowerCase() === "get",
-              ))
-            )
-              throw loginError("JOURNAL_LOGIN_INSECURE_FORM");
-            secretsEntered = true;
-            await email.fill(login.email);
-            await password.fill(login.password);
-            observer?.("Envoi du formulaire et vérification de la connexion.");
-            await submit.click();
-            if (login.config.successSelector)
-              await uniqueVisible(page, login.config.successSelector);
-            else await confirmConnection(page, previousSignals, this.timeoutMs);
-            authenticating = false;
-            observer?.("Connexion au journal vérifiée dans cette session.");
-            if (!target) return { html: "", url: journalOrigin };
-            observer?.("Chargement de l'article avec la session authentifiée.");
-            await page.goto(target.href, { waitUntil: "domcontentloaded" });
-            await assertArticleAccess(page, login, journalOrigin);
-            await page.waitForFunction(() => (document.body?.innerText.trim().length ?? 0) >= 200);
-            await page.evaluate(async () => {
-              let previous = "";
-              let stableSince = performance.now();
-              const start = stableSince;
-              while (performance.now() - start < 8000) {
-                const region =
-                  document.querySelector("article, main, [role='main']") ?? document.body;
-                const text = region?.textContent?.replace(/\s+/g, " ").trim() ?? "";
-                if (text !== previous) {
-                  previous = text;
-                  stableSince = performance.now();
+        const execute = async <R>(
+          action: () => Promise<R>,
+          abort: () => Promise<void> = () => context.close().catch(() => {}),
+        ): Promise<R> => {
+          operationId++;
+          navigations = 0;
+          networkError = undefined;
+          networkFailure = new Promise<never>((_resolve, reject) => {
+            rejectNetwork = reject;
+          });
+          void networkFailure.catch(() => {});
+          timer = setTimeout(
+            () => {
+              void context.close().catch(() => {});
+            },
+            this.timeoutMs * 3 + 10000,
+          );
+          const operation = action();
+          try {
+            return await Promise.race([operation, networkFailure]);
+          } catch (error) {
+            const safeError =
+              networkError ??
+              (error instanceof AppError && error.code.startsWith("JOURNAL_")
+                ? error
+                : loginError());
+            await abort();
+            throw safeError;
+          } finally {
+            // A rejected interception can win the race while goto is still
+            // unwinding. Finish it before the next article uses the same page.
+            await operation.catch(() => {});
+            clearTimeout(timer);
+          }
+        };
+        await execute(async () => {
+          observer?.("Ouverture du formulaire de connexion du journal.");
+          await page.goto(login.config.loginUrl, { waitUntil: "domcontentloaded" });
+          const email = await uniqueVisible(page, login.config.emailSelector);
+          const password = await uniqueVisible(page, login.config.passwordSelector);
+          const submit = await uniqueVisible(page, login.config.submitSelector);
+          const previousSignals = login.config.successSelector
+            ? []
+            : (await page.evaluate(connectionStateInPage)).signals;
+          if (
+            login.config.successSelector &&
+            (await page.locator(login.config.successSelector).isVisible())
+          )
+            throw loginError("JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID");
+          if (
+            (await password.getAttribute("type")) !== "password" ||
+            (await password.evaluate(
+              (node) =>
+                node instanceof HTMLInputElement && node.form?.method.toLowerCase() === "get",
+            ))
+          )
+            throw loginError("JOURNAL_LOGIN_INSECURE_FORM");
+          secretsEntered = true;
+          await email.fill(login.email);
+          await password.fill(login.password);
+          observer?.("Envoi du formulaire et vérification de la connexion.");
+          await submit.click();
+          if (login.config.successSelector) await uniqueVisible(page, login.config.successSelector);
+          else await confirmConnection(page, previousSignals, this.timeoutMs);
+          authenticating = false;
+          observer?.("Connexion au journal vérifiée dans cette session.");
+        });
+        const readPage: JournalPageReader = async (url, notify) => {
+          const target = articleTarget(domain, url);
+          if (expired || page.isClosed()) throw loginError("JOURNAL_SESSION_EXPIRED");
+          // Keep the authenticated context and cookies, but isolate failed
+          // navigations in a temporary tab so Chromium's error page cannot
+          // interrupt the following article.
+          const articlePage = await context.newPage().catch(() => {
+            throw loginError("JOURNAL_SESSION_EXPIRED");
+          });
+          articlePage.setDefaultTimeout(this.timeoutMs);
+          try {
+            return await execute(
+              async () => {
+                const page = articlePage;
+                const observer = notify;
+
+                observer?.("Chargement de l'article avec la session authentifiée.");
+                await page.goto(target.href, { waitUntil: "domcontentloaded" });
+                await assertArticleAccess(page, login, journalOrigin);
+                await page.waitForFunction(
+                  () => (document.body?.innerText.trim().length ?? 0) >= 200,
+                );
+                await page.evaluate(async () => {
+                  let previous = "";
+                  let stableSince = performance.now();
+                  const start = stableSince;
+                  while (performance.now() - start < 8000) {
+                    const region =
+                      document.querySelector("article, main, [role='main']") ?? document.body;
+                    const text = region?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+                    if (text !== previous) {
+                      previous = text;
+                      stableSince = performance.now();
+                    }
+                    const bottom =
+                      window.scrollY + window.innerHeight >=
+                      document.documentElement.scrollHeight - 2;
+                    if (!bottom) {
+                      window.scrollBy(0, Math.max(400, window.innerHeight * 0.8));
+                      stableSince = performance.now();
+                    }
+                    if (
+                      bottom &&
+                      performance.now() - start >= 1500 &&
+                      performance.now() - stableSince >= 1200
+                    )
+                      return;
+                    await new Promise((resolve) => setTimeout(resolve, 200));
+                  }
+                  throw new Error("Unstable article");
+                });
+                await assertArticleAccess(page, login, journalOrigin);
+                const html = await page.content();
+                if (Buffer.byteLength(html) > MAX_REMOTE_BYTES)
+                  throw loginError("JOURNAL_ARTICLE_TOO_LARGE");
+                let contentHtml: string | undefined;
+                if (login.config.articleContentSelector) {
+                  const fullArticle = await uniqueVisible(
+                    page,
+                    login.config.articleContentSelector,
+                  );
+                  contentHtml = `<article>${await fullArticle.innerHTML()}</article>`;
                 }
-                const bottom =
-                  window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
-                if (!bottom) {
-                  window.scrollBy(0, Math.max(400, window.innerHeight * 0.8));
-                  stableSince = performance.now();
-                }
-                if (
-                  bottom &&
-                  performance.now() - start >= 1500 &&
-                  performance.now() - stableSince >= 1200
-                )
-                  return;
-                await new Promise((resolve) => setTimeout(resolve, 200));
-              }
-              throw new Error("Unstable article");
-            });
-            await assertArticleAccess(page, login, journalOrigin);
-            const html = await page.content();
-            if (Buffer.byteLength(html) > MAX_REMOTE_BYTES)
-              throw loginError("JOURNAL_ARTICLE_TOO_LARGE");
-            let contentHtml: string | undefined;
-            if (login.config.articleContentSelector) {
-              const fullArticle = await uniqueVisible(page, login.config.articleContentSelector);
-              contentHtml = `<article>${await fullArticle.innerHTML()}</article>`;
-            }
-            return { html, url: page.url(), contentHtml };
-          })(),
-          networkFailure,
-        ]);
+                return { html, url: page.url(), contentHtml };
+              },
+              () => articlePage.close().catch(() => {}),
+            );
+          } catch (error) {
+            if (error instanceof AppError && error.code === "JOURNAL_SESSION_EXPIRED")
+              expired = true;
+            throw error;
+          } finally {
+            await articlePage.close().catch(() => {});
+          }
+        };
+        let reads = Promise.resolve();
+        const read: JournalPageReader = (url, notify) => {
+          const pending = reads.then(() => readPage(url, notify));
+          reads = pending.then(
+            () => {},
+            () => {},
+          );
+          return pending;
+        };
+        callbackStarted = true;
+        try {
+          return await use(read);
+        } finally {
+          await reads;
+        }
       } catch (error) {
+        if (callbackStarted) throw error;
         if (networkError) throw networkError;
         if (error instanceof AppError && error.code.startsWith("JOURNAL_")) throw error;
         throw loginError();

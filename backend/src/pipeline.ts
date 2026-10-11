@@ -21,6 +21,8 @@ import { ArticleContentService } from "./article-content";
 import { JournalAccessService, journalAccessVersion } from "./journal-access";
 import { failureFor } from "./queue/failure";
 import { ScrapingSummaryProcessor } from "./queue/scraping-summary";
+import type { AuthenticatedPreparations } from "./queue/scraping-summary";
+import { prepareJournalContent } from "./queue/journal-content";
 import type { ArticleJobResult } from "@dailybrief/shared";
 import type { DailyBriefSnapshot } from "@dailybrief/shared";
 import { DailyBriefService } from "./daily-brief";
@@ -30,6 +32,7 @@ export type ArticleDispatcher = (
   runId: string,
   articleIds: string[],
   observer?: ProgressObserver,
+  preparations?: AuthenticatedPreparations,
 ) => Promise<ArticleJobResult[]>;
 export type DailyBriefRunResult = RunResult;
 export type BriefDispatcher = (
@@ -310,6 +313,19 @@ export class DailyBriefPipelineService implements CollectionRunner {
           this.articleContent,
           this.journals,
         );
+        stage = "content";
+        const preparations = await prepareJournalContent(
+          this.db,
+          userId,
+          run.id,
+          pending,
+          articles,
+          this.journals,
+          this.articleContent,
+          processor,
+          assertOwned,
+          observer,
+        );
         let outcomes: ArticleJobResult[];
         if (this.dispatch) {
           stage = "ai";
@@ -318,6 +334,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
             run.id,
             pending.map((article) => article.id),
             observer,
+            preparations,
           );
         } else {
           outcomes = [];
@@ -334,6 +351,10 @@ export class DailyBriefPipelineService implements CollectionRunner {
               collected,
               assertOwned,
               interestPrompt,
+              {
+                authenticatedPreparation: preparations[article.id],
+                requirePreparedAuthentication: true,
+              },
             );
             outcomes.push(outcome);
             if (
@@ -395,12 +416,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
             };
             continue;
           }
-          if (
-            article.source.type !== "RSS" ||
-            !article.source.articleLinkSelector ||
-            !article.contentUrl
-          )
-            continue;
+          if (!article.contentUrl || !article.contentAccessVersion) continue;
           try {
             const currentAccess = await this.journals.assertAccessible(userId, article.contentUrl);
             if (journalAccessVersion(currentAccess) !== article.contentAccessVersion)

@@ -4,12 +4,30 @@ import type { Source } from "@prisma/client";
 import { analyzeArticle, type SummaryProvider } from "../ai";
 import type { CollectedArticle } from "../collection";
 import { ArticleContentService } from "../article-content";
-import { JournalAccessService, journalAccessVersion } from "../journal-access";
+import {
+  JournalAccessService,
+  journalAccessVersion,
+  journalDomain,
+  type AuthenticatedArticleReader,
+} from "../journal-access";
 import { AppError } from "../errors";
 import { reportProgress, type ProgressObserver } from "../progress";
 import { failureFor } from "./failure";
 import { getSettings } from "../collection";
 import { DailyBriefService } from "../daily-brief";
+
+export type AuthenticatedPreparation = {
+  outcome: ArticleJobResult;
+  accessVersion: string;
+  sourceUpdatedAt: string;
+};
+export type AuthenticatedPreparations = Record<string, AuthenticatedPreparation>;
+type ProcessingOptions = {
+  contentOnly?: boolean;
+  authenticatedFetch?: AuthenticatedArticleReader;
+  authenticatedPreparation?: AuthenticatedPreparation;
+  requirePreparedAuthentication?: boolean;
+};
 
 // Redis contains only identifiers; article bodies and credentials are read server-side.
 export class ScrapingSummaryProcessor {
@@ -40,6 +58,7 @@ export class ScrapingSummaryProcessor {
     collected?: CollectedArticle,
     assertOwned: () => Promise<void> = async () => {},
     interestPrompt?: string,
+    options: ProcessingOptions = {},
   ): Promise<ArticleJobResult> {
     let article = await this.db.article.findFirst({
       where: { id: articleId, userId },
@@ -55,6 +74,17 @@ export class ScrapingSummaryProcessor {
       }))
     )
       return { ...outcome, status: "skipped" };
+    const prepared = options.authenticatedPreparation;
+    if (prepared && prepared.sourceUpdatedAt !== article.source.updatedAt.toISOString())
+      return {
+        ...outcome,
+        status: "failed",
+        failure: failureFor(
+          new AppError(409, "La source a changé. Relancez la récupération.", "SOURCE_CHANGED"),
+          "content",
+        ),
+      };
+    if (prepared && prepared.outcome.status !== "completed") return prepared.outcome;
     const sourceVersion = (source: Source) =>
       JSON.stringify([source.type, source.url, source.articleLinkSelector, source.scrapingConfig]);
     const expectedSourceVersion = sourceVersion(article.source);
@@ -82,16 +112,63 @@ export class ScrapingSummaryProcessor {
       article.source.type === "RSS" ? article.source.articleLinkSelector : null;
     let externalUrl: string | undefined;
     let accessVersion: string | null = null;
-    if (articleLinkSelector) {
+    // Access can be configured after the producer's snapshot. Never let a summary
+    // consumer start its own authenticated browser when preparation is missing.
+    let directAuthenticationConfigured = false;
+    if (options.requirePreparedAuthentication && !articleLinkSelector && !prepared && article.url) {
+      let domain: string | undefined;
+      try {
+        domain = journalDomain(article.url);
+      } catch {
+        /* Invalid article URLs are handled by the content loader. */
+      }
+      if (domain) {
+        const access = await this.db.journalAccess.findUnique({
+          where: { userId_domain: { userId, domain } },
+        });
+        directAuthenticationConfigured = Boolean(access?.encryptedPassword);
+      }
+    }
+    if (
+      articleLinkSelector ||
+      options.authenticatedFetch ||
+      prepared ||
+      directAuthenticationConfigured
+    ) {
       try {
         if (collected?.resolutionError)
           throw new AppError(422, collected.resolutionError, "ARTICLE_LINK_UNRESOLVED");
-        externalUrl =
-          collected?.externalUrl ??
-          (await this.articleContent.resolveLink(article.url, articleLinkSelector));
-        accessVersion = journalAccessVersion(
-          await this.journals.assertAccessible(userId, externalUrl),
-        );
+        externalUrl = prepared
+          ? (article.contentUrl ?? undefined)
+          : (collected?.externalUrl ??
+            (articleLinkSelector
+              ? await this.articleContent.resolveLink(article.url, articleLinkSelector)
+              : (article.url ?? undefined)));
+        if (!externalUrl)
+          throw new AppError(
+            409,
+            "Le contenu authentifié préparé est indisponible. Relancez la récupération.",
+            "JOURNAL_PREPARATION_INVALID",
+          );
+        const access = await this.journals.assertAccessible(userId, externalUrl);
+        if (
+          options.requirePreparedAuthentication &&
+          access.encryptedPassword &&
+          !prepared &&
+          !options.authenticatedFetch
+        )
+          throw new AppError(
+            409,
+            "L'accès authentifié n'a pas été préparé. Relancez la récupération.",
+            "JOURNAL_PREPARATION_INVALID",
+          );
+        accessVersion = journalAccessVersion(access);
+        if (prepared && accessVersion !== prepared.accessVersion)
+          throw new AppError(
+            409,
+            "L'accès au journal a changé. Relancez la récupération.",
+            "JOURNAL_ACCESS_CHANGED",
+          );
       } catch (error) {
         processed++;
         const failure = failureFor(error, "content");
@@ -119,6 +196,12 @@ export class ScrapingSummaryProcessor {
         total: 1,
       });
       try {
+        if (prepared)
+          throw new AppError(
+            409,
+            "Le contenu authentifié préparé est indisponible. Relancez la récupération.",
+            "JOURNAL_PREPARATION_INVALID",
+          );
         const contentProgress = (message: string) =>
           report({
             stage: "content",
@@ -128,7 +211,10 @@ export class ScrapingSummaryProcessor {
             total: 1,
           });
         const fetched = externalUrl
-          ? await this.journals.fetchArticle(userId, externalUrl, contentProgress)
+          ? await (
+              options.authenticatedFetch ??
+              ((url, notify) => this.journals.fetchArticle(userId, url, notify))
+            )(externalUrl, contentProgress)
           : await this.articleContent.fetchWithUrl(
               article.url,
               contentProgress,
@@ -217,6 +303,10 @@ export class ScrapingSummaryProcessor {
         outcome.status = failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed";
         return outcome;
       }
+    }
+    if (options.contentOnly) {
+      await assertCurrent();
+      return outcome;
     }
     stage = "ai";
     if (!article.summary || !article.summarizedAt || !article.analyzedAt) {

@@ -3,7 +3,7 @@ import type { RunResult, ArticleJobResult, CollectionProgress } from "@dailybrie
 import type { Db } from "../db";
 import type { ProgressObserver } from "../progress";
 import { DailyBriefPipelineService } from "../pipeline";
-import type { BriefDispatcher } from "../pipeline";
+import type { BriefDispatcher, ArticleDispatcher } from "../pipeline";
 import { AppError } from "../errors";
 import { failureFor } from "./failure";
 import { ScrapingSummaryProcessor } from "./scraping-summary";
@@ -32,12 +32,7 @@ export async function startConsumers(
   db: Db,
   manager: JobsManager,
   makePipeline: (
-    dispatch: (
-      userId: string,
-      runId: string,
-      ids: string[],
-      observer?: ProgressObserver,
-    ) => Promise<ArticleJobResult[]>,
+    dispatch: ArticleDispatcher,
     finalize: BriefDispatcher,
   ) => DailyBriefPipelineService,
   processor: ScrapingSummaryProcessor,
@@ -105,6 +100,10 @@ export async function startConsumers(
             undefined,
             assertOwned,
             run.interestPrompt ?? undefined,
+            {
+              authenticatedPreparation: job.data.authenticatedPreparation,
+              requirePreparedAuthentication: true,
+            },
           );
           await writes;
           if (outcome.status === "failed") {
@@ -124,8 +123,10 @@ export async function startConsumers(
               "SOURCE_CHANGED",
               "JOURNAL_AUTH_UNSUPPORTED",
               "JOURNAL_LOGIN_FAILED",
+              "JOURNAL_PREPARATION_INVALID",
             ].includes(failure.code);
-            if (permanent) throw new UnrecoverableError(failure.message);
+            if (permanent || (job.data.authenticatedPreparation && failure.stage === "content"))
+              throw new UnrecoverableError(failure.message);
             throw new AppError(502, failure.message, failure.code);
           }
           return outcome;
@@ -176,7 +177,8 @@ export async function startConsumers(
           writes = writes.then(() => job.updateProgress(snapshot));
         };
         const pipeline = makePipeline(
-          (_userId, _runId, ids, observer) => manager.dispatch(job, ids, observer),
+          (_userId, _runId, ids, observer, preparations) =>
+            manager.dispatch(job, ids, observer, preparations),
           (_userId, _runId, observer) => manager.dispatchBrief(job, observer),
         );
         try {
