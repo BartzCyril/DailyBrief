@@ -1,7 +1,7 @@
 {
   "sources": {
     "width": 1152,
-    "height": 599
+    "height": 729
   },
   "rss": {
     "width": 768,
@@ -30,5 +30,9 @@
   "jobs": {
     "width": 1280,
     "height": 705
+  },
+  "resume": {
+    "width": 672,
+    "height": 342
   }
 }

@@ -58,6 +58,27 @@ const sources: Source[] = [
     scrapingConfig: null,
   },
   {
+    id: "rss-technologie",
+    url: "https://technologie.exemple.fr/feed.xml",
+    type: "RSS",
+    enabled: true,
+    scrapingConfig: null,
+  },
+  {
+    id: "rss-cloud",
+    url: "https://cloud.exemple.fr/rss",
+    type: "RSS",
+    enabled: true,
+    scrapingConfig: null,
+  },
+  {
+    id: "rss-economie",
+    url: "https://economie.exemple.fr/rss.xml",
+    type: "RSS",
+    enabled: false,
+    scrapingConfig: null,
+  },
+  {
     id: "scraping-cloud",
     url: "https://actualites.exemple.fr/cloud",
     type: "SCRAPING",
@@ -126,7 +147,25 @@ let authenticated = true;
 let showRun = false;
 let assistanceIncomplete = false;
 let requests = 0;
-async function capture(page: Page, name: string, target = page.locator("main")) {
+async function capture(
+  page: Page,
+  name: string,
+  target = page.locator("main"),
+  includeNotifications = false,
+) {
+  // Transient toasts sit outside main/dialog and otherwise get cut by element screenshots.
+  // Keep them only in the full-page assistance example that demonstrates an AI error.
+  if (!includeNotifications) {
+    const closeButtons = page.getByRole("button", {
+      name: "Fermer la notification",
+      exact: true,
+    });
+    for (let i = (await closeButtons.count()) - 1; i >= 0; i--) {
+      const close = closeButtons.nth(i);
+      await close.click();
+      await close.waitFor({ state: "hidden" });
+    }
+  }
   await page.evaluate(() => document.fonts.ready);
   const box = await target.boundingBox();
   if (!box) throw new Error(`Capture absente : ${name}`);
@@ -233,13 +272,18 @@ try {
       return respond({ journals, lastInventoriedAt: day, unresolvedCount: 0 });
     if (path === "/dashboard")
       return respond({
-        sources: { total: 4, rss: 3, scraping: 1, enabled: 3 },
+        sources: {
+          total: sources.length,
+          rss: sources.filter((source) => source.type === "RSS").length,
+          scraping: sources.filter((source) => source.type === "SCRAPING").length,
+          enabled: sources.filter((source) => source.enabled).length,
+        },
         collection: {
           enabled: true,
           time: "07:30",
           timezone: "Europe/Paris",
           lastRunAt: day,
-          nextRunAt: "2026-10-11T07:30:00.000Z",
+          nextRunAt: "2026-10-11T05:30:00.000Z",
         },
       });
     if (path === "/ai/selectors/analyze" && assistanceIncomplete)
@@ -259,6 +303,7 @@ try {
   await page.goto(`${origin}/sources`);
   await page.getByRole("link", { name: "Ajouter un flux RSS" }).waitFor();
   await page.getByText("https://culture.exemple.fr/feed.xml", { exact: true }).waitFor();
+  await page.getByText("1–5 sur 6 sources", { exact: true }).waitFor();
   await capture(page, "sources");
   await page.goto(`${origin}/sources/new/rss`);
   await page.getByLabel("URL du flux RSS").fill("https://culture.exemple.fr/feed.xml");
@@ -272,7 +317,7 @@ try {
   await page.getByRole("button", { name: "Remplir avec l'IA" }).click();
   await page.getByRole("button", { name: "Demander de l'aide" }).waitFor();
   await page.getByText("L'analyse n'a pas pu remplir les sélecteurs.", { exact: true }).waitFor();
-  await capture(page, "assistance", page.locator("body"));
+  await capture(page, "assistance", page.locator("body"), true);
   await page.goto(`${origin}/journals`);
   await page.getByText("www.lemonde.fr", { exact: true }).waitFor();
   await capture(page, "journaux");
@@ -290,7 +335,15 @@ try {
   showRun = true;
   await page.goto(`${origin}/jobs`);
   await page.getByText("10/15 articles traités · 0 en échec · 0 ignorés").waitFor();
+  await page.getByText("1–5 sur 15 articles", { exact: true }).waitFor();
   await capture(page, "jobs");
+  await page
+    .getByRole("button", { name: "Voir le résumé de Le cloud de demain", exact: true })
+    .click();
+  const summaryDialog = page.getByRole("dialog", { name: "Résumé IA", exact: true });
+  await summaryDialog.getByRole("heading", { name: "Points clés", exact: true }).waitFor();
+  await capture(page, "resume", summaryDialog);
+  await page.keyboard.press("Escape");
   await writeFile(resolve(output, "screenshots.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
   // Public routes also work without a session or a backend; test at desktop and mobile sizes.
@@ -300,7 +353,17 @@ try {
     for (const path of ["/", "/documentation"]) {
       await page.goto(`${origin}${path}`);
       await page.locator("h1").waitFor();
-      await page.locator(".public-header").getByRole("link", { name: "Se connecter" }).waitFor();
+      await page
+        .locator(".public-header")
+        .getByRole("link", { name: "Se connecter" })
+        .waitFor()
+        .catch(async (error) => {
+          await page.screenshot({ path: "/tmp/dailybrief-documentation-capture-failure.png" });
+          throw new Error(
+            `Vérification publique interrompue : ${path} à ${width}px. ${errors.join("; ")}`,
+            { cause: error },
+          );
+        });
       await page.evaluate(async () => {
         const images = [...document.querySelectorAll<HTMLImageElement>("main img")];
         await Promise.all(

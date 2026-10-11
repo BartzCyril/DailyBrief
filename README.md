@@ -43,7 +43,10 @@ journaux, les tests du workflow et le suivi des collectes. Un exercice de
 sélecteurs fonctionne localement dans le navigateur, sans requête IA.
 
 Les captures versionnées dans `frontend/public/documentation/` utilisent les
-vrais écrans avec des réponses API de démonstration. Pour les régénérer et
+vrais écrans avec des réponses API de démonstration : sources paginées, switches des
+journaux, formulaire d’accès, historique et fenêtre du résumé IA. Les notifications
+temporaires sont fermées avant les captures des formulaires ; l’exemple d’échec de
+l’assistance conserve sa notification complète. Pour les régénérer et
 vérifier l’accueil et le guide sur ordinateur et mobile :
 
 ```sh

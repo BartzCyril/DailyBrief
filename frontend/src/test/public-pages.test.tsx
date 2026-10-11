@@ -45,7 +45,7 @@ test("the documentation remains available when the backend is unreachable", asyn
   }
   expect(within(nav).getAllByRole("link")).toHaveLength(10);
   expect(document.title).toBe("Guide d’utilisation · DailyBrief");
-  expect(screen.getAllByRole("img")).toHaveLength(8);
+  expect(screen.getAllByRole("img")).toHaveLength(9);
 });
 test("the chapter search handles accents and shows empty results", async () => {
   mount("/documentation");

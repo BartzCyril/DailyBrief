@@ -249,7 +249,7 @@ export function DocumentationPage() {
               name="sources"
               height={430}
               alt="Liste des sources RSS avec onglets, recherche, filtre et icônes d’action"
-              caption="Dans Sources, les onglets RSS et SCRAPING séparent les deux types de veille."
+              caption="Les onglets RSS et SCRAPING séparent les sources. Chaque page affiche jusqu’à 5 sources, avec recherche, filtre et actions."
             />
             <Tip title="Prenez le temps de vérifier le premier aperçu">
               <p>
@@ -756,8 +756,15 @@ export function DocumentationPage() {
             <Screenshot
               name="jobs"
               height={720}
-              alt="Historique d’exécutions avec progression, états des articles et boutons pour consulter les résumés IA"
-              caption="La progression, les états des articles et les résumés IA restent consultables après rechargement."
+              alt="Historique d’exécutions avec suivi à gauche, filtre de statut et tableau de cinq articles paginés à droite"
+              caption="Le suivi et le tableau sont côte à côte sur ordinateur. Filtrez par statut et parcourez les pages de 5 articles."
+            />
+            <Screenshot
+              name="resume"
+              width={670}
+              height={500}
+              alt="Fenêtre Résumé IA avec le titre généré, le résumé enregistré et ses points clés"
+              caption="Voir le résumé ouvre le texte déjà enregistré et ses points clés, sans relancer l’IA."
             />
             <Table
               headings={["État", "Ce qu’il signifie"]}
@@ -768,7 +775,11 @@ export function DocumentationPage() {
                   "Nouvelle tentative prévue",
                   "Une erreur temporaire a déclenché une nouvelle tentative.",
                 ],
-                ["Terminé", "Le travail est terminé ; vérifiez aussi s’il a été ignoré."],
+                ["Terminé", "Le traitement est terminé et le résumé enregistré est consultable."],
+                [
+                  "Ignoré",
+                  "L’article n’a pas été traité, par exemple si sa source ou son journal est désactivé.",
+                ],
                 ["Échec", "Consultez le message et corrigez la source ou l’accès si nécessaire."],
               ]}
             />
