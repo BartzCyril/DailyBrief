@@ -18,6 +18,7 @@ import { filterRecentArticles, type RecentArticleOptions } from "./recent-articl
 import { inspectScrapingPage, type ScrapingPageDiagnostic } from "./scraping-diagnostics";
 import { logger } from "./logger";
 import { readScrapingVerificationWait } from "./config";
+import { verificationPostAllowed } from "./verification-network";
 
 export type ScrapingDiagnosticObserver = (
   diagnostic: ScrapingPageDiagnostic,
@@ -180,6 +181,12 @@ export class ScrapingService {
       let failLoad: ((error: unknown) => void) | undefined;
       let pendingLoads = 0;
       let attemptedLoads = 0;
+      let verificationResources = false;
+      const filteredResources = new Set<string>();
+      const recordFilteredResource = (target: string, method: string, type: string) => {
+        if (filteredResources.size < 10 && (method === "POST" || ["image", "font"].includes(type)))
+          filteredResources.add(`${method}:${type}:${new URL(target).hostname}`);
+      };
       const blockedPosts = new Set<string>();
       const scriptErrors = new Set<string>();
       const timer =
@@ -205,13 +212,24 @@ export class ScrapingService {
             page,
             network,
             (request) => {
+              const verificationPost = verificationPostAllowed(
+                request.url,
+                request.method,
+                request.resourceType,
+                verificationResources,
+                new URL(url).origin,
+              );
               const post =
                 request.method === "POST" &&
-                config.mode === "LOAD_MORE" &&
-                ["XHR", "Fetch"].includes(request.resourceType);
+                (config.mode === "LOAD_MORE" || verificationPost) &&
+                ["xhr", "fetch"].includes(request.resourceType.toLowerCase());
               if (request.method !== "GET" && !post)
                 throw new AppError(400, "Cette requête de page n'est pas autorisée.", "UNSAFE_URL");
-              if (post && new URL(request.url).origin !== new URL(page.url()).origin)
+              if (
+                post &&
+                !verificationPost &&
+                new URL(request.url).origin !== new URL(page.url()).origin
+              )
                 throw new AppError(
                   400,
                   "Redirection POST vers un autre site interdite.",
@@ -274,17 +292,34 @@ export class ScrapingService {
         await context.route("**/*", async (route) => {
           const request = route.request();
           const ajax = ["xhr", "fetch"].includes(request.resourceType());
-          const post = request.method() === "POST" && config.mode === "LOAD_MORE" && ajax;
+          const verificationPost = verificationPostAllowed(
+            request.url(),
+            request.method(),
+            request.resourceType(),
+            verificationResources,
+            new URL(url).origin,
+          );
+          const post =
+            request.method() === "POST" &&
+            (config.mode === "LOAD_MORE" || verificationPost) &&
+            ajax;
           if (
             (request.method() !== "GET" && !post) ||
-            ["image", "media", "font"].includes(request.resourceType())
+            request.resourceType() === "media" ||
+            (!verificationResources && ["image", "font"].includes(request.resourceType()))
           ) {
+            recordFilteredResource(request.url(), request.method(), request.resourceType());
             await route.abort();
             return;
           }
           if (network) {
             try {
-              if (post && new URL(request.url()).origin !== new URL(page.url()).origin) {
+              if (
+                post &&
+                !verificationPost &&
+                new URL(request.url()).origin !== new URL(page.url()).origin
+              ) {
+                recordFilteredResource(request.url(), request.method(), request.resourceType());
                 if (failLoad) blockedPosts.add(request.url());
                 await route.abort().catch(() => {});
                 return;
@@ -306,7 +341,12 @@ export class ScrapingService {
           const tracked = Boolean(failLoad && ajax);
           if (tracked) pendingLoads++;
           try {
-            if (post && new URL(request.url()).origin !== new URL(page.url()).origin) {
+            if (
+              post &&
+              !verificationPost &&
+              new URL(request.url()).origin !== new URL(page.url()).origin
+            ) {
+              recordFilteredResource(request.url(), request.method(), request.resourceType());
               // A click can also trigger analytics or other unrelated POSTs. Abort
               // them without failing an article batch that loads successfully.
               if (tracked) blockedPosts.add(request.url());
@@ -350,6 +390,7 @@ export class ScrapingService {
         await context.routeWebSocket("**/*", (socket) => socket.close());
         async function navigate(target: string) {
           networkError = undefined;
+          filteredResources.clear();
           try {
             if (network) {
               await network.guard(target);
@@ -375,23 +416,55 @@ export class ScrapingService {
               "Attente de la vérification du navigateur avant l'extraction.",
               { maxWaitMs: this.verificationWaitMs },
             );
+            const beforeDeadline = async (task: () => Promise<ScrapingPageDiagnostic>) => {
+              const remaining = deadline - Date.now();
+              if (remaining <= 0) return undefined;
+              let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+              try {
+                return await Promise.race([
+                  task(),
+                  new Promise<undefined>((resolve) => {
+                    deadlineTimer = setTimeout(() => resolve(undefined), remaining);
+                  }),
+                ]);
+              } finally {
+                clearTimeout(deadlineTimer);
+              }
+            };
+            verificationResources = true;
+            // Initial filters may have stopped the site's own verification requests.
+            // Retry once in this same context, retaining its temporary cookies.
+            if (filteredResources.size) {
+              logger.info(
+                "scraping.verification_wait.reload",
+                "Rechargement avec les ressources nécessaires à la vérification.",
+                { filteredResourceKinds: [...filteredResources] },
+              );
+              network?.beginLoad();
+              try {
+                const updated = await beforeDeadline(async () => {
+                  await page.reload({
+                    waitUntil: "networkidle",
+                    timeout: Math.max(1, Math.min(10000, deadline - Date.now())),
+                  });
+                  return inspectScrapingPage(page, config);
+                });
+                if (updated) diagnostic = updated;
+              } catch (error) {
+                if (networkError instanceof AppError) throw networkError;
+                if (!(error instanceof errors.TimeoutError)) throw error;
+              }
+            }
             while (!diagnostic.withTitle && diagnostic.pageProtection && Date.now() < deadline) {
               network?.assertWithinBudget();
               if (networkError instanceof AppError) throw networkError;
               const remaining = deadline - Date.now();
               if (remaining <= 0) break;
-              let stepTimer: ReturnType<typeof setTimeout> | undefined;
               try {
-                // Enforce the deadline in the server even if page JavaScript stalls.
-                const updated = await Promise.race([
-                  (async () => {
-                    await page.waitForTimeout(Math.min(250, remaining));
-                    return inspectScrapingPage(page, config);
-                  })(),
-                  new Promise<undefined>((resolve) => {
-                    stepTimer = setTimeout(() => resolve(undefined), remaining);
-                  }),
-                ]);
+                const updated = await beforeDeadline(async () => {
+                  await page.waitForTimeout(Math.min(250, remaining));
+                  return inspectScrapingPage(page, config);
+                });
                 if (!updated) break;
                 diagnostic = updated;
               } catch (error) {
@@ -403,12 +476,11 @@ export class ScrapingService {
                   )
                 )
                   throw error;
-              } finally {
-                clearTimeout(stepTimer);
               }
             }
             network?.assertWithinBudget();
             if (networkError instanceof AppError) throw networkError;
+            verificationResources = false;
             logger.info(
               diagnostic.pageProtection && !diagnostic.withTitle
                 ? "scraping.verification_wait.expired"

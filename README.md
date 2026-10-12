@@ -655,6 +655,15 @@ si les articles apparaissent ; si la vérification persiste, une erreur explicit
 remplace l'aperçu vide. Cela vaut pour le test, la validation avant enregistrement,
 la collecte et les pages suivantes de pagination. Les logs signalent le début et
 la fin de l'attente, sans texte de page ni cookies.
+Si les filtres initiaux ont empêché des ressources de se charger, la page de
+vérification est rechargée une seule fois dans le même navigateur. Pendant cette
+phase, les images et polices sont autorisées, ainsi que les POST AJAX vers le
+site et les domaines HTTPS exacts `geo.captcha-delivery.com`, `api-js.datadome.co`
+et `challenges.cloudflare.com`. Les autres POST externes restent bloqués.
+La vérification des destinations publiques et les limites de téléchargement
+restent actives ; les restrictions habituelles reviennent après l'attente.
+Il s'agit de laisser les scripts de validation normaux du site fonctionner,
+sans résoudre de CAPTCHA ni modifier l'empreinte du navigateur.
 
 La variable facultative `SCRAPING_VERIFICATION_WAIT_MS=30000` règle ce délai dans
 le `.env` commun à l'API et aux consumers. Elle accepte de `0` (aucune attente) à
