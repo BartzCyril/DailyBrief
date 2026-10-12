@@ -17,12 +17,10 @@ import {
   type ScrapingDraft,
 } from "./ScrapingFields";
 import { SelectorAssistance } from "./SelectorAssistance";
-import { SourceOrderField } from "./SourceOrderField";
 export function ScrapingForm() {
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
   const [draft, setDraft] = useState(defaultDraft);
-  const [newestFirst, setNewestFirst] = useState(false);
   const [tested, setTested] = useState<{
     preview: SourcePreview;
     url: string;
@@ -51,10 +49,8 @@ export function ScrapingForm() {
       setError(
         validation.error.issues.some((issue) => issue.path.includes("urlTemplate"))
           ? "Le modèle d'URL doit contenir {page}."
-          : validation.error.issues.some((issue) =>
-                ["descriptionSelector", "dateSelector"].includes(String(issue.path[0])),
-              )
-            ? "Les sélecteurs de description et de date sont obligatoires. Vérifiez les sélecteurs requis."
+          : validation.error.issues.some((issue) => issue.path[0] === "dateSelector")
+            ? "Le sélecteur de date est obligatoire. Vérifiez les sélecteurs requis."
             : "Vérifiez les sélecteurs requis et les limites de collecte.",
       );
       return;
@@ -74,7 +70,7 @@ export function ScrapingForm() {
     setBusy("save");
     setError("");
     try {
-      await sourcesApi.saveScraping(tested.url, tested.config, newestFirst);
+      await sourcesApi.saveScraping(tested.url, tested.config);
       navigate("/sources?type=scraping", { state: { message: "Source de scraping ajoutée." } });
     } catch (error) {
       setError(errorMessage(error));
@@ -114,7 +110,6 @@ export function ScrapingForm() {
         />
         <fieldset disabled={pending} className="space-y-5">
           <ScrapingFields draft={draft} update={update} />
-          <SourceOrderField checked={newestFirst} onChange={setNewestFirst} disabled={pending} />
         </fieldset>
         <div className="flex flex-wrap gap-3">
           <Button type="submit" disabled={pending}>

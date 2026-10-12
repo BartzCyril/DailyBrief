@@ -338,10 +338,10 @@ try {
         },
         collection: {
           enabled: true,
-          time: "07:30",
+          time: "07:00",
           timezone: "Europe/Paris",
           lastRunAt: day,
-          nextRunAt: "2026-10-11T05:30:00.000Z",
+          nextRunAt: "2026-10-11T05:00:00.000Z",
           interestPrompt:
             "Je souhaite suivre l’IA, le cloud et les nouveaux outils pour les équipes. Je m’intéresse aussi aux initiatives culturelles. Ignore les faits divers et les actualités sans rapport avec ces thèmes.",
         },
@@ -404,8 +404,10 @@ try {
   await briefDialog.waitFor({ state: "hidden" });
   await page.goto(`${origin}/settings`);
   await page.getByLabel("Heure quotidienne").waitFor();
-  await page.getByLabel("Quels articles vous intéressent ?").waitFor();
   await capture(page, "settings");
+  await page.getByRole("tab", { name: "Vos centres d’intérêt" }).click();
+  await page.getByLabel("Quels articles vous intéressent ?").waitFor();
+  await capture(page, "interests");
   showRun = true;
   await page.goto(`${origin}/jobs`);
   await page.getByText("10/15 articles traités · 0 en échec · 1 ignorés").waitFor();
@@ -446,6 +448,12 @@ try {
         await page.getByText("1–5 sur 15 articles", { exact: true }).waitFor();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
       if (overflow) throw new Error(`Débordement de l’espace utilisateur : ${path} à ${width}px`);
+      if (path === "/settings") {
+        await page.getByRole("tab", { name: "Vos centres d’intérêt" }).click();
+        await page.getByLabel("Quels articles vous intéressent ?").waitFor();
+        if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth))
+          throw new Error(`Débordement des centres d’intérêt : ${width}px`);
+      }
       if (path === "/dashboard") {
         await page
           .getByRole("button", { name: "Lire les résumés individuels", exact: true })

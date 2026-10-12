@@ -51,10 +51,26 @@ export function startScheduler(db: Db, runner: ScheduledRunner) {
       running = false;
     }
   };
-  const timer = setInterval(() => {
-    void tick();
-  }, 60000);
-  timer.unref();
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout>;
+  const schedule = () => {
+    if (stopped) return;
+    const hour = 60 * 60 * 1000;
+    timer = setTimeout(
+      () => {
+        // Recalculate the boundary each time: a delayed callback must not shift
+        // tomorrow's hourly checks. Queue recovery also runs at startup.
+        schedule();
+        void tick();
+      },
+      hour - (Date.now() % hour),
+    );
+    timer.unref();
+  };
+  schedule();
   void tick();
-  return () => clearInterval(timer);
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
 }

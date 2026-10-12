@@ -5,7 +5,9 @@ import { Card, CardHeader, CardContent, CardTitle, CardDescription } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/Field";
+import { SelectField } from "@/components/SelectField";
+import { PageHeading } from "@/components/PageHeading";
+import { Tabs } from "radix-ui";
 import { Feedback } from "@/components/Feedback";
 import { dashboardApi } from "./api";
 import { errorMessage } from "@/lib/api";
@@ -18,6 +20,7 @@ export function CollectionSettings({
   collection: Dashboard["collection"];
   onSaved: () => Promise<void>;
 }) {
+  const [tab, setTab] = useState("collection");
   const [enabled, setEnabled] = useState(collection.enabled);
   const [time, setTime] = useState(collection.time);
   const [interestPrompt, setInterestPrompt] = useState(collection.interestPrompt ?? "");
@@ -39,7 +42,7 @@ export function CollectionSettings({
     if (busy || !changed) return;
     setError("");
     setMessage("");
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    if (!/^([01]\d|2[0-3]):00$/.test(time)) {
       setError("Choisissez une heure valide.");
       return;
     }
@@ -60,102 +63,137 @@ export function CollectionSettings({
     }
   }
   return (
-    <form onSubmit={save} className="space-y-5">
-      <Card className="shadow-none">
-        <CardHeader>
-          <div className="panel-heading">
-            <span className="panel-icon">
-              <Clock className="size-5" aria-hidden="true" />
-            </span>
-            <div className="space-y-1">
-              <CardTitle>Collecte automatique</CardTitle>
-              <CardDescription>Votre veille à l'heure qui vous convient.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-5">
-            <div className="flex justify-between items-center gap-4">
-              <div>
-                <Label htmlFor="auto-collection">Récupération automatique</Label>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {enabled ? "Activée chaque jour" : "Désactivée · collecte manuelle disponible"}
+    <form onSubmit={save} className="space-y-6">
+      <PageHeading
+        title="Réglages"
+        description="Choisissez votre rythme et les sujets qui comptent pour vous."
+        actions={
+          <Button type="submit" disabled={busy || !changed}>
+            {busy && <LoaderCircle className="animate-spin" />}
+            {busy ? "Enregistrement…" : "Enregistrer les réglages"}
+          </Button>
+        }
+      />
+      <Tabs.Root value={tab} onValueChange={setTab} className="space-y-6">
+        <Tabs.List aria-label="Réglages de la veille" className="app-source-tabs">
+          <Tabs.Trigger value="collection" className="app-source-tab">
+            <Clock className="size-4" aria-hidden="true" /> Collecte automatique
+          </Tabs.Trigger>
+          <Tabs.Trigger value="interests" className="app-source-tab">
+            <Sparkles className="size-4" aria-hidden="true" /> Vos centres d’intérêt
+          </Tabs.Trigger>
+        </Tabs.List>
+        <Tabs.Content
+          value="collection"
+          className="outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Card className="shadow-none">
+            <CardHeader>
+              <div className="panel-heading">
+                <span className="panel-icon">
+                  <Clock className="size-5" aria-hidden="true" />
+                </span>
+                <div className="space-y-1">
+                  <CardTitle>Collecte automatique</CardTitle>
+                  <CardDescription>Votre veille à l'heure qui vous convient.</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-5">
+                <div className="flex justify-between items-center gap-4">
+                  <div>
+                    <Label htmlFor="auto-collection">Récupération automatique</Label>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {enabled
+                        ? "Activée chaque jour"
+                        : "Désactivée · collecte manuelle disponible"}
+                    </p>
+                  </div>
+                  <Switch
+                    id="auto-collection"
+                    checked={enabled}
+                    onCheckedChange={setEnabled}
+                    disabled={busy}
+                  />
+                </div>
+                <fieldset disabled={busy}>
+                  <SelectField
+                    label="Heure quotidienne"
+                    hint="Lancement à l’heure entière, dans votre fuseau horaire détecté automatiquement."
+                    value={time}
+                    onChange={setTime}
+                    disabled={busy}
+                    choices={Array.from({ length: 24 }, (_, hour) => ({
+                      value: `${String(hour).padStart(2, "0")}:00`,
+                      label: `${String(hour).padStart(2, "0")} h`,
+                    }))}
+                  />
+                </fieldset>
+                <div className="grid sm:grid-cols-2 gap-4 rounded-lg bg-muted p-4 text-sm">
+                  <div>
+                    <p className="text-muted-foreground mb-1">Dernière collecte</p>
+                    <p>{dateLabel(collection.lastRunAt, timezone)}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground mb-1">Prochaine collecte</p>
+                    <p>
+                      {collection.enabled && collection.nextRunAt
+                        ? dateLabel(collection.nextRunAt, timezone)
+                        : "Non planifiée"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Tabs.Content>
+        <Tabs.Content
+          value="interests"
+          className="outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Card>
+            <CardHeader>
+              <div className="panel-heading">
+                <span className="panel-icon">
+                  <Sparkles className="size-5" aria-hidden="true" />
+                </span>
+                <div className="space-y-1">
+                  <CardTitle>Vos centres d’intérêt</CardTitle>
+                  <CardDescription>Un brief qui suit vos priorités.</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3">
+                <Label htmlFor="interest-prompt">Quels articles vous intéressent ?</Label>
+                <textarea
+                  id="interest-prompt"
+                  aria-describedby="interest-prompt-hint"
+                  value={interestPrompt}
+                  onChange={(event) => setInterestPrompt(event.target.value)}
+                  disabled={busy}
+                  maxLength={6000}
+                  rows={7}
+                  className="min-h-44 w-full resize-y rounded-xl border bg-white px-4 py-3 text-base leading-relaxed transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+                  placeholder="Je suis développeur web. Je souhaite suivre l’IA, React, Node.js et TypeScript. Ignore les faits divers et les actualités sans rapport avec ces sujets."
+                />
+                <p
+                  id="interest-prompt-hint"
+                  className="text-xs text-muted-foreground leading-relaxed"
+                >
+                  Décrivez vos sujets favoris et ceux à écarter, jusqu’à 6 000 caractères. L’IA
+                  résume uniquement les articles pertinents. Laissez ce champ vide pour suivre tous
+                  les sujets. Les changements s’appliquent aux articles qui n’ont pas encore été
+                  analysés.
                 </p>
               </div>
-              <Switch
-                id="auto-collection"
-                checked={enabled}
-                onCheckedChange={setEnabled}
-                disabled={busy}
-              />
-            </div>
-            <fieldset disabled={busy}>
-              <Field
-                label="Heure quotidienne"
-                hint="Heure locale de lancement. Le fuseau horaire est détecté automatiquement."
-                type="time"
-                required
-                value={time}
-                onChange={(event) => setTime(event.target.value)}
-              />
-            </fieldset>
-            <div className="grid sm:grid-cols-2 gap-4 rounded-lg bg-muted p-4 text-sm">
-              <div>
-                <p className="text-muted-foreground mb-1">Dernière collecte</p>
-                <p>{dateLabel(collection.lastRunAt, timezone)}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground mb-1">Prochaine collecte</p>
-                <p>
-                  {collection.enabled && collection.nextRunAt
-                    ? dateLabel(collection.nextRunAt, timezone)
-                    : "Non planifiée"}
-                </p>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <div className="panel-heading">
-            <span className="panel-icon">
-              <Sparkles className="size-5" aria-hidden="true" />
-            </span>
-            <div className="space-y-1">
-              <CardTitle>Vos centres d’intérêt</CardTitle>
-              <CardDescription>Un brief qui suit vos priorités.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3">
-            <Label htmlFor="interest-prompt">Quels articles vous intéressent ?</Label>
-            <textarea
-              id="interest-prompt"
-              aria-describedby="interest-prompt-hint"
-              value={interestPrompt}
-              onChange={(event) => setInterestPrompt(event.target.value)}
-              disabled={busy}
-              maxLength={6000}
-              rows={7}
-              className="min-h-44 w-full resize-y rounded-xl border bg-white px-4 py-3 text-base leading-relaxed transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-              placeholder="Je suis développeur web. Je souhaite suivre l’IA, React, Node.js et TypeScript. Ignore les faits divers et les actualités sans rapport avec ces sujets."
-            />
-            <p id="interest-prompt-hint" className="text-xs text-muted-foreground leading-relaxed">
-              Décrivez vos sujets favoris et ceux à écarter, jusqu’à 6 000 caractères. L’IA résume
-              uniquement les articles pertinents. Laissez ce champ vide pour suivre tous les sujets.
-              Les changements s’appliquent aux articles qui n’ont pas encore été analysés.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        </Tabs.Content>
+      </Tabs.Root>
       <Feedback message={error} error />
       <Feedback message={message} />
-      <Button type="submit" disabled={busy || !changed}>
-        {busy && <LoaderCircle className="animate-spin" />}
-        {busy ? "Enregistrement…" : "Enregistrer les réglages"}
-      </Button>
     </form>
   );
 }

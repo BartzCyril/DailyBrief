@@ -45,7 +45,7 @@ test("the documentation remains available when the backend is unreachable", asyn
   }
   expect(within(nav).getAllByRole("link")).toHaveLength(11);
   expect(document.title).toBe("Guide d’utilisation · DailyBrief");
-  expect(screen.getAllByRole("img")).toHaveLength(10);
+  expect(screen.getAllByRole("img")).toHaveLength(11);
   expect(screen.getByRole("heading", { name: "Personnaliser votre veille" })).toBeInTheDocument();
   expect(screen.getAllByRole("link", { name: "Réglages" })).not.toHaveLength(0);
 });

@@ -9,10 +9,12 @@ export function SettingsPage() {
   const dashboard = useDashboard();
   return (
     <main id="app-content" tabIndex={-1} className="app-page app-page-form">
-      <PageHeading
-        title="Réglages"
-        description="Choisissez votre rythme et les sujets qui comptent pour vous."
-      />
+      {!dashboard.data && (
+        <PageHeading
+          title="Réglages"
+          description="Choisissez votre rythme et les sujets qui comptent pour vous."
+        />
+      )}
       <Feedback error message={dashboard.error} />
       {dashboard.error && (
         <Button variant="outline" onClick={() => void dashboard.refresh()}>

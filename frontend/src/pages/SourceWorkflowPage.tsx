@@ -189,7 +189,9 @@ export function SourceWorkflowPage() {
               <CardTitle>
                 {index + 1}. {article.title}
               </CardTitle>
-              {article.description && <CardDescription>{article.description}</CardDescription>}
+              {article.description && article.description !== article.title && (
+                <CardDescription>{article.description}</CardDescription>
+              )}
             </CardHeader>
             <CardContent className="space-y-4">
               {articleUrl && validHttpUrl(articleUrl) && (

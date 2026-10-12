@@ -28,14 +28,14 @@ describe("personalization settings and Daily Brief access", () => {
   test("persists interests, keeps schedule and isolates settings", async () => {
     const schedule = await owner
       .patch("/settings/dailybrief")
-      .send({ collectionEnabled: true, collectionTime: "08:15", timezone: "Europe/Paris" });
+      .send({ collectionEnabled: true, collectionTime: "08:00", timezone: "Europe/Paris" });
     const customized = await owner
       .patch("/settings/dailybrief")
       .send({ interestPrompt: "  React et IA ; ignorer les faits divers.  " });
     expect(customized.status).toBe(200);
     expect(customized.body).toMatchObject({
       collectionEnabled: true,
-      collectionTime: "08:15",
+      collectionTime: "08:00",
       interestPrompt: "React et IA ; ignorer les faits divers.",
     });
     expect(customized.body.nextCollectionAt).toBe(schedule.body.nextCollectionAt);

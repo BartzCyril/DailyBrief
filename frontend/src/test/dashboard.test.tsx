@@ -127,7 +127,8 @@ test("persists the interest prompt together with scheduling and keeps the save d
   const mock = mockApi();
   mount("/settings");
   const user = userEvent.setup();
-  const prompt = await screen.findByLabelText("Quels articles vous intéressent ?");
+  await user.click(await screen.findByRole("tab", { name: "Vos centres d’intérêt" }));
+  const prompt = screen.getByLabelText("Quels articles vous intéressent ?");
   const save = screen.getByRole("button", { name: "Enregistrer les réglages" });
   expect(prompt).toHaveValue(data.collection.interestPrompt);
   expect(save).toBeDisabled();
@@ -139,7 +140,7 @@ test("persists the interest prompt together with scheduling and keeps the save d
   const call = mock.mock.calls.find(([url]) => url.endsWith("/settings/dailybrief"));
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({
     collectionEnabled: false,
-    collectionTime: "07:30",
+    collectionTime: "07:00",
     timezone: "Europe/Paris",
     interestPrompt: "Suivre les outils IA. Ignorer les faits divers.",
   });
@@ -163,10 +164,11 @@ test("only enables saving when collection settings differ from their saved value
   expect(save).toBeEnabled();
   await ui.click(toggle);
   expect(save).toBeDisabled();
-  const time = screen.getByLabelText("Heure quotidienne");
-  fireEvent.change(time, { target: { value: "08:45" } });
+  await ui.click(screen.getByRole("combobox", { name: "Heure quotidienne" }));
+  await ui.click(screen.getByRole("option", { name: "08 h" }));
   expect(save).toBeEnabled();
-  fireEvent.change(time, { target: { value: "07:30" } });
+  await ui.click(screen.getByRole("combobox", { name: "Heure quotidienne" }));
+  await ui.click(screen.getByRole("option", { name: "07 h" }));
   expect(save).toBeDisabled();
   expect(screen.queryByLabelText("Fuseau horaire")).toBeNull();
 });
@@ -177,15 +179,17 @@ test("saves activation and local time with the automatically detected timezone",
   mount("/settings");
   const ui = userEvent.setup();
   await ui.click(await screen.findByRole("switch", { name: "Récupération automatique" }));
-  const time = screen.getByLabelText("Heure quotidienne");
-  await ui.clear(time);
-  await ui.type(time, "08:45");
+  await ui.click(screen.getByRole("combobox", { name: "Heure quotidienne" }));
+  const choices = screen.getAllByRole("option");
+  expect(choices).toHaveLength(24);
+  expect(choices.every((choice) => /^\d{2} h$/.test(choice.textContent ?? ""))).toBe(true);
+  await ui.click(screen.getByRole("option", { name: "08 h" }));
   await ui.click(screen.getByRole("button", { name: "Enregistrer les réglages" }));
   expect(await screen.findByText("Réglages enregistrés.")).toBeInTheDocument();
   const call = mock.mock.calls.find((call) => call[0].endsWith("/settings/dailybrief"));
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({
     collectionEnabled: true,
-    collectionTime: "08:45",
+    collectionTime: "08:00",
     timezone: "America/New_York",
     interestPrompt: "",
   });
@@ -348,7 +352,7 @@ test.each(["America/New_York", "UTC"])(
     expect(JSON.parse(String(writes[0]?.[1]?.body))).toEqual({ timezone });
     expect(data.collection).toMatchObject({
       enabled: true,
-      time: "07:30",
+      time: "07:00",
       timezone,
     });
     expect(screen.queryByRole("button", { name: "Enregistrer les réglages" })).toBeNull();
@@ -422,4 +426,37 @@ test("navigates between sources and journals without loading unrelated features"
   expect(screen.getByRole("button", { name: "Ajouter un journal" })).toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "Ajouter un flux RSS" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Journaux" })).toHaveAttribute("aria-current", "page");
+});
+
+test("settings tabs preserve unsaved edits and save both sections from the page header", async () => {
+  const mock = mockApi();
+  mount("/settings");
+  const user = userEvent.setup();
+  const toggle = await screen.findByRole("switch", { name: "Récupération automatique" });
+  const save = screen.getByRole("button", { name: "Enregistrer les réglages" });
+  expect(save.closest("header")).toHaveClass("app-page-header");
+  expect(screen.queryByLabelText("Quels articles vous intéressent ?")).toBeNull();
+  await user.click(toggle);
+  const tab = screen.getByRole("tab", { name: "Collecte automatique" });
+  tab.focus();
+  await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("tab", { name: "Vos centres d’intérêt" })).toHaveFocus();
+  const prompt = await screen.findByLabelText("Quels articles vous intéressent ?");
+  await user.type(prompt, "Suivre la culture.");
+  await user.click(tab);
+  expect(screen.getByRole("switch", { name: "Récupération automatique" })).toBeChecked();
+  await user.click(save);
+  await screen.findByText("Réglages enregistrés.");
+  expect(save).toBeDisabled();
+  await user.click(screen.getByRole("tab", { name: "Vos centres d’intérêt" }));
+  expect(screen.getByLabelText("Quels articles vous intéressent ?")).toHaveValue(
+    "Suivre la culture.",
+  );
+  const writes = mock.mock.calls.filter(([url]) => url.endsWith("/settings/dailybrief"));
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(String(writes[0]?.[1]?.body))).toMatchObject({
+    collectionEnabled: true,
+    collectionTime: "07:00",
+    interestPrompt: "Suivre la culture.",
+  });
 });

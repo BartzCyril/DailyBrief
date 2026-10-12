@@ -19,7 +19,7 @@ export const emptyDashboard: Dashboard = {
   sources: { total: 0, rss: 0, scraping: 0, enabled: 0 },
   collection: {
     enabled: false,
-    time: "07:30",
+    time: "07:00",
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     lastRunAt: null,
     nextRunAt: null,

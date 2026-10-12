@@ -58,7 +58,8 @@ const scrapingCandidateSchema = z
     articleSelector: selector,
     titleSelector: selector,
     linkSelector: selector,
-    descriptionSelector: z.string().trim().max(200).nullish(),
+    // Accept and ignore descriptions returned by older AI integrations.
+    descriptionSelector: z.unknown().optional(),
     dateSelector: z.string().trim().max(200).nullish(),
     mode: z.enum(["SCROLL", "PAGINATE", "LOAD_MORE"]).optional(),
     scroll: z
@@ -251,7 +252,7 @@ export function selectorAnalysisPrompt(
 ): string {
   const task =
     input.kind === "SCRAPING"
-      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector, linkSelector, descriptionSelector et dateSelector sont RELATIFS à ce bloc. Les cinq sélecteurs sont obligatoires dans la configuration finale. Cherche activement la description ou l'extrait ET la date de publication, pas seulement le titre et le lien. Chaque sélecteur désigne un seul élément par bloc. Pour la description, privilégie p, .description, .summary, .excerpt ou l'élément réellement observé. Si aucune description n'est présente, descriptionSelector doit être EXACTEMENT le même sélecteur que titleSelector : le titre servira de description. Pour la date, repère time, son attribut datetime, une classe de date ou un texte de publication observé. Si aucune date n'est présente, retourne dateSelector:null sans inventer de date ni utiliser le titre comme date. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, sans :contains ni syntaxe Playwright. Inspecte AUSSI les contrôles de chargement prioritaires : PAGINATE pour des liens numérotés ou rel=next, avec strategy QUERY_PARAM pour ?page=2 ou URL_TEMPLATE pour /page/2 et {page} à la place du compteur. Ne confonds pas le numéro de catégorie ou l'identifiant d'article avec le compteur de page. Déduis startPage et les paramètres des liens observés, y compris les pages qui commencent à 0. LOAD_MORE pour un bouton explicite de nouveaux articles avec loadMore={"buttonSelector":"...","waitTimeoutMs":10000}. SCROLL si des articles supplémentaires ont été observés lors du scroll, avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}. Sans contrôle ni ajout observé, SCROLL reste un mode borné à vérifier, pas une preuve de scroll infini. N'invente aucun schéma de pagination. Observation du navigateur : ${page.scrollObserved ? "de nouveaux liens d'articles sont apparus au scroll" : "aucun ajout d'articles au scroll confirmé"}. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
+      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector, linkSelector et dateSelector sont RELATIFS à ce bloc. Ces quatre sélecteurs sont obligatoires dans la configuration finale. Cherche activement la date de publication, pas seulement le titre et le lien. Chaque sélecteur désigne un seul élément par bloc. La description est extraite automatiquement côté serveur : ne propose pas de descriptionSelector. Pour la date, repère time, son attribut datetime, une classe de date ou un texte de publication observé. Si aucune date n'est présente, retourne dateSelector:null sans inventer de date ni utiliser le titre comme date. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, sans :contains ni syntaxe Playwright. Inspecte AUSSI les contrôles de chargement prioritaires : PAGINATE pour des liens numérotés ou rel=next, avec strategy QUERY_PARAM pour ?page=2 ou URL_TEMPLATE pour /page/2 et {page} à la place du compteur. Ne confonds pas le numéro de catégorie ou l'identifiant d'article avec le compteur de page. Déduis startPage et les paramètres des liens observés, y compris les pages qui commencent à 0. LOAD_MORE pour un bouton explicite de nouveaux articles avec loadMore={"buttonSelector":"...","waitTimeoutMs":10000}. SCROLL si des articles supplémentaires ont été observés lors du scroll, avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}. Sans contrôle ni ajout observé, SCROLL reste un mode borné à vérifier, pas une preuve de scroll infini. N'invente aucun schéma de pagination. Observation du navigateur : ${page.scrollObserved ? "de nouveaux liens d'articles sont apparus au scroll" : "aucun ajout d'articles au scroll confirmé"}. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
       : input.kind === "RSS_LINK"
         ? `Cette page est une notice intermédiaire d'un item RSS. Trouve le lien principal « Consulter le document », « Lire l'article » ou équivalent vers le site du journal EXTERNE. Écarte partage social, publicité, menu, abonnement et autres documents. articleLinkSelector doit cibler exactement une balise a avec href HTTP(S), jamais le site de la notice. Retourne {"articleLinkSelector":"..."}.`
         : `Cette page est un formulaire de connexion PUBLIC. Repère l'input identifiant/email visible, l'input type=password et le bouton qui soumet ce même formulaire. Chaque sélecteur CSS doit cibler un unique élément visible. Utilise les attributs réellement observés, jamais un identifiant utilisateur. Ne tente aucune connexion. Aucun élément propre au compte connecté n'est observable: n'invente JAMAIS successSelector ou un sélecteur de contenu abonné. Retourne uniquement {"emailSelector":"...","passwordSelector":"...","submitSelector":"..."}.`;
@@ -570,7 +571,7 @@ function validateScraping(document: Document, url: string, config: ScrapingConfi
       );
     urls.add(href);
   }
-  for (const field of [config.descriptionSelector, config.dateSelector]) {
+  for (const field of [config.dateSelector]) {
     if (!field) continue;
     let observed = false;
     for (const block of blocks) {
@@ -584,7 +585,7 @@ function validateScraping(document: Document, url: string, config: ScrapingConfi
         match.getAttribute("data-published-at")?.trim()
       ))
         throw analysisError(
-          "Le sélecteur de description ou de date proposé ne contient aucune information.",
+          "Le sélecteur de date proposé ne contient aucune information.",
           "INVALID_SELECTOR_ANALYSIS",
         );
       if (field === config.dateSelector && !hasPublicationDate(match))
@@ -816,19 +817,6 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
             );
           const fields = candidate.data;
           const blocks = select(document, fields.articleSelector, false);
-          const descriptionSelector =
-            fields.descriptionSelector && fields.descriptionSelector !== fields.titleSelector
-              ? fields.descriptionSelector
-              : (discoverArticleField(blocks, [
-                  '[itemprop="description"]',
-                  ".description",
-                  ".summary",
-                  ".excerpt",
-                  ".intro",
-                  ".chapo",
-                  ".lead",
-                  "p",
-                ]) ?? fields.titleSelector);
           const dateSelector =
             fields.dateSelector ||
             discoverArticleField(
@@ -869,7 +857,6 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
             articleSelector: fields.articleSelector,
             titleSelector: fields.titleSelector,
             linkSelector: fields.linkSelector,
-            descriptionSelector,
             dateSelector,
             mode,
             ...(mode === "PAGINATE"
@@ -895,7 +882,7 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
             kind: input.kind,
             scrapingConfig: parsed.data,
             retrievalConfirmed: mode !== "SCROLL" || Boolean(page.scrollObserved),
-            message: `Sélecteurs vérifiés sur les articles présents. ${descriptionSelector === fields.titleSelector ? "Aucune description distincte retenue : le sélecteur du titre sert de description. " : ""}${mode === "PAGINATE" ? "Pagination détectée à partir des liens de la page." : mode === "LOAD_MORE" ? "Bouton de chargement identifié." : page.scrollObserved ? "Chargement d'articles au scroll observé." : "Aucun chargement supplémentaire confirmé : mode scroll proposé, à vérifier."} Testez la source avant de l'enregistrer.`,
+            message: `Sélecteurs vérifiés sur les articles présents. ${mode === "PAGINATE" ? "Pagination détectée à partir des liens de la page." : mode === "LOAD_MORE" ? "Bouton de chargement identifié." : page.scrollObserved ? "Chargement d'articles au scroll observé." : "Aucun chargement supplémentaire confirmé : mode scroll proposé, à vérifier."} Testez la source avant de l'enregistrer.`,
           };
         }
         if (input.kind === "RSS_LINK") {

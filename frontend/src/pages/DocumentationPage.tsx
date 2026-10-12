@@ -317,9 +317,8 @@ export function DocumentationPage() {
             </p>
             <p>
               La collecte conserve les publications d’aujourd’hui et d’hier ; un item sans date
-              exploitable est signalé et ignoré. Vous pouvez activer{" "}
-              <b>Articles du plus récent au plus ancien</b> si le flux garantit cet ordre. Cela
-              autorise un arrêt dès les publications plus anciennes, sans parcourir les archives.
+              exploitable est signalé et ignoré. Le parcours du plus récent au plus ancien est
+              automatique et permet de s’arrêter aux archives lorsque l’ordre observé le confirme.
             </p>
             <Tip title="N’oubliez pas l’activation du journal">
               <p>
@@ -334,7 +333,7 @@ export function DocumentationPage() {
             <p>
               Le scraping permet de lire une page web qui liste plusieurs articles. DailyBrief ouvre
               la page dans un navigateur. Vous indiquez quelles parties représentent un article, son
-              titre, son lien, sa description et sa date.
+              titre, son lien et sa date. La description est récupérée automatiquement.
             </p>
             <Steps>
               <li>
@@ -345,7 +344,7 @@ export function DocumentationPage() {
                 d’actualités sur le cloud.
               </li>
               <li>
-                Essayez <b>Remplir avec l’IA</b>. Vous pouvez aussi renseigner les cinq sélecteurs
+                Essayez <b>Remplir avec l’IA</b>. Vous pouvez aussi renseigner les quatre sélecteurs
                 vous-même à l’aide du chapitre suivant.
               </li>
               <li>
@@ -367,30 +366,24 @@ export function DocumentationPage() {
                 ],
                 ["Sélecteur du titre", "Le titre à l’intérieur de ce bloc", <code>h2</code>],
                 ["Sélecteur du lien", "Un lien portant un attribut href", <code>h2 a.title</code>],
-                [
-                  "Sélecteur de description",
-                  "Le court texte qui présente l’article",
-                  <code>.description</code>,
-                ],
                 ["Sélecteur de date", "La date de publication affichée", <code>time</code>],
               ]}
             />
             <p>
-              Les sélecteurs de titre, lien, description et date se cherchent{" "}
-              <strong>à l’intérieur de chaque bloc article</strong>. La description et la date sont
-              obligatoires à la création et à la modification. Si la page ne fournit pas de
-              description, utilisez le sélecteur du titre : l’assistance IA applique ce remplacement
-              automatiquement. Si la date est absente, choisissez une autre rubrique qui l’affiche
-              ou demandez de l’aide. L’analyse vérifie les liens de pagination, les boutons de
-              chargement et l’ajout de liens d’articles lors d’un court scroll dans le navigateur
-              pour remplir le mode de récupération. Le résultat indique si le scroll a été observé
-              ou si ce mode reste à vérifier.
+              Les sélecteurs de titre, lien et date se cherchent{" "}
+              <strong>à l’intérieur de chaque bloc article</strong>. La date est obligatoire à la
+              création et à la modification. La description est extraite automatiquement ; le titre
+              sert de repli si aucun extrait n’est disponible. Si la date est absente, choisissez
+              une autre rubrique qui l’affiche ou demandez de l’aide. L’analyse vérifie les liens de
+              pagination, les boutons de chargement et l’ajout de liens d’articles lors d’un court
+              scroll dans le navigateur pour remplir le mode de récupération. Le résultat indique si
+              le scroll a été observé ou si ce mode reste à vérifier.
             </p>
             <Screenshot
               name="scraping"
               height={820}
-              alt="Source de scraping configurée avec les cinq sélecteurs requis et le mode Scroll infini"
-              caption="Exemple : une carte .article-card contenant h2, un lien, .description et time."
+              alt="Source de scraping configurée avec les quatre sélecteurs requis et le mode Scroll infini"
+              caption="Exemple : une carte .article-card contenant h2, un lien et time."
             />
             <h3>Choisir comment charger la suite</h3>
             <Table
@@ -429,11 +422,10 @@ export function DocumentationPage() {
               article, plutôt que la date de mise à jour de la rubrique.
             </p>
             <p>
-              Si la source garantit un classement du plus récent au plus ancien, activez{" "}
-              <b>Articles du plus récent au plus ancien</b> dans son formulaire. DailyBrief pourra
-              arrêter le parcours et la pagination dès qu’il rencontre un article antérieur à hier.
-              Laissez ce réglage désactivé si des articles épinglés ou des dates dans le désordre
-              apparaissent : tous les articles parcourus seront alors vérifiés individuellement.
+              Le classement du plus récent au plus ancien est appliqué automatiquement. DailyBrief
+              s’arrête aux articles antérieurs à hier lorsque l’ordre observé le permet. Une date
+              manquante ou une inversion constatée désactive cet arrêt anticipé pour poursuivre la
+              vérification des articles.
             </p>
             <Tip title="Vérifiez plusieurs cartes">
               <p>
@@ -482,9 +474,9 @@ export function DocumentationPage() {
                 sans sélectionner le menu ou les publicités.
               </li>
               <li>
-                <strong>Relevez les éléments internes.</strong> Pour le titre, le lien, la
-                description et la date, préférez des sélecteurs courts relatifs au bloc article.
-                Testez ensuite le tout dans DailyBrief.
+                <strong>Relevez les éléments internes.</strong> Pour le titre, le lien et la date,
+                préférez des sélecteurs courts relatifs au bloc article. Testez ensuite le tout dans
+                DailyBrief.
               </li>
             </Steps>
             <Tip title="Copier un sélecteur peut aider, mais vérifiez-le">
@@ -731,23 +723,24 @@ export function DocumentationPage() {
             <h3>Choisir l’heure de récupération</h3>
             <Steps>
               <li>
-                Dans <b>Collecte automatique</b>, activez <b>Récupération automatique</b>.
+                Dans l’onglet <b>Collecte automatique</b>, activez <b>Récupération automatique</b>.
               </li>
               <li>
-                Renseignez l’<b>Heure quotidienne</b> dans votre heure locale. Le navigateur détecte
-                automatiquement votre fuseau horaire : aucun choix manuel n’est nécessaire.
+                Choisissez l’<b>Heure quotidienne</b> de 00 h à 23 h, sans minutes, dans votre heure
+                locale. Le navigateur détecte automatiquement votre fuseau horaire : aucun choix
+                manuel n’est nécessaire.
               </li>
               <li>
-                Cliquez sur <b>Enregistrer les réglages</b>, puis vérifiez la prochaine collecte. Le
-                bouton reste désactivé tant qu’aucun réglage n’a changé. La programmation continue
-                même lorsque votre navigateur est fermé.
+                Cliquez sur <b>Enregistrer les réglages</b> en haut à droite, puis vérifiez la
+                prochaine collecte. Le bouton reste désactivé tant qu’aucun réglage n’a changé. La
+                programmation continue même lorsque votre navigateur est fermé.
               </li>
             </Steps>
             <h3>Décrire vos centres d’intérêt</h3>
             <p>
-              Dans <b>Vos centres d’intérêt</b>, expliquez ce que vous souhaitez suivre et ce que
-              vous préférez écarter. Vous pouvez préciser votre métier, vos thèmes favoris et le
-              niveau de détail attendu, jusqu’à 6 000 caractères. Exemple :
+              Dans l’onglet <b>Vos centres d’intérêt</b>, expliquez ce que vous souhaitez suivre et
+              ce que vous préférez écarter. Vous pouvez préciser votre métier, vos thèmes favoris et
+              le niveau de détail attendu, jusqu’à 6 000 caractères. Exemple :
             </p>
             <pre>
               <code>{`Je suis développeur web. Je souhaite suivre l’IA, React, Node.js, TypeScript et les outils pour développeurs. Ignore les faits divers et les actualités généralistes sans lien avec ces sujets.`}</code>
@@ -760,8 +753,13 @@ export function DocumentationPage() {
             </p>
             <Screenshot
               name="settings"
-              alt="Page Réglages avec collecte automatique, heure quotidienne et prompt de centres d’intérêt"
-              caption="Enregistrez la planification et vos centres d’intérêt au même endroit. Le fuseau horaire est détecté automatiquement."
+              alt="Onglet Collecte automatique avec choix d’une heure entière et sauvegarde en haut à droite"
+              caption="Choisissez une heure entière. Le fuseau horaire est détecté automatiquement."
+            />
+            <Screenshot
+              name="interests"
+              alt="Onglet Vos centres d’intérêt avec préférences de veille et sauvegarde en haut à droite"
+              caption="Les modifications des deux onglets sont conservées et enregistrées ensemble."
             />
           </Chapter>
           <Chapter id="collecte" number="09" title="Recevoir son brief et suivre la progression">
@@ -892,7 +890,7 @@ export function DocumentationPage() {
               ],
               [
                 "Les articles visibles sur le site ne sont pas collectés",
-                "La veille quotidienne se limite aux publications d’aujourd’hui et d’hier dans votre fuseau horaire. Les dates absentes, invalides et futures sont ignorées. Vérifiez le sélecteur de date et l’ordre des articles si vous avez activé le tri du plus récent au plus ancien.",
+                "La veille quotidienne se limite aux publications d’aujourd’hui et d’hier dans votre fuseau horaire. Les dates absentes, invalides et futures sont ignorées. Vérifiez le sélecteur de date. Le parcours du plus récent au plus ancien est automatique.",
               ],
               [
                 "Tous les articles sont jugés non pertinents",

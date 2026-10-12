@@ -64,9 +64,25 @@ async function extract(
         return {
           title: element.querySelector(config.titleSelector)?.textContent?.trim() ?? "",
           url: element.querySelector(config.linkSelector)?.getAttribute("href") ?? null,
-          description: config.descriptionSelector
-            ? (element.querySelector(config.descriptionSelector)?.textContent?.trim() ?? null)
-            : null,
+          description:
+            (config.descriptionSelector
+              ? element.querySelector(config.descriptionSelector)?.textContent?.trim()
+              : undefined) ||
+            Array.from(
+              element.querySelectorAll(
+                '[itemprop="description"], .description, .summary, .excerpt, .intro, .chapo, .lead, p',
+              ),
+            )
+              .find(
+                (node) =>
+                  !node.matches(config.dateSelector ?? "time") &&
+                  !node.querySelector(config.dateSelector ?? "time") &&
+                  !node.closest('[hidden], [aria-hidden="true"], template') &&
+                  node.textContent?.trim(),
+              )
+              ?.textContent?.trim() ||
+            element.querySelector(config.titleSelector)?.textContent?.trim() ||
+            null,
           dateGroups: matches.map((date) => {
             const dates = [
               date,
@@ -349,7 +365,7 @@ export class ScrapingService {
             if (!Number.isFinite(timestamp) || timestamp > previousDate) {
               ordered = false;
               warnings.push(
-                "L'ordre chronologique annoncé ne peut pas être confirmé : le parcours continue sans arrêt anticipé.",
+                "L'ordre chronologique ne peut pas être confirmé : le parcours continue sans arrêt anticipé.",
               );
               return false;
             }
@@ -358,7 +374,7 @@ export class ScrapingService {
           }
           if (old)
             warnings.push(
-              "Parcours arrêté aux articles antérieurs à la veille : source déclarée du plus récent au plus ancien.",
+              "Parcours arrêté aux articles antérieurs à la veille : ordre du plus récent au plus ancien vérifié.",
             );
           return old;
         };
@@ -439,11 +455,26 @@ export class ScrapingService {
                             const href = element
                               .querySelector(config.linkSelector)
                               ?.getAttribute("href");
-                            const description = config.descriptionSelector
-                              ? (element
-                                  .querySelector(config.descriptionSelector)
-                                  ?.textContent?.trim() ?? null)
-                              : null;
+                            const description =
+                              (config.descriptionSelector
+                                ? element
+                                    .querySelector(config.descriptionSelector)
+                                    ?.textContent?.trim()
+                                : undefined) ||
+                              Array.from(
+                                element.querySelectorAll(
+                                  '[itemprop="description"], .description, .summary, .excerpt, .intro, .chapo, .lead, p',
+                                ),
+                              )
+                                .find(
+                                  (node) =>
+                                    !node.matches(config.dateSelector ?? "time") &&
+                                    !node.querySelector(config.dateSelector ?? "time") &&
+                                    !node.closest('[hidden], [aria-hidden="true"], template') &&
+                                    node.textContent?.trim(),
+                                )
+                                ?.textContent?.trim() ||
+                              title;
                             let url: string | null = null;
                             if (href) {
                               try {

@@ -126,7 +126,6 @@ test("fills scraping fields and retrieval mode, invalidating an existing preview
   await user.type(screen.getByLabelText("Sélecteur des articles"), "article");
   await user.type(screen.getByLabelText("Sélecteur du titre"), "h1");
   await user.type(screen.getByLabelText("Sélecteur du lien"), "a");
-  await user.type(screen.getByLabelText("Sélecteur de description"), "p");
   await user.type(screen.getByLabelText("Sélecteur de date"), "time");
   await user.click(screen.getByRole("button", { name: "Tester" }));
   await screen.findByText(preview.articles[0]!.title);
@@ -134,7 +133,6 @@ test("fills scraping fields and retrieval mode, invalidating an existing preview
   expect(await screen.findByDisplayValue(".news-card")).toBeInTheDocument();
   expect(screen.getByLabelText("Sélecteur du titre")).toHaveValue("h2");
   expect(screen.getByLabelText("Sélecteur du lien")).toHaveValue("a.read");
-  expect(screen.getByLabelText("Sélecteur de description")).toHaveValue(".intro");
   expect(screen.getByLabelText("Sélecteur de date")).toHaveValue("time");
   expect(screen.getByLabelText("Sélecteur du bouton")).toHaveValue(".next-news");
   expect(screen.getByLabelText("Délai maximum après un clic (ms)")).toHaveValue(20000);
@@ -177,7 +175,6 @@ test.each([
     await user.type(screen.getByLabelText("URL du site"), "https://example.com/news");
     await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
     await screen.findByDisplayValue("time.date");
-    expect(screen.getByLabelText("Sélecteur de description")).toHaveValue("h2");
     if (retrieval.mode === "SCROLL") {
       expect(screen.getByLabelText("Nombre maximum de scrolls")).toHaveValue(2);
       expect(screen.getByLabelText("Attente après un scroll (ms)")).toHaveValue(900);
@@ -201,8 +198,8 @@ test.each([
       "Le lien doit porter un attribut href.",
     );
     expect(
-      screen.getByRole("switch", { name: "Articles du plus récent au plus ancien" }),
-    ).toHaveAccessibleDescription(/cet ordre est garanti/);
+      screen.queryByRole("switch", { name: "Articles du plus récent au plus ancien" }),
+    ).toBeNull();
     expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Tester" }));
     await screen.findByText(preview.articles[0]!.title);

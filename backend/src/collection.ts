@@ -58,7 +58,7 @@ export class SourceCollector {
         domain: new URL(source.url).hostname,
       });
       try {
-        const options = window ? { window, newestFirst: source.newestFirst } : undefined;
+        const options = window ? { window, newestFirst: true } : undefined;
         const preview =
           source.type === "RSS"
             ? await this.rss.collect(source.url, Boolean(source.articleLinkSelector), options)

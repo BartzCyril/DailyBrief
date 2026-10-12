@@ -10,7 +10,6 @@ import { sourcesApi, validHttpUrl } from "./api";
 import { ArticlePreview } from "./ArticlePreview";
 import { RssArticleLinkField, validArticleLinkSelector } from "./RssArticleLinkField";
 import { SelectorAssistance } from "./SelectorAssistance";
-import { SourceOrderField } from "./SourceOrderField";
 import {
   ScrapingFields,
   createScrapingDraft,
@@ -31,7 +30,6 @@ export function EditSourceForm({
     url: string,
     config?: ScrapingConfig,
     articleLinkSelector?: string | null,
-    newestFirst?: boolean,
   ) => Promise<void>;
   onCancel: () => void;
   onBlockingChange?: (blocked: boolean) => void;
@@ -39,7 +37,6 @@ export function EditSourceForm({
   const [url, setUrl] = useState(source.url);
   const [articleLinkSelector, setArticleLinkSelector] = useState(source.articleLinkSelector ?? "");
   const [draft, setDraft] = useState(() => createScrapingDraft(source.scrapingConfig));
-  const [newestFirst, setNewestFirst] = useState(source.newestFirst ?? false);
   const [templateEdited, setTemplateEdited] = useState(false);
   const [error, setError] = useState("");
   const [testing, setTesting] = useState(false);
@@ -48,7 +45,6 @@ export function EditSourceForm({
   const pending = busy || testing || assistanceBusy;
   const unchanged =
     url.trim() === source.url &&
-    newestFirst === (source.newestFirst ?? false) &&
     (source.type === "RSS"
       ? articleLinkSelector.trim() === (source.articleLinkSelector ?? "")
       : JSON.stringify(buildScrapingConfig(draft)) ===
@@ -100,10 +96,8 @@ export function EditSourceForm({
       setError(
         validation.error.issues.some((issue) => issue.path.includes("urlTemplate"))
           ? "Le modèle d'URL doit contenir {page}."
-          : validation.error.issues.some((issue) =>
-                ["descriptionSelector", "dateSelector"].includes(String(issue.path[0])),
-              )
-            ? "Les sélecteurs de description et de date sont obligatoires. Vérifiez les sélecteurs requis."
+          : validation.error.issues.some((issue) => issue.path[0] === "dateSelector")
+            ? "Le sélecteur de date est obligatoire. Vérifiez les sélecteurs requis."
             : "Vérifiez les sélecteurs requis et les paramètres de collecte.",
       );
       return null;
@@ -140,13 +134,7 @@ export function EditSourceForm({
     event.preventDefault();
     if (pending || unchanged) return;
     const input = validate();
-    if (input)
-      await onSave(
-        input.url,
-        input.config,
-        input.articleLinkSelector,
-        newestFirst !== (source.newestFirst ?? false) ? newestFirst : undefined,
-      );
+    if (input) await onSave(input.url, input.config, input.articleLinkSelector);
   }
   return (
     <form
@@ -200,7 +188,6 @@ export function EditSourceForm({
             }}
           />
         )}
-        <SourceOrderField checked={newestFirst} onChange={setNewestFirst} disabled={pending} />
       </fieldset>
       <Feedback message={error} error />
       <Feedback inline message={preview?.warnings?.join(" ") ?? ""} />

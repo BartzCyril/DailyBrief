@@ -26,15 +26,36 @@ const paginate: ScrapingConfig = {
 };
 const html = (id: string) =>
   `<article><h2>Article ${id}</h2><a href="/articles/${id}">Lire</a><p>Description</p><time datetime="2026-10-06">Date</time></article>`;
-test("requires description and date for source input while retaining saved legacy configurations", () => {
+test("requires a date but accepts automatically extracted descriptions and legacy configurations", () => {
   expect(scrapingInputSchema.safeParse(scroll).success).toBe(true);
-  for (const field of ["descriptionSelector", "dateSelector"] as const) {
+  for (const field of ["dateSelector"] as const) {
     for (const value of [undefined, null, "", "   "]) {
       expect(scrapingInputSchema.safeParse({ ...scroll, [field]: value }).success).toBe(false);
     }
   }
+  const { descriptionSelector: _description, ...automatic } = scroll;
+  expect(scrapingInputSchema.safeParse(automatic).success).toBe(true);
   const legacy = { ...scroll, descriptionSelector: null, dateSelector: undefined };
   expect(scrapingSchema.safeParse(legacy).success).toBe(true);
+});
+test("extracts descriptions automatically, skips date-only paragraphs and falls back to the title", async () => {
+  const { descriptionSelector: _description, ...config } = scroll;
+  const service = new ScrapingService(
+    async () => `<main>
+    <article><h2>Premier article</h2><a href="/first">Lire</a><p><time datetime="2026-10-12">12 octobre</time></p><p class="summary">L’extrait du premier article.</p></article>
+    <article><h2>Article sans extrait</h2><a href="/second">Lire</a><p><time datetime="2026-10-12">12 octobre</time></p></article>
+    <article><h2>Article masqué</h2><a href="/third">Lire</a><p hidden>Texte invisible</p><p>Extrait visible.</p><time datetime="2026-10-12">12 octobre</time></article>
+  </main>`,
+  );
+  const result = await service.collect("https://fixture.example/news", {
+    ...config,
+    scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+  });
+  expect(result.articles.map((article) => article.description)).toEqual([
+    "L’extrait du premier article.",
+    "Article sans extrait",
+    "Extrait visible.",
+  ]);
 });
 test("validates both modes and rejects incomplete configurations", () => {
   expect(scrapingSchema.safeParse(scroll).success).toBe(true);

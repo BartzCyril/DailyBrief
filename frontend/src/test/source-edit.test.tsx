@@ -136,51 +136,23 @@ test("edits a scraping URL without replacing its extraction configuration", asyn
   ).toBeChecked();
 });
 
-test.each([rss, scraping])(
-  "tracks and persists chronological collection changes for $type without changing the source URL",
-  async (source) => {
-    stored = [source];
-    render(<Harness />);
-    const ui = userEvent.setup();
-    await ui.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
-    const order = screen.getByRole("switch", { name: "Articles du plus récent au plus ancien" });
-    const save = screen.getByRole("button", { name: "Enregistrer les modifications" });
-    expect(order).not.toBeChecked();
-    expect(save).toBeDisabled();
-    await ui.click(order);
-    expect(save).toBeEnabled();
-    await ui.click(order);
-    expect(save).toBeDisabled();
-    await ui.click(order);
-    await ui.click(save);
-    await screen.findByText("Source modifiée.");
-    expect(stored[0]?.newestFirst).toBe(true);
-    expect(stored[0]?.url).toBe(source.url);
-    expect(stored[0]?.enabled).toBe(source.enabled);
-    await ui.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
-    const restored = screen.getByRole("switch", {
-      name: "Articles du plus récent au plus ancien",
-    });
-    expect(restored).toBeChecked();
-    expect(screen.getByRole("button", { name: "Enregistrer les modifications" })).toBeDisabled();
-    await ui.click(restored);
-    await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
-    await screen.findByText("Source modifiée.");
-    expect(stored[0]?.newestFirst).toBe(false);
-    const calls = fetcher.mock.calls.filter((call) => call[1]?.method === "PATCH");
-    expect(calls).toHaveLength(2);
-    expect(JSON.parse(String(calls[0]?.[1]?.body)).newestFirst).toBe(true);
-    expect(JSON.parse(String(calls[1]?.[1]?.body)).newestFirst).toBe(false);
-  },
-);
-
+test.each([rss, scraping])("does not expose source ordering for $type", async (source) => {
+  stored = [source];
+  render(<Harness />);
+  await userEvent.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
+  expect(
+    screen.queryByRole("switch", { name: "Articles du plus récent au plus ancien" }),
+  ).toBeNull();
+  expect(screen.queryByLabelText("Sélecteur de description")).toBeNull();
+  expect(screen.getByRole("button", { name: "Enregistrer les modifications" })).toBeDisabled();
+});
 test("preserves an existing chronological setting when only the URL changes", async () => {
   stored = [{ ...rss, newestFirst: true }];
   render(<Harness />);
   const ui = await edit(rss, "https://example.com/new-feed");
   expect(
-    screen.getByRole("switch", { name: "Articles du plus récent au plus ancien" }),
-  ).toBeChecked();
+    screen.queryByRole("switch", { name: "Articles du plus récent au plus ancien" }),
+  ).toBeNull();
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   await screen.findByText("Source modifiée.");
   expect(stored[0]?.newestFirst).toBe(true);
@@ -280,7 +252,6 @@ test("prefills every scraping field and saves selector and mode changes without 
   expect(screen.getByLabelText("Sélecteur des articles")).toHaveValue("article");
   expect(screen.getByLabelText("Sélecteur du titre")).toHaveValue("h2");
   expect(screen.getByLabelText("Sélecteur du lien")).toHaveValue("a");
-  expect(screen.getByLabelText("Sélecteur de description")).toHaveValue("p");
   expect(screen.getByLabelText("Sélecteur de date")).toHaveValue("time");
   expect(screen.getByLabelText("Page de départ")).toHaveValue(0);
   expect(screen.getByRole("button", { name: "Enregistrer les modifications" })).toBeDisabled();
@@ -288,7 +259,6 @@ test("prefills every scraping field and saves selector and mode changes without 
     ["Sélecteur des articles", ".card"],
     ["Sélecteur du titre", "h3"],
     ["Sélecteur du lien", ".link"],
-    ["Sélecteur de description", ".description"],
     ["Sélecteur de date", ".date"],
   ]) {
     const input = screen.getByLabelText(label!);
@@ -307,7 +277,7 @@ test("prefills every scraping field and saves selector and mode changes without 
     articleSelector: ".card",
     titleSelector: "h3",
     linkSelector: ".link",
-    descriptionSelector: ".description",
+    descriptionSelector: "p",
     dateSelector: ".date",
     mode: "SCROLL",
     scroll: { maxScrolls: 0, waitAfterScrollMs: 250 },
@@ -348,18 +318,16 @@ test("tests edited settings without saving, invalidates the preview and refuses 
   expect(await screen.findByRole("alert")).toHaveTextContent("sélecteurs requis");
   expect(fetcher.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
 });
-test("requires description and date when testing or saving changes to a source", async () => {
+test("requires the date when testing or saving changes to a source", async () => {
   render(<Harness />);
   const ui = await edit(scraping, "https://example.com/new-news");
-  for (const label of ["Sélecteur de description", "Sélecteur de date"]) {
+  for (const label of ["Sélecteur de date"]) {
     const input = screen.getByLabelText(label);
     expect(input).toBeRequired();
     const selector = (input as HTMLInputElement).value;
     await ui.clear(input);
     await ui.click(screen.getByRole("button", { name: "Tester" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "description et de date sont obligatoires",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("sélecteur de date est obligatoire");
     await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
     expect(fetcher).not.toHaveBeenCalled();
     expect(stored[1]?.scrapingConfig).toEqual(scraping.scrapingConfig);

@@ -428,9 +428,8 @@ try {
     await page.getByLabel("Sélecteur des articles", { exact: true }).inputValue(),
     "article",
   );
-  assert.equal(await page.getByLabel("Sélecteur de description").inputValue(), "p");
   assert.equal(await page.getByLabel("Sélecteur de date").inputValue(), "time");
-  for (const label of ["Sélecteur de description", "Sélecteur de date"]) {
+  for (const label of ["Sélecteur de date"]) {
     assert.equal(await page.getByLabel(label).getAttribute("required"), "");
   }
   assert.equal(await page.getByLabel("Sélecteur du bouton", { exact: true }).inputValue(), ".more");
@@ -495,9 +494,8 @@ try {
   await page.getByLabel("Sélecteur des articles", { exact: true }).fill("article");
   await page.getByLabel("Sélecteur du titre", { exact: true }).fill("h2:first-of-type");
   await page.getByLabel("Sélecteur du lien", { exact: true }).fill("a[href]");
-  await page.getByLabel("Sélecteur de description").fill("p");
   assert.equal(await page.getByLabel("Sélecteur de date").inputValue(), "time");
-  for (const label of ["Sélecteur de description", "Sélecteur de date"]) {
+  for (const label of ["Sélecteur de date"]) {
     assert.equal(await page.getByLabel(label).getAttribute("required"), "");
   }
   assert.equal(await page.getByLabel("Sélecteur du bouton").inputValue(), ".more");
@@ -551,7 +549,6 @@ try {
     articleSelector: "article",
     titleSelector: "h2:first-of-type",
     linkSelector: "a[href]",
-    descriptionSelector: "p",
     dateSelector: "time",
     mode: "PAGINATE",
     pagination: { strategy: "QUERY_PARAM", queryParam: "offset", startPage: 0 },
@@ -818,7 +815,9 @@ try {
   await page.getByRole("heading", { name: "Réglages", exact: true }).waitFor();
   await page.getByRole("switch", { name: "Récupération automatique", exact: true }).click();
   assert.equal(await page.getByLabel("Fuseau horaire", { exact: true }).count(), 0);
-  await page.getByLabel("Heure quotidienne").fill("08:45");
+  await page.getByRole("combobox", { name: "Heure quotidienne" }).click();
+  await page.getByRole("option", { name: "08 h", exact: true }).click();
+  await page.getByRole("tab", { name: "Vos centres d’intérêt" }).click();
   await page
     .getByLabel("Quels articles vous intéressent ?")
     .fill("Suivre le cloud, React et les outils de développement.");
@@ -828,7 +827,7 @@ try {
     where: { userId: tableOwnerId },
   });
   assert.equal(automaticSettings.timezone, "America/New_York");
-  assert.equal(automaticSettings.collectionTime, "08:45");
+  assert.equal(automaticSettings.collectionTime, "08:00");
   assert.equal(automaticSettings.collectionEnabled, true);
   assert.equal(
     automaticSettings.interestPrompt,
@@ -1067,6 +1066,8 @@ try {
   await page.getByRole("dialog", { name: "Modifier le flux RSS", exact: true }).waitFor();
   await page.keyboard.press("Escape");
   await page.getByRole("dialog").waitFor({ state: "hidden" });
+  // Radix restores focus after unmounting the dialog, on the next task.
+  await rssEditTrigger.and(page.locator(":focus")).waitFor();
   assert(await rssEditTrigger.evaluate((element) => element === document.activeElement));
   await page.getByRole("tab", { name: "SCRAPING", exact: true }).click();
   await page.getByRole("button", { name: `Supprimer ${scrapingUrl}`, exact: true }).click();

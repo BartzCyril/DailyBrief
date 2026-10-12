@@ -79,7 +79,6 @@ async function fill() {
   await ui.type(screen.getByLabelText("Sélecteur des articles"), "article");
   await ui.type(screen.getByLabelText("Sélecteur du titre"), "h2");
   await ui.type(screen.getByLabelText("Sélecteur du lien"), "a");
-  await ui.type(screen.getByLabelText("Sélecteur de description"), "p");
   await ui.type(screen.getByLabelText("Sélecteur de date"), "time");
   return ui;
 }
@@ -119,19 +118,17 @@ test("shows only the controls for the selected mode and supports both pagination
   expect(screen.getByLabelText("Modèle d'URL")).toBeInTheDocument();
   expect(screen.queryByLabelText("Nom du paramètre")).not.toBeInTheDocument();
 });
-test("requires description and date before previewing or saving a new source", async () => {
+test("requires the date before previewing or saving a new source", async () => {
   const mock = mockApi();
   mount();
   const ui = await fill();
-  for (const label of ["Sélecteur de description", "Sélecteur de date"]) {
+  for (const label of ["Sélecteur de date"]) {
     const input = screen.getByLabelText(label);
     expect(input).toBeRequired();
     const selector = (input as HTMLInputElement).value;
     await ui.clear(input);
     await ui.click(screen.getByRole("button", { name: "Tester" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "description et de date sont obligatoires",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("sélecteur de date est obligatoire");
     expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
     expect(mock.mock.calls.some((call) => call[0].endsWith("/scraping/test"))).toBe(false);
     await ui.type(input, selector);
@@ -174,7 +171,6 @@ test("requires a load-more button, tests its settings and saves only the selecte
     articleSelector: "article",
     titleSelector: "h2",
     linkSelector: "a",
-    descriptionSelector: "p",
     dateSelector: "time",
     mode: "LOAD_MORE",
     loadMore: { buttonSelector: ".more", waitTimeoutMs: 20000 },
@@ -266,17 +262,18 @@ test("saves a tested scraping source without userId and opens the scraping tab",
   );
   const body = JSON.parse(String(call?.[1]?.body));
   expect(body.type).toBe("SCRAPING");
-  expect(body.newestFirst).toBe(false);
+  expect(body.newestFirst).toBeUndefined();
   expect(body.userId).toBeUndefined();
 });
 
-test("saves chronological scraping opt-in without changing the extraction preview request", async () => {
+test("saves scraping sources without an ordering option or description selector", async () => {
   const mock = mockApi();
   mount();
   const ui = await fill();
-  const order = screen.getByRole("switch", { name: "Articles du plus récent au plus ancien" });
-  expect(order).not.toBeChecked();
-  await ui.click(order);
+  expect(
+    screen.queryByRole("switch", { name: "Articles du plus récent au plus ancien" }),
+  ).toBeNull();
+  expect(screen.queryByLabelText("Sélecteur de description")).toBeNull();
   await ui.click(screen.getByRole("button", { name: "Tester" }));
   await screen.findByText("Article extrait");
   await ui.click(screen.getByRole("button", { name: "Enregistrer la source" }));
@@ -286,7 +283,7 @@ test("saves chronological scraping opt-in without changing the extraction previe
   const saved = mock.mock.calls.find(
     (call) => call[0].endsWith("/sources") && call[1]?.method === "POST",
   );
-  expect(JSON.parse(String(saved?.[1]?.body)).newestFirst).toBe(true);
+  expect(JSON.parse(String(saved?.[1]?.body)).newestFirst).toBeUndefined();
 });
 test("shows scraping errors and keeps save disabled", async () => {
   fail = true;

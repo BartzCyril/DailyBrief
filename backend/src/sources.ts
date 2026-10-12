@@ -121,7 +121,8 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
       articleLinkSelector?: string | null;
     } = {};
     if (input.enabled !== undefined) data.enabled = input.enabled;
-    if (input.newestFirst !== undefined) data.newestFirst = input.newestFirst;
+    // Older clients may still send this field; chronological collection is universal.
+    data.newestFirst = true;
     if (input.articleLinkSelector !== undefined) {
       if (source.type !== "RSS")
         throw new AppError(
@@ -199,7 +200,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
           .object({
             url: urlSchema,
             type: z.literal("RSS"),
-            newestFirst: z.boolean().default(false),
+            newestFirst: z.boolean().optional(),
             articleLinkSelector: articleLinkSelectorSchema,
           })
           .strict(),
@@ -207,7 +208,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
           .object({
             url: urlSchema,
             type: z.literal("SCRAPING"),
-            newestFirst: z.boolean().default(false),
+            newestFirst: z.boolean().optional(),
             scrapingConfig: scrapingInputSchema,
           })
           .strict(),
@@ -223,7 +224,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
           userId: req.session.userId!,
           url: new URL(input.url).href,
           type: input.type,
-          newestFirst: input.newestFirst,
+          newestFirst: true,
           ...(input.type === "SCRAPING"
             ? { scrapingConfig: input.scrapingConfig }
             : { articleLinkSelector: input.articleLinkSelector ?? null }),

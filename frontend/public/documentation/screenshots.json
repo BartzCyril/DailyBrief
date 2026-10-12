@@ -5,15 +5,15 @@
   },
   "rss": {
     "width": 820,
-    "height": 761
+    "height": 670
   },
   "scraping": {
     "width": 820,
-    "height": 1257
+    "height": 1040
   },
   "assistance": {
     "width": 1280,
-    "height": 1418
+    "height": 1201
   },
   "journaux": {
     "width": 1180,
@@ -29,7 +29,11 @@
   },
   "settings": {
     "width": 820,
-    "height": 1078
+    "height": 684
+  },
+  "interests": {
+    "width": 820,
+    "height": 679
   },
   "jobs": {
     "width": 1216,

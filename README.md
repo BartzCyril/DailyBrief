@@ -86,7 +86,7 @@ une suppression rend la page demandée inexistante, la dernière page disponible
 est renvoyée. La recherche traite `%` et `_` comme des caractères littéraux.
 Le tableau `/sources` transmet ces critères à chaque changement et ne charge
 que la page affichée. `PATCH /sources/:id` accepte `{enabled}`
-ou `{url?, scrapingConfig?, newestFirst?}` pour modifier son adresse et sa configuration.
+ou `{url?, scrapingConfig?}` pour modifier son adresse et sa configuration.
 L'ancien champ `urlTemplate` reste accepté avec `url` pour les clients précédents.
 `DELETE /sources/:id` supprime une source du compte et ses articles associés.
 
@@ -196,18 +196,18 @@ comme `31.02.2026` ne deviennent pas une date de publication. Aucun parseur ne p
 déduire sans contexte si `08/10/2026` signifie le 8 octobre ou le 10 août.
 Le workflow de test conserve son aperçu de configuration indépendant.
 
-Une source peut déclarer explicitement `newestFirst=true` avec le switch **Articles du plus
-récent au plus ancien**. Ce réglage est désactivé par défaut : activez-le uniquement si le
-site garantit cet ordre, sans articles épinglés anciens au début. En collecte, rencontrer
-une publication antérieure à J−1 arrête le parcours, la pagination et les chargements
-supplémentaires de cette source. Sans cette garantie, le collecteur parcourt la source
-normalement et filtre les dates individuellement. Les autres sources continuent même si
-une source rencontre une erreur.
+Les sources sont parcourues du plus récent au plus ancien automatiquement, sans option
+à configurer. En collecte, rencontrer une publication antérieure à J−1 arrête le parcours,
+la pagination et les chargements supplémentaires si l'ordre observé le permet. Une date
+manquante ou une inversion constatée désactive cet arrêt anticipé pour éviter d'écarter
+des articles récents. Les autres sources continuent même si une source rencontre une erreur.
 
 La page **Réglages** (`/settings`) permet d’activer la récupération quotidienne, de choisir
-l’heure locale (`HH:mm`) et de décrire ses **centres d’intérêt** (6 000 caractères maximum).
+l’heure locale entière (`HH:00`) et de décrire ses **centres d’intérêt** (6 000 caractères maximum).
 Le tableau de bord conserve l’affichage du planning et la collecte manuelle ; les réglages
-ne s’y modifient plus. Un prompt vide conserve tous les sujets. Les préférences orientent
+ne s’y modifient plus. Les onglets **Collecte automatique** et **Vos centres d’intérêt**
+conservent les modifications en cours ; le bouton **Enregistrer les réglages** en haut à droite
+sauvegarde les deux sections et reste désactivé sans modification. Un prompt vide conserve tous les sujets. Les préférences orientent
 uniquement les articles jamais analysés : une modification ne réanalyse pas automatiquement
 les décisions et résumés existants. `PATCH /settings/dailybrief` accepte `interestPrompt`
 avec `collectionEnabled`, `collectionTime` et `timezone`.
@@ -220,7 +220,13 @@ Le serveur conserve ce fuseau et recalcule la prochaine échéance sans modifier
 l'heure ni l'activation. La programmation reste valable lorsque le navigateur est
 fermé. Après un changement de fuseau, ouvrir le tableau de bord actualise le planning.
 Si la détection est indisponible, le dernier fuseau enregistré est conservé.
-Le scheduler vérifie les échéances chaque minute.
+Le scheduler vérifie les échéances au démarrage puis au début de chaque heure UTC,
+sans interrogation chaque minute. Une échéance passée est rattrapée au démarrage.
+L’API et la base n’acceptent que les heures entières de `00:00` à `23:00`.
+La migration ramène les anciens horaires à l’heure précédente (`07:30` devient `07:00`)
+et adapte les prochaines échéances dans le fuseau enregistré. Le nouvel horaire par défaut
+est `07:00`. Dans un fuseau dont le décalage UTC contient des minutes, une échéance
+locale est traitée à la vérification horaire UTC suivante.
 Les heures absentes au printemps sont décalées vers l'avant ; les heures
 doubles à l'automne s'exécutent une seule fois à leur première occurrence.
 Le déclenchement manuel conserve la prochaine échéance quotidienne.
@@ -499,7 +505,7 @@ avec infobulles. Le bouton d'ajout et le retour après création suivent le type
 
 Dans « Sources », le bouton « Modifier » ouvre une modale avec les mêmes champs que la création,
 préremplis avec les valeurs enregistrées : URL pour un flux RSS ; URL, sélecteurs
-d'articles, de titre, de lien, de description et de date, mode de récupération,
+d'articles, de titre, de lien et de date, mode de récupération,
 paramètres de scroll, de pagination ou du bouton de chargement pour une source de scraping.
 « Tester » affiche un aperçu sans modifier la source ni enregistrer d'articles.
 Une modification invalide l'aperçu. À la création comme à l'édition, l'enregistrement
@@ -512,7 +518,7 @@ Une erreur de récupération ou une adresse déjà utilisée laisse la source ex
 inchangée. « Annuler » ferme le formulaire sans enregistrer.
 
 L'identifiant, les articles existants et l'état actif ou inactif sont conservés.
-Les sélecteurs de description et de date sont obligatoires lors de la création,
+Le sélecteur de date est obligatoire lors de la création,
 du test de configuration et de la modification d'une source de scraping, au même titre
 que ceux des articles, du titre et du lien. Le formulaire et l'API refusent les champs
 absents, vides ou constitués uniquement d'espaces. Les anciennes configurations restent
@@ -534,10 +540,11 @@ un curseur pointeur lorsqu'il est disponible.
 À la création ou à la modification d'une source, renseignez son adresse puis cliquez
 sur « Remplir avec l'IA ». Pour un flux RSS avec lien intermédiaire, l'analyse ouvre
 une notice du flux pour chercher le lien vers le journal. Pour le scraping, elle
-propose les cinq sélecteurs obligatoires (articles, titre, lien, description et date)
+propose les quatre sélecteurs obligatoires (articles, titre, lien et date)
 et le mode de chargement lorsqu'ils sont identifiables. Les champs omis par l'IA
-sont complétés à partir d'éléments observés et non ambigus. En l'absence de
-description, le sélecteur du titre est réutilisé avec un message explicite. Une date
+sont complétés à partir d'éléments observés et non ambigus. La description est extraite
+automatiquement depuis l'extrait de la carte, avec le titre comme repli. Les anciens
+sélecteurs de description restent lisibles mais ne sont plus affichés ni requis. Une date
 absente reste une erreur avec possibilité d'aide humaine ; elle n'est jamais
 remplacée par le titre.
 Les contrôles de pagination en bas des longues listes sont prioritaires dans le

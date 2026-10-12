@@ -10,12 +10,10 @@ import { sourcesApi, validHttpUrl } from "./api";
 import { ArticlePreview } from "./ArticlePreview";
 import { RssArticleLinkField, validArticleLinkSelector } from "./RssArticleLinkField";
 import { SelectorAssistance } from "./SelectorAssistance";
-import { SourceOrderField } from "./SourceOrderField";
 export function RssForm() {
   const navigate = useNavigate();
   const [url, setUrl] = useState("");
   const [articleLinkSelector, setArticleLinkSelector] = useState("");
-  const [newestFirst, setNewestFirst] = useState(false);
   const [preview, setPreview] = useState<SourcePreview | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
@@ -48,7 +46,7 @@ export function RssForm() {
     setBusy("save");
     setError("");
     try {
-      await sourcesApi.saveRss(url, articleLinkSelector.trim() || undefined, newestFirst);
+      await sourcesApi.saveRss(url, articleLinkSelector.trim() || undefined);
       navigate("/sources", { state: { message: "Flux RSS ajouté." } });
     } catch (error) {
       setError(errorMessage(error));
@@ -95,7 +93,6 @@ export function RssForm() {
             setError("");
           }}
         />
-        <SourceOrderField checked={newestFirst} onChange={setNewestFirst} disabled={pending} />
         <div className="flex flex-wrap gap-3">
           <Button type="submit" disabled={pending}>
             {busy === "test" && <LoaderCircle className="animate-spin" />}

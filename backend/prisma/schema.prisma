@@ -43,7 +43,7 @@ model DailyBriefSettings {
   userId String @unique
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   collectionEnabled Boolean @default(false)
-  collectionTime String @default("07:30")
+  collectionTime String @default("07:00")
   timezone String @default("Europe/Paris")
   interestPrompt String @default("")
   lastCollectionAt DateTime?
@@ -66,7 +66,7 @@ model Source {
   articleLinkSelector String?
   journalInventory Json?
   enabled Boolean @default(true)
-  newestFirst Boolean @default(false)
+  newestFirst Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   articles Article[]

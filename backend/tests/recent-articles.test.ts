@@ -4,6 +4,7 @@ import {
   filterRecentArticles,
   parsePublicationDate,
   recentArticleWindow,
+  type RecentArticleOptions,
 } from "../src/recent-articles";
 import { parseRss, RssService } from "../src/rss";
 import { ScrapingService } from "../src/scraping";
@@ -365,7 +366,8 @@ test("collection boundaries apply to custom services and a failed source does no
     },
   } as unknown as Db;
   class FixtureRss extends RssService {
-    override async collect() {
+    override async collect(_url: string, _preserveUndated = false, options?: RecentArticleOptions) {
+      expect(options?.newestFirst).toBe(true);
       return { articles: [article("2026-10-10"), article("2026-10-08"), article(null)] };
     }
   }

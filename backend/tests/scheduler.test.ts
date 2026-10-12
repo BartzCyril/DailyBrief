@@ -12,24 +12,27 @@ import { createApp } from "../src/app";
 import { config, db, redis, connect, disconnect } from "./helpers";
 import { ArticleContentService } from "../src/article-content";
 test("daily schedule follows Paris summer/winter offsets", () => {
-  expect(nextCollection("07:30", "Europe/Paris", new Date("2026-07-01T00:00Z")).toISOString()).toBe(
-    "2026-07-01T05:30:00.000Z",
+  expect(nextCollection("07:00", "Europe/Paris", new Date("2026-07-01T00:00Z")).toISOString()).toBe(
+    "2026-07-01T05:00:00.000Z",
   );
-  expect(nextCollection("07:30", "Europe/Paris", new Date("2026-12-01T00:00Z")).toISOString()).toBe(
-    "2026-12-01T06:30:00.000Z",
+  expect(nextCollection("07:00", "Europe/Paris", new Date("2026-12-01T00:00Z")).toISOString()).toBe(
+    "2026-12-01T06:00:00.000Z",
   );
 });
 test("DST gaps shift forward and overlaps run once", () => {
-  expect(nextCollection("02:30", "Europe/Paris", new Date("2026-03-29T00:00Z")).toISOString()).toBe(
-    "2026-03-29T01:30:00.000Z",
+  expect(nextCollection("02:00", "Europe/Paris", new Date("2026-03-29T00:00Z")).toISOString()).toBe(
+    "2026-03-29T01:00:00.000Z",
   );
-  expect(nextCollection("02:30", "Europe/Paris", new Date("2026-10-25T00:35Z")).toISOString()).toBe(
-    "2026-10-26T01:30:00.000Z",
+  expect(nextCollection("02:00", "Europe/Paris", new Date("2026-10-25T00:35Z")).toISOString()).toBe(
+    "2026-10-26T01:00:00.000Z",
   );
 });
 test("validates settings and forbids ownership input", () => {
   for (const input of [
     { collectionTime: "25:00" },
+    { collectionTime: "07:30" },
+    { collectionTime: "08:01" },
+    { collectionTime: "7:00" },
     { timezone: "invalid" },
     { collectionEnabled: "true" },
     { userId: "other" },
@@ -91,18 +94,22 @@ describe("collection settings, source isolation and Redis lock", () => {
   test("creates safe defaults and enables/changes/disables schedule", async () => {
     const defaults = await agent.get("/settings/dailybrief");
     expect(defaults.body.collectionEnabled).toBe(false);
+    expect(defaults.body.collectionTime).toBe("07:00");
+    expect(
+      (await agent.patch("/settings/dailybrief").send({ collectionTime: "08:45" })).status,
+    ).toBe(400);
     expect(defaults.body.timezone).toBe("Europe/Paris");
     const enabled = await agent
       .patch("/settings/dailybrief")
-      .send({ collectionEnabled: true, collectionTime: "08:45", timezone: "America/New_York" });
+      .send({ collectionEnabled: true, collectionTime: "08:00", timezone: "America/New_York" });
     expect(enabled.status).toBe(200);
     expect(enabled.body.nextCollectionAt).not.toBeNull();
-    expect(enabled.body.collectionTime).toBe("08:45");
+    expect(enabled.body.collectionTime).toBe("08:00");
     const detected = await agent.patch("/settings/dailybrief").send({ timezone: "Europe/Paris" });
     expect(detected.status).toBe(200);
     expect(detected.body).toMatchObject({
       collectionEnabled: true,
-      collectionTime: "08:45",
+      collectionTime: "08:00",
       timezone: "Europe/Paris",
     });
     expect(detected.body.nextCollectionAt).not.toBe(enabled.body.nextCollectionAt);
@@ -113,7 +120,7 @@ describe("collection settings, source isolation and Redis lock", () => {
         minute: "2-digit",
         hourCycle: "h23",
       }).format(new Date(detected.body.nextCollectionAt)),
-    ).toBe("08:45");
+    ).toBe("08:00");
     const disabled = await agent.patch("/settings/dailybrief").send({ collectionEnabled: false });
     expect(disabled.body.nextCollectionAt).toBeNull();
     expect((await request(app).get("/settings/dailybrief")).status).toBe(401);

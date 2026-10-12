@@ -161,12 +161,12 @@ describe("source URL editing", () => {
     ).toBe(400);
     expect(requests).toHaveLength(0);
   });
-  test("rejects missing description or date on preview, creation and modification before fetching or writing", async () => {
+  test("rejects a missing date on preview, creation and modification before fetching or writing", async () => {
     await db.source.update({
       where: { id: sourceId },
       data: { type: "SCRAPING", url: "https://fixture.example/scroll", scrapingConfig },
     });
-    for (const field of ["descriptionSelector", "dateSelector"]) {
+    for (const field of ["dateSelector"]) {
       for (const value of [undefined, null, "", "   "]) {
         const invalid = { ...scrapingConfig, [field]: value };
         expect(
@@ -195,7 +195,30 @@ describe("source URL editing", () => {
       scrapingConfig,
     });
   });
-  test("retains activation for legacy sources but requires description and date when editing their URL", async () => {
+  test("creates and edits sources without a description selector and enforces automatic chronological order", async () => {
+    const { descriptionSelector: _description, ...automatic } = scrapingConfig;
+    const created = await agent.post("/sources").send({
+      url: "https://fixture.example/scroll",
+      type: "SCRAPING",
+      scrapingConfig: automatic,
+      newestFirst: false,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.newestFirst).toBe(true);
+    expect(created.body.scrapingConfig).not.toHaveProperty("descriptionSelector");
+    expect(
+      (await agent.patch(`/sources/${created.body.id}`).send({ newestFirst: false })).status,
+    ).toBe(204);
+    expect(await db.source.findUniqueOrThrow({ where: { id: created.body.id } })).toMatchObject({
+      newestFirst: true,
+    });
+    const preview = await agent
+      .post("/sources/scraping/test")
+      .send({ url: "https://fixture.example/scroll", config: automatic });
+    expect(preview.status).toBe(200);
+    expect(preview.body.articles[0]?.description).toBe("Description");
+  });
+  test("retains activation for legacy sources but requires a date when editing their URL", async () => {
     const { descriptionSelector: _description, dateSelector: _date, ...legacy } = scrapingConfig;
     await db.source.update({
       where: { id: sourceId },
@@ -208,7 +231,7 @@ describe("source URL editing", () => {
       legacy,
     );
   });
-  test("edits all scraping settings at the same URL, retains required description and date selectors and switches modes without losing history", async () => {
+  test("edits all scraping settings at the same URL, retains legacy description selectors and required dates and switches modes without losing history", async () => {
     await db.source.update({
       where: { id: sourceId },
       data: { type: "SCRAPING", url: "https://fixture.example/scroll", scrapingConfig },

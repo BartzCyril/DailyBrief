@@ -5,7 +5,7 @@ export const settingsSchema = z
     collectionEnabled: z.boolean().optional(),
     collectionTime: z
       .string()
-      .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+      .regex(/^([01]\d|2[0-3]):00$/, "Choisissez une heure entière, de 00:00 à 23:00.")
       .optional(),
     timezone: z
       .string()

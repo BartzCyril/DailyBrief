@@ -46,8 +46,8 @@ const feed: SourcePreview = {
   articles: [{ title: "Notice", url: notice.url, publishedAt: null, description: null }],
 };
 
-test("scraping analysis recovers omitted description and date from actual article elements", async () => {
-  for (const field of ["descriptionSelector", "dateSelector"]) {
+test("scraping analysis recovers dates without requiring description configuration", async () => {
+  for (const field of ["dateSelector"]) {
     for (const value of [undefined, null, "", "   "]) {
       expect(
         await provider({ ...scraping, [field]: value }).service.analyze({
@@ -71,34 +71,34 @@ test("scraping analysis recovers omitted description and date from actual articl
     { html: articlePage, url: "https://publisher.example/" },
     12000,
   );
-  expect(prompt).toContain("Les cinq sélecteurs sont obligatoires");
-  expect(prompt).toContain(
-    "descriptionSelector doit être EXACTEMENT le même sélecteur que titleSelector",
-  );
+  expect(prompt).toContain("Ces quatre sélecteurs sont obligatoires");
+  expect(prompt).toContain("ne propose pas de descriptionSelector");
   expect(prompt).toContain("dateSelector:null");
 });
 
-test("uses the title selector as description only when an excerpt is absent", async () => {
+test("ignores legacy AI description selectors without blocking the four required fields", async () => {
   const page = {
     html: articlePage.replace(/<p class="summary">.*?<\/p>/g, ""),
     url: "https://publisher.example/",
   };
-  for (const descriptionSelector of [null, undefined, "", "h2"]) {
+  for (const descriptionSelector of [null, undefined, "", "h2", ".absent"]) {
     const result = await provider({ ...scraping, descriptionSelector }, page).service.analyze({
       kind: "SCRAPING",
       url: page.url,
     });
     expect(result).toMatchObject({
       complete: true,
-      scrapingConfig: { titleSelector: "h2", descriptionSelector: "h2", dateSelector: "time" },
+      scrapingConfig: { titleSelector: "h2", dateSelector: "time" },
     });
-    expect(result.message).toContain("le sélecteur du titre sert de description");
+    if (result.kind !== "SCRAPING") throw new Error("Expected scraping selectors");
+    expect(result.scrapingConfig).not.toHaveProperty("descriptionSelector");
   }
   const actualExcerpt = await provider({ ...scraping, descriptionSelector: "h2" }).service.analyze({
     kind: "SCRAPING",
     url: page.url,
   });
-  expect(actualExcerpt).toMatchObject({ scrapingConfig: { descriptionSelector: ".summary" } });
+  if (actualExcerpt.kind !== "SCRAPING") throw new Error("Expected scraping selectors");
+  expect(actualExcerpt.scrapingConfig).not.toHaveProperty("descriptionSelector");
 });
 
 test("an absent date remains an explicit failure and is never replaced by the title", async () => {
@@ -172,7 +172,7 @@ test("selector analysis can recover hidden datePublished metadata without treati
   });
   expect(result).toMatchObject({
     complete: true,
-    scrapingConfig: { dateSelector: '[itemprop="datePublished"]', descriptionSelector: ".summary" },
+    scrapingConfig: { dateSelector: '[itemprop="datePublished"]' },
   });
 });
 
@@ -407,7 +407,7 @@ test("scraping analysis fills a configuration verified on actual article blocks 
     kind: "SCRAPING",
     complete: true,
     missingFields: [],
-    scrapingConfig: scraping,
+    scrapingConfig: (({ descriptionSelector: _description, ...fields }) => fields)(scraping),
   });
   expect(fixture.bodies).toHaveLength(1);
   expect(fixture.bodies[0]).toMatchObject({
@@ -448,7 +448,6 @@ test("invented, broad, ambiguous and empty link selectors cannot be reported as 
     { titleSelector: ".invented" },
     { linkSelector: "a, p" },
     { linkSelector: "p" },
-    { descriptionSelector: ".invented" },
     { linkSelector: "[" },
   ])
     await assert.rejects(

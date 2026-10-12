@@ -59,7 +59,9 @@ export function buildScrapingConfig(draft: ScrapingDraft): ScrapingConfig {
     articleSelector: draft.articleSelector,
     titleSelector: draft.titleSelector,
     linkSelector: draft.linkSelector,
-    descriptionSelector: draft.descriptionSelector,
+    ...(draft.descriptionSelector.trim()
+      ? { descriptionSelector: draft.descriptionSelector.trim() }
+      : {}),
     dateSelector: draft.dateSelector,
     mode: draft.mode,
     ...(draft.mode === "SCROLL"
@@ -195,7 +197,7 @@ export function ScrapingFields({ draft, update }: Props) {
               key: "articleSelector",
               label: "Sélecteur des articles",
               placeholder: ".article-card",
-              hint: "Sélecteur CSS du bloc qui contient un article : son titre, son lien, sa description et sa date.",
+              hint: "Sélecteur CSS du bloc qui contient un article : son titre, son lien et sa date.",
             },
             {
               key: "titleSelector",
@@ -208,12 +210,6 @@ export function ScrapingFields({ draft, update }: Props) {
               label: "Sélecteur du lien",
               placeholder: "a",
               hint: "Le lien doit porter un attribut href.",
-            },
-            {
-              key: "descriptionSelector",
-              label: "Sélecteur de description",
-              placeholder: ".description",
-              hint: "Élément de l'extrait à l'intérieur du bloc article. S'il n'y a pas de description, utilisez le sélecteur du titre.",
             },
             {
               key: "dateSelector",

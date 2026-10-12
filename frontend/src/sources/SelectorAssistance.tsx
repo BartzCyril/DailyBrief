@@ -21,7 +21,6 @@ function hasRequiredSelectors(result: SelectorAnalysisResponse) {
             result.scrapingConfig.articleSelector,
             result.scrapingConfig.titleSelector,
             result.scrapingConfig.linkSelector,
-            result.scrapingConfig.descriptionSelector,
             result.scrapingConfig.dateSelector,
           ];
   return fields.every((field) => typeof field === "string" && !!field.trim());

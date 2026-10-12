@@ -80,8 +80,8 @@ export const scrapingSchema = z
   });
 
 // Reading saved sources remains compatible with configurations created before
-// description and date became mandatory. New and edited configurations are strict.
+// date became mandatory. Descriptions are extracted automatically; existing
+// description selectors remain compatible without exposing a configuration field.
 export const scrapingInputSchema = scrapingSchema.safeExtend({
-  descriptionSelector: selector,
   dateSelector: selector,
 });

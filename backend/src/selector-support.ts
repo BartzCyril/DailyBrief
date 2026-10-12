@@ -77,7 +77,6 @@ const fieldNames: Record<SelectorAnalysisKind, Record<string, string>> = {
     articleSelector: "Bloc répété contenant chaque article (sélecteur CSS)",
     titleSelector: "Titre, à l’intérieur de chaque bloc d’article (sélecteur CSS)",
     linkSelector: "Lien vers l’article, à l’intérieur de chaque bloc (sélecteur CSS)",
-    descriptionSelector: "Description ou extrait de l’article (sélecteur CSS, obligatoire)",
     dateSelector: "Date de publication (sélecteur CSS, obligatoire)",
     mode: "Mode de récupération : défilement, pagination ou bouton de chargement",
     "loadMore.buttonSelector": "Bouton permettant de charger plus d’articles (sélecteur CSS)",

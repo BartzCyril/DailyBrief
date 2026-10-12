@@ -28,7 +28,7 @@ export function ArticlePreview({ preview }: { preview: SourcePreview }) {
               )}
             </CardHeader>
             <CardContent className="space-y-3">
-              {article.description && (
+              {article.description && article.description !== article.title && (
                 <p className="text-sm text-muted-foreground">{article.description}</p>
               )}
               {article.url && validHttpUrl(article.url) && (

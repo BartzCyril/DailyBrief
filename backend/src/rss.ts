@@ -76,9 +76,7 @@ export function parseRss(
   // it from a prefix, which could discard a recent item placed after an old one.
   const sorted = isNewestFirst(dates.map((publishedAt) => ({ publishedAt })));
   if (options?.newestFirst && !sorted)
-    warnings.push(
-      "L'ordre chronologique annoncé n'est pas respecté : tous les items ont été vérifiés.",
-    );
+    warnings.push("L'ordre chronologique n'est pas respecté : tous les items ont été vérifiés.");
   const cutoff =
     options && sorted
       ? dates.findIndex((date) => new Date(date!).getTime() < options.window.start.getTime())
