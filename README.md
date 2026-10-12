@@ -646,6 +646,21 @@ ils ne prouvent pas que les dates sont interprétables ni que le bouton fonction
 Le collecteur attend jusqu'à trois secondes supplémentaires sur la première page
 si les blocs d’articles ne sont pas encore présents après la navigation. Une protection reconnue
 sans article produit une erreur distincte, au lieu d'accuser les sélecteurs.
+Les écrans courts « vérifie votre navigateur… », sans articles, titres ou liens,
+sont également reconnus même s'ils ne contiennent aucun identifiant de CAPTCHA.
+Le navigateur reste ouvert jusqu'à **30 secondes** pour laisser une vérification
+transitoire se terminer normalement. Le même navigateur et ses cookies temporaires
+sont conservés pendant cette attente. L'extraction reprend si l'écran disparaît ou
+si les articles apparaissent ; si la vérification persiste, une erreur explicite
+remplace l'aperçu vide. Cela vaut pour le test, la validation avant enregistrement,
+la collecte et les pages suivantes de pagination. Les logs signalent le début et
+la fin de l'attente, sans texte de page ni cookies.
+
+La variable facultative `SCRAPING_VERIFICATION_WAIT_MS=30000` règle ce délai dans
+le `.env` commun à l'API et aux consumers. Elle accepte de `0` (aucune attente) à
+`120000` (deux minutes). Redémarrez `npm run dev` après un changement. L'attente
+ne résout pas un CAPTCHA et ne garantit pas que le site autorisera le navigateur
+automatisé ; une vérification toujours présente demande un autre accès autorisé.
 
 Les confirmations et erreurs utilisent un Toaster commun sur toutes les pages et
 dans les modales. Les notifications sont fermables, accessibles au clavier et

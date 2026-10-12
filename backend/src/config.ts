@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 const boolean = z.enum(["true", "false"]).transform((value) => value === "true");
+const scrapingVerificationWait = z.coerce.number().int().min(0).max(120000).default(30000);
+export function readScrapingVerificationWait(env: NodeJS.ProcessEnv = process.env): number {
+  return scrapingVerificationWait.parse(env.SCRAPING_VERIFICATION_WAIT_MS);
+}
 const loggingSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   LOG_LEVEL: z.enum(["debug", "info", "error"]).default("info"),
@@ -50,6 +54,7 @@ const envSchema = loggingSchema.extend({
     .regex(/^[a-zA-Z0-9_-]+$/)
     .default("dailybrief"),
   COLLECTION_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(2),
+  SCRAPING_VERIFICATION_WAIT_MS: scrapingVerificationWait,
   AI_LANGUAGE: z.string().default("français"),
 });
 export type Config = z.infer<typeof envSchema>;

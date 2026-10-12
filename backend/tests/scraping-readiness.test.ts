@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import type { ScrapingConfig } from "@dailybrief/shared";
 import { ScrapingService } from "../src/scraping";
+import type { FetchText } from "../src/network";
+const fixtureService = (fetch: FetchText) =>
+  new ScrapingService(fetch, undefined, { verificationWaitMs: 0 });
 import type { ScrapingPageDiagnostic } from "../src/scraping-diagnostics";
 
 const config: ScrapingConfig = {
@@ -15,7 +18,7 @@ const teaser = (id: string) =>
   `<article class="teaser"><h3 class="teaser__title">Article ${id}</h3><a class="teaser__link" href="/${id}">Lire</a><span class="meta__date">12 octobre 2026</span></article>`;
 
 test("extracts the supplied teaser selectors and the next batch without filtering dates in the form preview", async () => {
-  const service = new ScrapingService(
+  const service = fixtureService(
     async () =>
       `${teaser("first")}<button id="js-more-teaser">Plus</button><script>document.querySelector('button').onclick=()=>{document.querySelector('button').insertAdjacentHTML('beforebegin',${JSON.stringify(teaser("next"))});document.querySelector('button').remove();}</script>`,
   );
@@ -29,7 +32,7 @@ test("extracts the supplied teaser selectors and the next batch without filterin
 }, 15000);
 
 test("waits for cards populated by delayed JavaScript after network idle", async () => {
-  const service = new ScrapingService(
+  const service = fixtureService(
     async () =>
       `<main id="list"></main><script>setTimeout(()=>document.querySelector('#list').innerHTML=${JSON.stringify(teaser("late"))},1200)</script>`,
   );
@@ -43,7 +46,7 @@ test("waits for cards populated by delayed JavaScript after network idle", async
 }, 15000);
 
 test("reports a protection page rather than blaming article selectors", async () => {
-  const service = new ScrapingService(
+  const service = fixtureService(
     async () => '<main><form id="challenge-form">Vérification</form></main>',
   );
   await expect(
@@ -52,17 +55,41 @@ test("reports a protection page rather than blaming article selectors", async ()
 }, 15000);
 
 test("a CAPTCHA widget alongside valid articles does not prevent their extraction", async () => {
-  const service = new ScrapingService(
-    async () => `${teaser("public")}<div class="g-recaptcha"></div>`,
-  );
+  const service = fixtureService(async () => `${teaser("public")}<div class="g-recaptcha"></div>`);
   expect(
     (await service.collect("https://fixture.example/patrimoine/", config)).articles,
   ).toHaveLength(1);
 }, 15000);
 
+test("recognizes the supplied browser-verification screen without CAPTCHA markers", async () => {
+  const service = fixtureService(
+    async () =>
+      '<div><img alt="Logo de l’entreprise"><p>vérifie votre navigateur...</p><div class="spinner"></div></div>',
+  );
+  let observed: ScrapingPageDiagnostic | undefined;
+  await expect(
+    service.validateFirstPage("https://fixture.example/patrimoine/", config, (value) => {
+      observed = value;
+    }),
+  ).rejects.toMatchObject({ code: "SCRAPING_PAGE_BLOCKED" });
+  expect(observed).toMatchObject({ articleBlocks: 0, pageProtection: true });
+  expect(JSON.stringify(observed)).not.toContain("navigateur");
+}, 15000);
+
+test("does not misclassify an article quoting the browser-verification message", async () => {
+  const service = fixtureService(
+    async () => teaser("public") + "<p>Le site vérifie votre navigateur...</p>",
+  );
+  let observed: ScrapingPageDiagnostic | undefined;
+  await service.validateFirstPage("https://fixture.example/patrimoine/", config, (value) => {
+    observed = value;
+  });
+  expect(observed?.pageProtection).toBe(false);
+}, 15000);
+
 test("first-page diagnosis counts selectors without clicking the button or exposing content", async () => {
   let diagnostic: ScrapingPageDiagnostic | undefined;
-  const service = new ScrapingService(
+  const service = fixtureService(
     async () =>
       `${teaser("public")}<button id="js-more-teaser" onclick="throw Error('must not click')">Plus</button>`,
   );

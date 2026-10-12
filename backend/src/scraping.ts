@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { filterRecentArticles, type RecentArticleOptions } from "./recent-articles";
 import { inspectScrapingPage, type ScrapingPageDiagnostic } from "./scraping-diagnostics";
 import { logger } from "./logger";
+import { readScrapingVerificationWait } from "./config";
 
 export type ScrapingDiagnosticObserver = (
   diagnostic: ScrapingPageDiagnostic,
@@ -125,10 +126,19 @@ async function extract(
 }
 export class ScrapingService {
   private limiter = new ConcurrencyLimiter(2);
+  private verificationWaitMs: number;
   constructor(
     private fetchText?: FetchText,
     private createNetwork: BrowserNetworkFactory = () => BrowserNetwork.create(),
-  ) {}
+    options?: { verificationWaitMs?: number },
+  ) {
+    this.verificationWaitMs =
+      options?.verificationWaitMs === undefined
+        ? readScrapingVerificationWait()
+        : readScrapingVerificationWait({
+            SCRAPING_VERIFICATION_WAIT_MS: String(options.verificationWaitMs),
+          });
+  }
   async collect(
     url: string,
     input: ScrapingConfig,
@@ -177,7 +187,7 @@ export class ScrapingService {
           ? setTimeout(() => {
               timedOut = true;
               void context.close();
-            }, 45000)
+            }, 45000 + this.verificationWaitMs)
           : undefined;
       try {
         const page = await context.newPage();
@@ -356,10 +366,60 @@ export class ScrapingService {
         const articles: ArticlePreview[] = [];
         const warnings: string[] = [];
         let initialDiagnostic: ScrapingPageDiagnostic | undefined;
-        const prepareInitialArticles = async () => {
+        const prepareInitialArticles = async (initialPage = true) => {
           let diagnostic = await inspectScrapingPage(page, config);
+          if (!diagnostic.withTitle && diagnostic.pageProtection && this.verificationWaitMs > 0) {
+            const deadline = Date.now() + this.verificationWaitMs;
+            logger.info(
+              "scraping.verification_wait.started",
+              "Attente de la vérification du navigateur avant l'extraction.",
+              { maxWaitMs: this.verificationWaitMs },
+            );
+            while (!diagnostic.withTitle && diagnostic.pageProtection && Date.now() < deadline) {
+              network?.assertWithinBudget();
+              if (networkError instanceof AppError) throw networkError;
+              const remaining = deadline - Date.now();
+              if (remaining <= 0) break;
+              let stepTimer: ReturnType<typeof setTimeout> | undefined;
+              try {
+                // Enforce the deadline in the server even if page JavaScript stalls.
+                const updated = await Promise.race([
+                  (async () => {
+                    await page.waitForTimeout(Math.min(250, remaining));
+                    return inspectScrapingPage(page, config);
+                  })(),
+                  new Promise<undefined>((resolve) => {
+                    stepTimer = setTimeout(() => resolve(undefined), remaining);
+                  }),
+                ]);
+                if (!updated) break;
+                diagnostic = updated;
+              } catch (error) {
+                // A verification may reload or redirect the document naturally.
+                if (
+                  !(error instanceof Error) ||
+                  !/Execution context was destroyed|Cannot find context with specified id/.test(
+                    error.message,
+                  )
+                )
+                  throw error;
+              } finally {
+                clearTimeout(stepTimer);
+              }
+            }
+            network?.assertWithinBudget();
+            if (networkError instanceof AppError) throw networkError;
+            logger.info(
+              diagnostic.pageProtection && !diagnostic.withTitle
+                ? "scraping.verification_wait.expired"
+                : "scraping.verification_wait.finished",
+              diagnostic.pageProtection && !diagnostic.withTitle
+                ? "La vérification du navigateur persiste après l'attente."
+                : "La page de vérification n'empêche plus l'extraction.",
+            );
+          }
           // Network idle does not guarantee that delayed JavaScript has populated the cards.
-          if (!diagnostic.articleBlocks && !diagnostic.pageProtection) {
+          if (initialPage && !diagnostic.articleBlocks && !diagnostic.pageProtection) {
             try {
               await page.waitForFunction(
                 (config) =>
@@ -383,7 +443,9 @@ export class ScrapingService {
           if (!diagnostic.withTitle && diagnostic.pageProtection)
             throw new AppError(
               422,
-              "Le navigateur a reçu une page de protection ou un CAPTCHA au lieu de la liste d'articles. Les sélecteurs ne peuvent pas être vérifiés sur cette page.",
+              this.verificationWaitMs > 0
+                ? `La page de vérification du navigateur est toujours présente après ${this.verificationWaitMs / 1000} seconde(s). Le site n'a pas rendu ses articles accessibles au navigateur de collecte.`
+                : "Le navigateur a reçu une page de protection ou un CAPTCHA au lieu de la liste d'articles. Les sélecteurs ne peuvent pas être vérifiés sur cette page.",
               "SCRAPING_PAGE_BLOCKED",
             );
         };
@@ -639,7 +701,7 @@ export class ScrapingService {
               }
               throw error;
             }
-            if (number === config.pagination!.startPage) await prepareInitialArticles();
+            await prepareInitialArticles(number === config.pagination!.startPage);
             const entries = await readArticles();
             if (!entries.length) break;
             // Ignore ordering changes when a site repeats a page or cycles through

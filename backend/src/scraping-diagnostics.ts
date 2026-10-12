@@ -40,6 +40,22 @@ export function inspectScrapingPage(
     } catch {
       /* Keep the existing button validation responsible for this field. */
     }
+    // Some verification interstitials have no CAPTCHA iframe or known provider IDs.
+    // Inspect a short, otherwise empty page only; never classify an article quoting
+    // a verification message as a protection screen. No page text is returned/logged.
+    const text = (document.body?.innerText ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    const browserVerification =
+      text.length > 0 &&
+      text.length <= 1000 &&
+      !document.querySelector("a[href], article, h1, h2, h3, h4") &&
+      /\b(?:verifie votre navigateur|verifions votre navigateur|verification (?:de votre|du) navigateur|checking your browser|verifying your browser)\b/.test(
+        text,
+      );
     return {
       articleBlocks: blocks.length,
       withTitle: blocks.filter((block) =>
@@ -55,11 +71,13 @@ export function inspectScrapingPage(
           ).length
         : 0,
       loadMoreButtons,
-      pageProtection: [
-        ...document.querySelectorAll(
-          '#challenge-form, #cf-challenge-running, #captcha, .g-recaptcha, iframe[src*="captcha-delivery.com/"], iframe[src*="challenges.cloudflare.com/"]',
-        ),
-      ].some(visible),
+      pageProtection:
+        browserVerification ||
+        [
+          ...document.querySelectorAll(
+            '#challenge-form, #cf-challenge-running, #captcha, .g-recaptcha, iframe[src*="captcha-delivery.com/"], iframe[src*="challenges.cloudflare.com/"]',
+          ),
+        ].some(visible),
       consentVisible: [
         ...document.querySelectorAll(
           "#didomi-popup, #didomi-popup-container, #onetrust-banner-sdk",
