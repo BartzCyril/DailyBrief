@@ -77,6 +77,10 @@ test("first-page diagnosis counts selectors without clicking the button or expos
     loadMoreButtons: 1,
     pageProtection: false,
     consentVisible: false,
+    pageTitleMatches: 1,
+    pageLinkMatches: 1,
+    pageDateMatches: 1,
+    pageButtonMatches: 1,
   });
   expect(JSON.stringify(diagnostic)).not.toContain("Article public");
 }, 15000);

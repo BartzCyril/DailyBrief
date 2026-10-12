@@ -632,6 +632,14 @@ npm run diagnose:scraping -- "https://www.lemonde.fr/patrimoine/" ".teaser" ".te
 
 Cette commande affiche les nombres de blocs, titres, liens et éléments de date,
 la présence du bouton visible et les indices de protection/CAPTCHA ou de consentement.
+Les correspondances dans la page entière sont également affichées : elles peuvent
+être présentes même si le sélecteur du bloc d'article ne correspond plus au site.
+La commande produit `diagnostics/scraping-page.png` (le haut de la page reçue)
+et `diagnostics/scraping-structure.json` (comptes globaux et ancêtres CSS des titres).
+Ces fichiers restent locaux et sont exclus de Git. Les champs de saisie sont masqués
+dans la capture ; le JSON ne contient ni HTML, ni textes, ni valeurs de champs,
+ni cookies, ni paramètres d'URL. Joignez la capture et le JSON pour examiner un
+aperçu vide sans devoir utiliser l'inspecteur du navigateur.
 Elle ne clique pas sur le bouton, ne se connecte pas, n'appelle pas l'IA, ne modifie
 pas la base et n'envoie pas d'email. Les comptes décrivent le DOM réellement reçu ;
 ils ne prouvent pas que les dates sont interprétables ni que le bouton fonctionne.

@@ -18,6 +18,11 @@ import { filterRecentArticles, type RecentArticleOptions } from "./recent-articl
 import { inspectScrapingPage, type ScrapingPageDiagnostic } from "./scraping-diagnostics";
 import { logger } from "./logger";
 
+export type ScrapingDiagnosticObserver = (
+  diagnostic: ScrapingPageDiagnostic,
+  page: Page,
+) => void | Promise<void>;
+
 export function paginationUrl(url: string, config: ScrapingConfig, page: number): string {
   const pagination = config.pagination!;
   if (pagination.strategy === "URL_TEMPLATE")
@@ -134,7 +139,7 @@ export class ScrapingService {
   async validateFirstPage(
     url: string,
     input: ScrapingConfig,
-    onDiagnostic?: (diagnostic: ScrapingPageDiagnostic) => void,
+    onDiagnostic?: ScrapingDiagnosticObserver,
   ): Promise<void> {
     await this.scrape(url, input, true, undefined, onDiagnostic);
   }
@@ -143,7 +148,7 @@ export class ScrapingService {
     input: ScrapingConfig,
     firstPageOnly: boolean,
     options?: RecentArticleOptions,
-    onDiagnostic?: (diagnostic: ScrapingPageDiagnostic) => void,
+    onDiagnostic?: ScrapingDiagnosticObserver,
   ): Promise<SourcePreview> {
     const config = scrapingSchema.parse(input);
     return this.limiter.run(async () => {
@@ -374,7 +379,7 @@ export class ScrapingService {
             mode: config.mode,
             ...diagnostic,
           });
-          onDiagnostic?.(diagnostic);
+          await onDiagnostic?.(diagnostic, page);
           if (!diagnostic.withTitle && diagnostic.pageProtection)
             throw new AppError(
               422,

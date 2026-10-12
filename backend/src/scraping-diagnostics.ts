@@ -9,6 +9,10 @@ export type ScrapingPageDiagnostic = {
   loadMoreButtons: number;
   pageProtection: boolean;
   consentVisible: boolean;
+  pageTitleMatches: number;
+  pageLinkMatches: number;
+  pageDateMatches: number;
+  pageButtonMatches: number;
 };
 
 /** Counts only: no HTML, article text, credentials or cookies leave the browser. */
@@ -61,6 +65,20 @@ export function inspectScrapingPage(
           "#didomi-popup, #didomi-popup-container, #onetrust-banner-sdk",
         ),
       ].some(visible),
+      pageTitleMatches: document.querySelectorAll(config.titleSelector).length,
+      pageLinkMatches: document.querySelectorAll(config.linkSelector).length,
+      pageDateMatches: config.dateSelector
+        ? document.querySelectorAll(config.dateSelector).length
+        : 0,
+      pageButtonMatches: config.loadMore
+        ? (() => {
+            try {
+              return document.querySelectorAll(config.loadMore.buttonSelector).length;
+            } catch {
+              return 0;
+            }
+          })()
+        : 0,
     };
   }, config);
 }
