@@ -1,4 +1,4 @@
-import type { Source, ScrapingConfig, SourcePage, SourceListQuery } from "@dailybrief/shared";
+import type { Source, SourcePage, SourceListQuery } from "@dailybrief/shared";
 import { useId, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Feedback } from "@/components/Feedback";
@@ -11,8 +11,6 @@ import { Field } from "@/components/Field";
 import { NativeSelect } from "@/components/ui/native-select";
 import { IconButton } from "@/components/IconButton";
 import { Pencil, Trash2, Play, ExternalLink, ChevronLeft, ChevronRight } from "lucide-react";
-import { EditSourceForm } from "./EditSourceForm";
-import { Modal } from "@/components/Modal";
 import { ConfirmDelete } from "@/components/ConfirmDelete";
 export function SourceList({
   sources,
@@ -35,8 +33,6 @@ export function SourceList({
 }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [editingId, setEditingId] = useState("");
-  const [helpBusyId, setHelpBusyId] = useState("");
   const [message, setMessage] = useState("");
   const statusId = useId();
   const {
@@ -55,29 +51,7 @@ export function SourceList({
     try {
       await sourcesApi.remove(source.id);
       await onChanged?.();
-      setEditingId((previous) => (previous === source.id ? "" : previous));
       setMessage("Source supprimée.");
-    } finally {
-      setBusy("");
-    }
-  }
-  async function updateSource(
-    source: Source,
-    url: string,
-    config?: ScrapingConfig,
-    articleLinkSelector?: string | null,
-  ) {
-    if (busy) return;
-    setBusy(source.id);
-    setError("");
-    setMessage("");
-    try {
-      await sourcesApi.update(source.id, url, config, articleLinkSelector);
-      await onChanged?.();
-      setEditingId("");
-      setMessage("Source modifiée.");
-    } catch (error) {
-      setError(errorMessage(error));
     } finally {
       setBusy("");
     }
@@ -99,7 +73,7 @@ export function SourceList({
   }
   return (
     <div className="space-y-5">
-      <Feedback message={editingId ? "" : error} error />
+      <Feedback message={error} error />
       <Feedback message={message} />
       {controls && (
         <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_14rem]">
@@ -191,51 +165,21 @@ export function SourceList({
                     </IconButton>
                     {onChanged && (
                       <>
-                        <Modal
-                          open={editingId === source.id}
-                          onOpenChange={(open) => {
-                            setEditingId(open ? source.id : "");
-                            setError("");
-                            setMessage("");
-                          }}
-                          busy={!!busy || helpBusyId === source.id}
-                          title={
-                            source.type === "RSS"
-                              ? "Modifier le flux RSS"
-                              : "Modifier la source de scraping"
-                          }
-                          description={source.url}
-                          trigger={
-                            <IconButton
-                              tooltip="Modifier la source"
-                              disabled={pending}
-                              aria-label={`Modifier ${source.url}`}
-                            >
-                              <Pencil aria-hidden="true" />
-                            </IconButton>
-                          }
+                        <IconButton
+                          tooltip="Modifier la source"
+                          aria-label={`Modifier ${source.url}`}
+                          asChild
                         >
-                          <EditSourceForm
-                            key={source.id}
-                            source={source}
-                            busy={!!busy}
-                            onBlockingChange={(blocked) =>
-                              setHelpBusyId((current) =>
-                                blocked ? source.id : current === source.id ? "" : current,
-                              )
-                            }
-                            onSave={(url, config, articleLinkSelector) =>
-                              updateSource(source, url, config, articleLinkSelector)
-                            }
-                            onCancel={() => {
-                              setEditingId("");
-                              setError("");
+                          <Link
+                            to={`/sources/edit/${source.type.toLowerCase()}/${encodeURIComponent(source.id)}`}
+                            aria-disabled={pending || undefined}
+                            onClick={(event) => {
+                              if (pending) event.preventDefault();
                             }}
-                          />
-                          <div className="mt-4">
-                            <Feedback message={error} error />
-                          </div>
-                        </Modal>
+                          >
+                            <Pencil aria-hidden="true" />
+                          </Link>
+                        </IconButton>
                         <ConfirmDelete
                           itemType={
                             source.type === "RSS" ? "ce flux RSS" : "cette source de scraping"

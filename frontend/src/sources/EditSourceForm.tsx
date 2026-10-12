@@ -22,7 +22,6 @@ export function EditSourceForm({
   busy,
   onSave,
   onCancel,
-  onBlockingChange,
 }: {
   source: Source;
   busy: boolean;
@@ -32,7 +31,6 @@ export function EditSourceForm({
     articleLinkSelector?: string | null,
   ) => Promise<void>;
   onCancel: () => void;
-  onBlockingChange?: (blocked: boolean) => void;
 }) {
   const [url, setUrl] = useState(source.url);
   const [articleLinkSelector, setArticleLinkSelector] = useState(source.articleLinkSelector ?? "");
@@ -162,7 +160,6 @@ export function EditSourceForm({
         url={url}
         disabled={busy || testing}
         onBusyChange={setAssistanceBusy}
-        onPendingChange={(pending) => onBlockingChange?.(pending === "help")}
         onStart={() => {
           setPreview(null);
           setError("");

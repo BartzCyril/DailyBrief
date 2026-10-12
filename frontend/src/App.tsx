@@ -31,6 +31,9 @@ const SettingsPage = lazy(() =>
 const NewSourcePage = lazy(() =>
   import("./pages/NewSourcePage").then((module) => ({ default: module.NewSourcePage })),
 );
+const EditSourcePage = lazy(() =>
+  import("./pages/EditSourcePage").then((module) => ({ default: module.EditSourcePage })),
+);
 const SourceWorkflowPage = lazy(() =>
   import("./pages/SourceWorkflowPage").then((module) => ({ default: module.SourceWorkflowPage })),
 );
@@ -60,6 +63,11 @@ export function App() {
               <Route path="/jobs" element={<JobsPage />} />
               <Route path="/sources/new/rss" element={<NewSourcePage />} />
               <Route path="/sources/new/scraping" element={<NewSourcePage scraping />} />
+              <Route path="/sources/edit/rss/:sourceId" element={<EditSourcePage />} />
+              <Route
+                path="/sources/edit/scraping/:sourceId"
+                element={<EditSourcePage scraping />}
+              />
               <Route path="/sources/:sourceId/workflow" element={<SourceWorkflowPage />} />
             </Route>
           </Route>

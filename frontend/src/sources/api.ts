@@ -44,6 +44,8 @@ export const sourcesApi = {
     params.set("page", String(query.page ?? 1));
     return api<SourcePage>(`/sources?${params}`, { signal });
   },
+  get: (id: string, signal?: AbortSignal) =>
+    api<Source>(`/sources/${encodeURIComponent(id)}`, { signal }),
   remove: (id: string) => api<void>(`/sources/${id}`, { method: "DELETE" }),
   testRss: (url: string, articleLinkSelector?: string | null) =>
     api<SourcePreview>("/sources/rss/test", {

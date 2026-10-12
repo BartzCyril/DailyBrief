@@ -2,7 +2,9 @@ import { useState } from "react";
 import { beforeEach, expect, test, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
+import { EditSourcePage } from "../pages/EditSourcePage";
+import { NavigationFeedback } from "../components/NavigationFeedback";
 import type { Source } from "@dailybrief/shared";
 import { SourceList } from "../sources/SourceList";
 import { sourcesApi } from "../sources/api";
@@ -80,16 +82,40 @@ const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       });
     return new Response(null, { status: 204 });
   }
+  const sourceId = url.match(/\/sources\/([^/?]+)$/)?.[1];
+  if (sourceId) {
+    const source = stored.find((item) => item.id === sourceId);
+    return new Response(JSON.stringify(source ?? { message: "Source introuvable." }), {
+      status: source ? 200 : 404,
+    });
+  }
   return new Response(JSON.stringify(sourcePageFixture(stored, url)));
 });
-function Harness() {
+function ListPage() {
   const [sources, setSources] = useState(stored);
   return (
-    <MemoryRouter>
+    <>
+      <NavigationFeedback />
       <SourceList
         sources={sources}
         onChanged={async () => setSources((await sourcesApi.list()).sources)}
       />
+    </>
+  );
+}
+function Location() {
+  const location = useLocation();
+  return <output data-testid="location">{location.pathname + location.search}</output>;
+}
+function Harness({ path = "/sources" }: { path?: string }) {
+  return (
+    <MemoryRouter initialEntries={[path]}>
+      <Location />
+      <Routes>
+        <Route path="/sources" element={<ListPage />} />
+        <Route path="/sources/edit/rss/:sourceId" element={<EditSourcePage />} />
+        <Route path="/sources/edit/scraping/:sourceId" element={<EditSourcePage scraping />} />
+      </Routes>
     </MemoryRouter>
   );
 }
@@ -101,15 +127,65 @@ beforeEach(() => {
   fetcher.mockClear();
   vi.stubGlobal("fetch", fetcher);
 });
+async function openEdit(source: Source, ui = userEvent.setup()) {
+  await ui.click(screen.getByRole("link", { name: `Modifier ${source.url}` }));
+  const input = await screen.findByLabelText(
+    source.type === "RSS" ? "URL du flux RSS" : "URL du site",
+  );
+  expect(input).toHaveValue(source.url);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByTestId("location")).toHaveTextContent(
+    `/sources/edit/${source.type.toLowerCase()}/${source.id}`,
+  );
+  fetcher.mockClear();
+  return input;
+}
 async function edit(source: Source, nextUrl: string) {
   const ui = userEvent.setup();
-  await ui.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
-  const input = screen.getByLabelText(source.type === "RSS" ? "URL du flux RSS" : "URL du site");
-  expect(input).toHaveValue(source.url);
+  const input = await openEdit(source, ui);
   await ui.clear(input);
   await ui.type(input, nextUrl);
   return ui;
 }
+test.each([rss, scraping])(
+  "loads a prefilled $type edit page directly and returns to its tab",
+  async (source) => {
+    render(<Harness path={`/sources/edit/${source.type.toLowerCase()}/${source.id}`} />);
+    const input = await screen.findByLabelText(
+      source.type === "RSS" ? "URL du flux RSS" : "URL du site",
+    );
+    expect(input).toHaveValue(source.url);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(fetcher.mock.calls[0]?.[0]).toBe(`/api/sources/${source.id}`);
+    expect(screen.getByRole("link", { name: "Aide à la configuration ↗" })).toHaveAttribute(
+      "href",
+      source.type === "RSS" ? "/documentation#rss" : "/documentation#scraping",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Annuler" }));
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      source.type === "RSS" ? "/sources" : "/sources?type=scraping",
+    );
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+  },
+);
+test("corrects the edit route when its type does not match the saved source", async () => {
+  render(<Harness path="/sources/edit/rss/s2" />);
+  expect(await screen.findByLabelText("URL du site")).toHaveValue(scraping.url);
+  expect(screen.getByTestId("location")).toHaveTextContent("/sources/edit/scraping/s2");
+  expect(screen.queryByLabelText("URL du flux RSS")).not.toBeInTheDocument();
+});
+test("handles a missing source and lets the user retry or return to the list", async () => {
+  render(<Harness path="/sources/edit/scraping/missing" />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Source introuvable.");
+  expect(
+    screen.queryByRole("button", { name: "Enregistrer les modifications" }),
+  ).not.toBeInTheDocument();
+  stored = [{ ...scraping, id: "missing" }];
+  await userEvent.click(screen.getByRole("button", { name: "Réessayer" }));
+  expect(await screen.findByLabelText("URL du site")).toHaveValue(scraping.url);
+  await userEvent.click(screen.getByRole("link", { name: "← Retour aux sources" }));
+  expect(screen.getByTestId("location")).toHaveTextContent("/sources?type=scraping");
+});
 test("edits an RSS URL in place, refreshes the list and preserves the disabled source", async () => {
   render(<Harness />);
   const ui = await edit(rss, "https://example.com/new-feed");
@@ -139,7 +215,7 @@ test("edits a scraping URL without replacing its extraction configuration", asyn
 test.each([rss, scraping])("does not expose source ordering for $type", async (source) => {
   stored = [source];
   render(<Harness />);
-  await userEvent.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
+  await openEdit(source);
   expect(
     screen.queryByRole("switch", { name: "Articles du plus récent au plus ancien" }),
   ).toBeNull();
@@ -176,7 +252,8 @@ test("keeps the edited value and old source on a save error, allowing retry", as
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("déjà cette URL");
   expect(screen.getByLabelText("URL du flux RSS")).toHaveValue("https://example.com/taken");
-  expect(screen.getByRole("dialog")).toHaveTextContent(rss.url);
+  expect(screen.getByRole("heading", { name: "Modifier le flux RSS" })).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   serverError = "";
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   expect(await screen.findByText("Source modifiée.")).toBeInTheDocument();
@@ -220,18 +297,16 @@ test("supports changing a pagination template with validation of its page placeh
     },
   });
 });
-test("disables competing edits and activation while the URL is being verified", async () => {
+test("disables the form while the URL is being verified", async () => {
   pauseSave = true;
   render(<Harness />);
   const ui = await edit(rss, "https://example.com/new-feed");
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   expect(screen.getByLabelText("URL du flux RSS")).toBeDisabled();
   expect(screen.getByRole("button", { name: "Annuler" })).toBeDisabled();
-  expect(
-    screen.getByRole("button", { name: `Modifier ${scraping.url}`, hidden: true }),
-  ).toBeDisabled();
-  for (const control of screen.getAllByRole("switch", { hidden: true }))
-    expect(control).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Vérification et enregistrement…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Tester" })).toBeDisabled();
+  expect(screen.queryByRole("link", { name: `Modifier ${scraping.url}` })).not.toBeInTheDocument();
   pending!(new Response(null, { status: 204 }));
   await screen.findByText("Source modifiée.");
 });
@@ -248,7 +323,7 @@ test("prefills every scraping field and saves selector and mode changes without 
   ];
   render(<Harness />);
   const ui = userEvent.setup();
-  await ui.click(screen.getByRole("button", { name: `Modifier ${scraping.url}` }));
+  await openEdit(scraping, ui);
   expect(screen.getByLabelText("Sélecteur des articles")).toHaveValue("article");
   expect(screen.getByLabelText("Sélecteur du titre")).toHaveValue("h2");
   expect(screen.getByLabelText("Sélecteur du lien")).toHaveValue("a");
@@ -282,7 +357,7 @@ test("prefills every scraping field and saves selector and mode changes without 
     mode: "SCROLL",
     scroll: { maxScrolls: 0, waitAfterScrollMs: 250 },
   });
-  await ui.click(screen.getByRole("button", { name: `Modifier ${scraping.url}` }));
+  await openEdit(scraping, ui);
   expect(screen.getByLabelText("Nombre maximum de scrolls")).toHaveValue(0);
   expect(screen.getByLabelText("Attente après un scroll (ms)")).toHaveValue(250);
   await ui.click(screen.getByRole("combobox", { name: "Mode de récupération" }));
@@ -350,7 +425,7 @@ test("prefills and edits load-more fields, then drops them when changing modes",
   stored = [source];
   render(<Harness />);
   const ui = userEvent.setup();
-  await ui.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
+  await openEdit(source, ui);
   expect(screen.getByLabelText("Sélecteur du bouton")).toHaveValue(".more");
   expect(screen.getByLabelText("Délai maximum après un clic (ms)")).toHaveValue(25000);
   await ui.clear(screen.getByLabelText("Sélecteur du bouton"));
@@ -364,7 +439,7 @@ test("prefills and edits load-more fields, then drops them when changing modes",
     buttonSelector: "#next",
     waitTimeoutMs: 25000,
   });
-  await ui.click(screen.getByRole("button", { name: `Modifier ${source.url}` }));
+  await openEdit(source, ui);
   expect(screen.getByLabelText("Sélecteur du bouton")).toHaveValue("#next");
   await ui.click(screen.getByRole("combobox", { name: "Mode de récupération" }));
   await ui.click(screen.getByRole("option", { name: "Pagination" }));
@@ -385,9 +460,9 @@ test("confirms RSS deletion, permits cancellation and refreshes the list after d
   await ui.click(within(dialog).getByRole("button", { name: "Annuler" }));
   expect(remove).toHaveFocus();
   expect(screen.getByText(rss.url)).toBeInTheDocument();
-  await ui.click(screen.getByRole("button", { name: `Modifier ${rss.url}` }));
+  await openEdit(rss, ui);
   await ui.click(screen.getByRole("button", { name: "Annuler" }));
-  await ui.click(remove);
+  await ui.click(screen.getByRole("button", { name: `Supprimer ${rss.url}` }));
   await ui.click(
     within(screen.getByRole("alertdialog")).getByRole("button", { name: "Supprimer" }),
   );
@@ -425,8 +500,8 @@ test("blocks competing changes and closing the dialog while deletion is pending"
   expect(within(dialog).getByRole("button", { name: "Suppression en cours…" })).toBeDisabled();
   for (const source of [rss, scraping]) {
     expect(
-      screen.getByRole("button", { name: `Modifier ${source.url}`, hidden: true }),
-    ).toBeDisabled();
+      screen.getByRole("link", { name: `Modifier ${source.url}`, hidden: true }),
+    ).toHaveAttribute("aria-disabled", "true");
     expect(
       screen.getByRole("button", { name: `Supprimer ${source.url}`, hidden: true }),
     ).toBeDisabled();
@@ -444,7 +519,7 @@ test("prefills, updates and clears the RSS document selector while keeping the U
   stored = [{ ...rss, articleLinkSelector: "a.primarydoc" }, scraping];
   render(<Harness />);
   const ui = userEvent.setup();
-  await ui.click(screen.getByRole("button", { name: `Modifier ${rss.url}` }));
+  await openEdit(rss, ui);
   const field = screen.getByLabelText("Sélecteur du lien vers l'article (facultatif)");
   expect(field).toHaveValue("a.primarydoc");
   expect(screen.getByRole("button", { name: "Enregistrer les modifications" })).toBeDisabled();
@@ -456,7 +531,7 @@ test("prefills, updates and clears the RSS document selector while keeping the U
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   await screen.findByText("Source modifiée.");
   expect(stored[0]?.articleLinkSelector).toBe("a.document");
-  await ui.click(screen.getByRole("button", { name: `Modifier ${rss.url}` }));
+  await openEdit(rss, ui);
   await ui.clear(screen.getByLabelText("Sélecteur du lien vers l'article (facultatif)"));
   await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
   await screen.findByText("Source modifiée.");

@@ -511,8 +511,10 @@ filtre sur les sources actives ou inactives. Les URL ouvrent directement le site
 les points verts et rouges indiquent le statut, et les actions utilisent des icônes
 avec infobulles. Le bouton d'ajout et le retour après création suivent le type de source.
 
-Dans « Sources », le bouton « Modifier » ouvre une modale avec les mêmes champs que la création,
-préremplis avec les valeurs enregistrées : URL pour un flux RSS ; URL, sélecteurs
+Dans « Sources », l’icône « Modifier » ouvre une page dédiée avec la même présentation et les mêmes champs que la création :
+`/sources/edit/rss/{id}` pour un flux RSS et `/sources/edit/scraping/{id}` pour une source de scraping.
+Ces pages fonctionnent aussi par accès direct ou après rechargement. Les champs sont
+préremplis avec les valeurs enregistrées : URL et sélecteur de lien facultatif pour un flux RSS ; URL, sélecteurs
 d'articles, de titre, de lien et de date, mode de récupération,
 paramètres de scroll, de pagination ou du bouton de chargement pour une source de scraping.
 « Tester » affiche un aperçu sans modifier la source ni enregistrer d'articles.
@@ -523,7 +525,8 @@ Les sélecteurs et l'accès réseau restent vérifiés. « Tester », le workflo
 et la collecte continuent à parcourir toutes les pages, effectuer les scrolls configurés
 ou cliquer sur le bouton jusqu'à la fin des articles.
 Une erreur de récupération ou une adresse déjà utilisée laisse la source existante
-inchangée. « Annuler » ferme le formulaire sans enregistrer.
+inchangée. « Annuler » et « Retour aux sources » reviennent à l’onglet RSS ou SCRAPING
+sans enregistrer. Une sauvegarde réussie revient au même onglet avec une notification.
 
 L'identifiant, les articles existants et l'état actif ou inactif sont conservés.
 Le sélecteur de date est obligatoire lors de la création,

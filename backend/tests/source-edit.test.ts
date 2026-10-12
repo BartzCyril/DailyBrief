@@ -60,6 +60,43 @@ describe("source URL editing", () => {
     await db.user.delete({ where: { id: userId } });
   });
   const patch = (body: object) => agent.patch(`/sources/${sourceId}`).send(body);
+  test("loads a single source for editing without fetching content or exposing another user's source", async () => {
+    const response = await agent.get(`/sources/${sourceId}`);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      id: sourceId,
+      url: "https://fixture.example/feed",
+      type: "RSS",
+      enabled: false,
+      scrapingConfig: null,
+      articleLinkSelector: null,
+      newestFirst: true,
+    });
+    expect((await request(app).get(`/sources/${sourceId}`)).status).toBe(401);
+    expect((await agent.get("/sources/missing")).status).toBe(404);
+    const other = await db.user.create({
+      data: { email: `read-${randomUUID()}@example.com`, passwordHash: "unused" },
+    });
+    try {
+      const privateSource = await db.source.create({
+        data: {
+          userId: other.id,
+          type: "SCRAPING",
+          url: "https://fixture.example/private",
+          scrapingConfig,
+        },
+      });
+      const denied = await agent.get(`/sources/${privateSource.id}`);
+      expect(denied.status).toBe(404);
+      expect(denied.body.code).toBe("SOURCE_NOT_FOUND");
+      expect(JSON.stringify(denied.body)).not.toContain(privateSource.url);
+    } finally {
+      await db.user.delete({ where: { id: other.id } });
+    }
+    await db.source.update({ where: { id: sourceId }, data: { type: "SCRAPING", scrapingConfig } });
+    expect((await agent.get(`/sources/${sourceId}`)).body.scrapingConfig).toEqual(scrapingConfig);
+    expect(requests).toHaveLength(0);
+  });
   test("validates an RSS URL and updates the existing source without changing its history or disabled state", async () => {
     const article = await db.article.create({
       data: {

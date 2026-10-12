@@ -315,6 +315,10 @@ try {
         pageSize: 5,
       });
     }
+    if (/^\/sources\/[^/]+$/.test(path)) {
+      const source = sources.find((item) => item.id === path.split("/").at(-1));
+      return source ? respond(source) : respond({ message: "Source introuvable." }, 404);
+    }
     if (path === "/journals")
       return respond({ journals, lastInventoriedAt: day, unresolvedCount: 0 });
     if (path === `/dailybrief/${brief.id}/articles`) {
@@ -383,6 +387,11 @@ try {
   await page.getByRole("button", { name: "Demander de l'aide" }).waitFor();
   await page.getByText("L'analyse n'a pas pu remplir les sélecteurs.", { exact: true }).waitFor();
   await capture(page, "assistance", page.locator("body"), true);
+  await page.goto(`${origin}/sources?type=scraping`);
+  const scrapingSource = sources.find((source) => source.type === "SCRAPING")!;
+  await page.getByRole("link", { name: `Modifier ${scrapingSource.url}`, exact: true }).click();
+  await page.getByLabel("URL du site").waitFor();
+  await capture(page, "source-edit");
   await page.goto(`${origin}/journals`);
   await page.getByText("www.lemonde.fr", { exact: true }).waitFor();
   await capture(page, "journaux");
@@ -429,8 +438,6 @@ try {
   await summaryDialog.getByRole("heading", { name: "Points clés", exact: true }).waitFor();
   await capture(page, "resume", summaryDialog);
   await page.keyboard.press("Escape");
-  await writeFile(resolve(output, "screenshots.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-
   // Exercise the authenticated shell and table/form widths, including narrow phones.
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -442,6 +449,8 @@ try {
       "/jobs",
       "/sources/new/rss",
       "/sources/new/scraping",
+      "/sources/edit/rss/rss-bibliotheque",
+      `/sources/edit/scraping/${scrapingSource.id}`,
     ]) {
       await page.goto(`${origin}${path}`);
       await page.locator("main h1").waitFor();
@@ -455,6 +464,10 @@ try {
         await page.getByText("www.lemonde.fr", { exact: true }).waitFor();
       else if (path === "/jobs")
         await page.getByText("1–5 sur 15 articles", { exact: true }).waitFor();
+      else if (path.startsWith("/sources/edit/"))
+        await page
+          .getByLabel(path.includes("/scraping/") ? "URL du site" : "URL du flux RSS")
+          .waitFor();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
       if (overflow) throw new Error(`Débordement de l’espace utilisateur : ${path} à ${width}px`);
       if (path === "/settings") {
@@ -563,6 +576,8 @@ try {
   await page.getByRole("link", { name: "Créer ma veille", exact: true }).first().click();
   await page.getByRole("heading", { name: "Créer votre compte" }).waitFor();
   if (errors.length) throw new Error(errors.join("\n"));
+  // Updating the imported manifest can trigger Vite's reload; do it after browser checks.
+  await writeFile(resolve(output, "screenshots.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(
     `Espace utilisateur, accueil et guide vérifiés à 1440, 768, 390 et 320px. Navigation, sélecteurs, ancres, recherche et clavier vérifiés. ${requests} requêtes API simulées, aucun envoi réel.`,
   );

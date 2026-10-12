@@ -14,7 +14,6 @@ import { ScrapingForm } from "../sources/ScrapingForm";
 import { EditSourceForm } from "../sources/EditSourceForm";
 import { JournalTable } from "../sources/JournalTable";
 import { SelectorAssistance } from "../sources/SelectorAssistance";
-import { SourceList } from "../sources/SourceList";
 
 const config: ScrapingConfig = {
   articleSelector: ".news-card",
@@ -615,7 +614,7 @@ test("protects the journal modal while its explicitly requested help email is be
   expect(screen.getByRole("button", { name: "Annuler" })).toBeEnabled();
 });
 
-test("blocks closing a source modal during help delivery and unlocks it after SMTP fails", async () => {
+test("disables source editing during help delivery and unlocks it after SMTP fails", async () => {
   let fail: ((reason: Error) => void) | undefined;
   vi.stubGlobal(
     "fetch",
@@ -631,30 +630,27 @@ test("blocks closing a source modal during help delivery and unlocks it after SM
   );
   const user = userEvent.setup();
   render(
-    <SourceList
-      sources={[
-        {
-          id: "source-smtp",
-          type: "RSS",
-          url: "https://example.com/feed",
-          enabled: true,
-          scrapingConfig: null,
-        },
-      ]}
-      onChanged={vi.fn()}
+    <EditSourceForm
+      source={{
+        id: "source-smtp",
+        type: "RSS",
+        url: "https://example.com/feed",
+        enabled: true,
+        scrapingConfig: null,
+      }}
+      busy={false}
+      onSave={vi.fn()}
+      onCancel={vi.fn()}
     />,
     { wrapper: MemoryRouter },
   );
-  await user.click(screen.getByRole("button", { name: "Modifier https://example.com/feed" }));
   await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
   await user.click(await screen.findByRole("button", { name: "Demander de l'aide" }));
-  expect(screen.getByRole("button", { name: "Fermer la fenêtre" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Annuler" })).toBeDisabled();
   await user.keyboard("{Escape}");
-  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   await act(async () => fail?.(new Error("SMTP unavailable")));
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Connexion impossible"));
-  expect(screen.getByRole("button", { name: "Fermer la fenêtre" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Annuler" })).toBeEnabled();
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

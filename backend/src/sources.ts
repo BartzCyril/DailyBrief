@@ -25,6 +25,15 @@ const sourceListSchema = z
   })
   .strict();
 const sourcePageSize = 5;
+const sourceSelect = {
+  id: true,
+  url: true,
+  type: true,
+  enabled: true,
+  scrapingConfig: true,
+  articleLinkSelector: true,
+  newestFirst: true,
+} as const;
 export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService) {
   const router = Router();
   router.use(requireAuth);
@@ -56,21 +65,21 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
           orderBy: [{ createdAt: "desc" }, { id: "desc" }],
           skip: (page - 1) * sourcePageSize,
           take: sourcePageSize,
-          select: {
-            id: true,
-            url: true,
-            type: true,
-            enabled: true,
-            scrapingConfig: true,
-            articleLinkSelector: true,
-            newestFirst: true,
-          },
+          select: sourceSelect,
         });
         return { sources, total, page, pageSize: sourcePageSize };
       },
       { isolationLevel: "RepeatableRead" },
     );
     res.json(result);
+  });
+  router.get("/:id", async (req, res) => {
+    const source = await db.source.findFirst({
+      where: { id: String(req.params.id), userId: req.session.userId! },
+      select: sourceSelect,
+    });
+    if (!source) throw new AppError(404, "Source introuvable.", "SOURCE_NOT_FOUND");
+    res.json(source);
   });
   router.post("/scraping/test", async (req, res) => {
     const input = z

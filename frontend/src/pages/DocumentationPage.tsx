@@ -258,6 +258,21 @@ export function DocumentationPage() {
               alt="Liste des sources RSS avec onglets, recherche, filtre et icônes d’action"
               caption="Les onglets RSS et SCRAPING séparent les sources. Chaque page affiche jusqu’à 5 sources, avec recherche, filtre et actions."
             />
+            <h3>Modifier une source existante</h3>
+            <p>
+              Cliquez sur l’icône crayon dans le tableau. Une page dédiée s’ouvre avec les mêmes
+              champs qu’à la création, préremplis avec vos réglages. Vous pouvez utiliser l’aide IA
+              et tester les changements avant de cliquer sur <b>Enregistrer les modifications</b>.
+              Le bouton reste désactivé tant que vous n’avez rien changé. Après l’enregistrement,
+              vous retrouvez l’onglet RSS ou SCRAPING. <b>Annuler</b> et <b>Retour aux sources</b>
+              permettent de revenir sans enregistrer.
+            </p>
+            <Screenshot
+              name="source-edit"
+              height={500}
+              alt="Page de modification d’une source de scraping, avec les réglages préremplis et les boutons de test et d’enregistrement"
+              caption="La création et la modification utilisent la même présentation. La page de modification reste accessible après rechargement."
+            />
             <Tip title="Prenez le temps de vérifier le premier aperçu">
               <p>
                 Le test d’une source sert à vérifier sa configuration. Le bouton Récupérer

@@ -403,7 +403,7 @@ try {
   await page.getByRole("button", { name: "Enregistrer le flux" }).click();
   await page.waitForURL("**/sources");
   await page
-    .getByRole("button", { name: "Modifier https://fixture.example/feed", exact: true })
+    .getByRole("link", { name: "Modifier https://fixture.example/feed", exact: true })
     .click();
   assert.equal(
     await page.getByLabel("Sélecteur du lien vers l'article (facultatif)").inputValue(),
@@ -465,8 +465,13 @@ try {
     orderBy: { id: "asc" },
   });
   await page
-    .getByRole("button", { name: "Modifier https://fixture.example/news", exact: true })
+    .getByRole("link", { name: "Modifier https://fixture.example/news", exact: true })
     .click();
+  await page.waitForURL("**/sources/edit/scraping/*");
+  await page.getByLabel("URL du site").waitFor();
+  await page.reload();
+  await page.getByLabel("URL du site").waitFor();
+  assert.equal(await page.getByLabel("URL du site").inputValue(), "https://fixture.example/news");
   await page.setViewportSize({ width: 390, height: 844 });
   assert(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -489,7 +494,7 @@ try {
     sourcesBeforeEdit.map((source) => source.scrapingConfig),
   );
   await page
-    .getByRole("button", { name: "Modifier https://fixture.example/updated-news", exact: true })
+    .getByRole("link", { name: "Modifier https://fixture.example/updated-news", exact: true })
     .click();
   await page.getByLabel("Sélecteur des articles", { exact: true }).fill("article");
   await page.getByLabel("Sélecteur du titre", { exact: true }).fill("h2:first-of-type");
@@ -1053,7 +1058,10 @@ try {
       .getByRole("tab", { name: sourceUrl === rssUrl ? "RSS" : "SCRAPING", exact: true })
       .click();
     for (const action of ["Modifier", "Supprimer"]) {
-      const button = page.getByRole("button", { name: `${action} ${sourceUrl}`, exact: true });
+      const button = page.getByRole(action === "Modifier" ? "link" : "button", {
+        name: `${action} ${sourceUrl}`,
+        exact: true,
+      });
       assert.equal(
         (await button.textContent())?.trim(),
         "",
@@ -1069,15 +1077,25 @@ try {
   await activation.and(page.locator('[aria-checked="false"]')).waitFor();
   assert.equal(await activation.evaluate((element) => getComputedStyle(element).cursor), "pointer");
   await page.screenshot({ path: "/tmp/dailybrief-source-actions-mobile.png", fullPage: true });
-  const rssEditTrigger = page.getByRole("button", { name: `Modifier ${rssUrl}`, exact: true });
+  const rssEditTrigger = page.getByRole("link", { name: `Modifier ${rssUrl}`, exact: true });
   await rssEditTrigger.focus();
   await page.keyboard.press("Enter");
-  await page.getByRole("dialog", { name: "Modifier le flux RSS", exact: true }).waitFor();
-  await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
-  // Radix restores focus after unmounting the dialog, on the next task.
-  await rssEditTrigger.and(page.locator(":focus")).waitFor();
-  assert(await rssEditTrigger.evaluate((element) => element === document.activeElement));
+  await page.waitForURL("**/sources/edit/rss/*");
+  await page.getByRole("heading", { name: "Modifier le flux RSS", exact: true }).waitFor();
+  assert.equal(
+    await page.getByRole("dialog").count(),
+    0,
+    "Source editing opens a page, not a modal",
+  );
+  assert.equal(await page.getByLabel("URL du flux RSS").inputValue(), rssUrl);
+  await page.reload();
+  await page.getByLabel("URL du flux RSS").waitFor();
+  assert.equal(await page.getByLabel("URL du flux RSS").inputValue(), rssUrl);
+  const cancelEdit = page.getByRole("button", { name: "Annuler", exact: true });
+  await cancelEdit.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForURL("**/sources");
+  await rssEditTrigger.waitFor();
   await page.getByRole("tab", { name: "SCRAPING", exact: true }).click();
   await page.getByRole("button", { name: `Supprimer ${scrapingUrl}`, exact: true }).click();
   assert(
@@ -1125,7 +1143,7 @@ try {
   );
   assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
   console.info(
-    "E2E passed: RSS, scraping and journal selector autofill through public Chromium and structured AI; failed AI help on explicit click only, SMTP retry, no credentials in AI, mobile and keyboard assistance; register, login, separate sources and journals navigation, modal journal addition and domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, simplified mobile journal settings with login URL before AI and credentials below, automatic connection verification and authenticated article reading with legacy subscriber settings, complete scraping settings editing and preview without changes to sources or articles, settings, Redis article jobs with progress restored after reload, mobile jobs monitoring, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
+    "E2E passed: RSS, scraping and journal selector autofill through public Chromium and structured AI; failed AI help on explicit click only, SMTP retry, no credentials in AI, mobile and keyboard assistance; register, login, separate sources and journals navigation, modal journal addition and domain editing, cancellation and confirmed deletion on mobile, persisted inventory counts and access settings, RSS notice-link creation and editing, publisher article extraction and links, simplified mobile journal settings with login URL before AI and credentials below, automatic connection verification and authenticated article reading with legacy subscriber settings, dedicated RSS and scraping edit pages restored on reload, complete scraping settings editing and preview without changes to sources or articles, settings, Redis article jobs with progress restored after reload, mobile jobs monitoring, live full-article collection, newsletter, idempotent retry, source workflow on a delivered article, repeat summary without production changes or email, mobile layout, icon-only source actions, pointer cursor when toggling activation, cancel and confirm deletion, empty sources list, logout. AI and SMTP use deterministic test transports.",
   );
 } finally {
   releaseSummary();
