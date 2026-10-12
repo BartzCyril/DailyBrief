@@ -621,6 +621,24 @@ avec `curl` ne garantit pas que le site accepte cette requête.
 Le statut final de la commande dépend de Chromium ; un échec du client HTTP
 simple reste informatif si le navigateur charge correctement la page.
 
+Si une source de scraping ne trouve aucun article, diagnostiquez ses sélecteurs avec
+le même navigateur que le formulaire. Les arguments sont, dans l'ordre : URL,
+sélecteur des articles, du titre, du lien, de la date, puis le bouton facultatif.
+Exemple avec les sélecteurs à vérifier pour la rubrique Patrimoine du Monde :
+
+```powershell
+npm run diagnose:scraping -- "https://www.lemonde.fr/patrimoine/" ".teaser" ".teaser__title" ".teaser__link" ".meta__date" "#js-more-teaser"
+```
+
+Cette commande affiche les nombres de blocs, titres, liens et éléments de date,
+la présence du bouton visible et les indices de protection/CAPTCHA ou de consentement.
+Elle ne clique pas sur le bouton, ne se connecte pas, n'appelle pas l'IA, ne modifie
+pas la base et n'envoie pas d'email. Les comptes décrivent le DOM réellement reçu ;
+ils ne prouvent pas que les dates sont interprétables ni que le bouton fonctionne.
+Le collecteur attend jusqu'à trois secondes supplémentaires sur la première page
+si les blocs d’articles ne sont pas encore présents après la navigation. Une protection reconnue
+sans article produit une erreur distincte, au lieu d'accuser les sélecteurs.
+
 Les confirmations et erreurs utilisent un Toaster commun sur toutes les pages et
 dans les modales. Les notifications sont fermables, accessibles au clavier et
 adaptées au mobile. Les avertissements d'aperçu et les erreurs des articles et jobs

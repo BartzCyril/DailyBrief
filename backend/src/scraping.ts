@@ -15,6 +15,8 @@ import { AppError, UpstreamHttpError } from "./errors";
 import { ConcurrencyLimiter } from "./concurrency";
 import { createHash } from "node:crypto";
 import { filterRecentArticles, type RecentArticleOptions } from "./recent-articles";
+import { inspectScrapingPage, type ScrapingPageDiagnostic } from "./scraping-diagnostics";
+import { logger } from "./logger";
 
 export function paginationUrl(url: string, config: ScrapingConfig, page: number): string {
   const pagination = config.pagination!;
@@ -129,14 +131,19 @@ export class ScrapingService {
   ): Promise<SourcePreview> {
     return this.scrape(url, input, false, options);
   }
-  async validateFirstPage(url: string, input: ScrapingConfig): Promise<void> {
-    await this.scrape(url, input, true);
+  async validateFirstPage(
+    url: string,
+    input: ScrapingConfig,
+    onDiagnostic?: (diagnostic: ScrapingPageDiagnostic) => void,
+  ): Promise<void> {
+    await this.scrape(url, input, true, undefined, onDiagnostic);
   }
   private async scrape(
     url: string,
     input: ScrapingConfig,
     firstPageOnly: boolean,
     options?: RecentArticleOptions,
+    onDiagnostic?: (diagnostic: ScrapingPageDiagnostic) => void,
   ): Promise<SourcePreview> {
     const config = scrapingSchema.parse(input);
     return this.limiter.run(async () => {
@@ -343,6 +350,38 @@ export class ScrapingService {
         }
         const articles: ArticlePreview[] = [];
         const warnings: string[] = [];
+        let initialDiagnostic: ScrapingPageDiagnostic | undefined;
+        const prepareInitialArticles = async () => {
+          let diagnostic = await inspectScrapingPage(page, config);
+          // Network idle does not guarantee that delayed JavaScript has populated the cards.
+          if (!diagnostic.articleBlocks && !diagnostic.pageProtection) {
+            try {
+              await page.waitForFunction(
+                (config) =>
+                  [...document.querySelectorAll(config.articleSelector)].some((block) =>
+                    block.querySelector(config.titleSelector)?.textContent?.trim(),
+                  ),
+                config,
+                { timeout: 3000 },
+              );
+            } catch (error) {
+              if (!(error instanceof errors.TimeoutError)) throw error;
+            }
+            diagnostic = await inspectScrapingPage(page, config);
+          }
+          initialDiagnostic = diagnostic;
+          logger.debug("scraping.page_inspected", "Sélecteurs vérifiés dans la page navigateur.", {
+            mode: config.mode,
+            ...diagnostic,
+          });
+          onDiagnostic?.(diagnostic);
+          if (!diagnostic.withTitle && diagnostic.pageProtection)
+            throw new AppError(
+              422,
+              "Le navigateur a reçu une page de protection ou un CAPTCHA au lieu de la liste d'articles. Les sélecteurs ne peuvent pas être vérifiés sur cette page.",
+              "SCRAPING_PAGE_BLOCKED",
+            );
+        };
         const readArticles = async () => {
           network?.assertWithinBudget();
           const entries = await extract(page, config, options?.window.timezone);
@@ -380,6 +419,7 @@ export class ScrapingService {
         };
         if (config.mode === "SCROLL") {
           await navigate(url);
+          await prepareInitialArticles();
           const initial = await readArticles();
           articles.push(...initial);
           let stop = reachedArchives(initial);
@@ -393,6 +433,7 @@ export class ScrapingService {
           }
         } else if (config.mode === "LOAD_MORE") {
           await navigate(url);
+          await prepareInitialArticles();
           const { buttonSelector, waitTimeoutMs } = config.loadMore!;
           try {
             await page.evaluate(
@@ -593,6 +634,7 @@ export class ScrapingService {
               }
               throw error;
             }
+            if (number === config.pagination!.startPage) await prepareInitialArticles();
             const entries = await readArticles();
             if (!entries.length) break;
             // Ignore ordering changes when a site repeats a page or cycles through
@@ -620,7 +662,9 @@ export class ScrapingService {
         if (!result.length)
           throw new AppError(
             422,
-            "Aucun article trouvé. Vérifiez les sélecteurs CSS.",
+            initialDiagnostic?.consentVisible
+              ? "Aucun article trouvé dans la page chargée par le navigateur. Une fenêtre de consentement est visible ; le site peut attendre un choix avant d'afficher les articles."
+              : "Aucun bloc d'article ne correspond au sélecteur des articles dans la page chargée par le navigateur. Vérifiez ce sélecteur et que le site affiche bien la rubrique attendue.",
             "EMPTY_SCRAPING",
           );
         const recent = options ? filterRecentArticles(result, options.window) : null;
