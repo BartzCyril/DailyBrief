@@ -22,6 +22,7 @@ import {
   type BrowserNetworkFactory,
 } from "./browser-network";
 import { articleUrl, RssService } from "./rss";
+import { dismissCookieConsent, consentPostAllowed } from "./cookie-consent";
 import {
   discoverArticleField,
   discoverLoadMore,
@@ -43,7 +44,7 @@ export type PublicSelectorPage = {
 };
 export type RenderSelectorPage = (
   url: string,
-  options?: { probeScroll?: boolean },
+  options?: { probeScroll?: boolean; cookieConsentSelector?: string },
 ) => Promise<PublicSelectorPage>;
 export type SelectorAnalysisDependencies = {
   client?: OllamaClient;
@@ -61,6 +62,7 @@ const scrapingCandidateSchema = z
     // Accept and ignore descriptions returned by older AI integrations.
     descriptionSelector: z.unknown().optional(),
     dateSelector: z.string().trim().max(200).nullish(),
+    cookieConsentSelector: selector.nullish(),
     mode: z.enum(["SCROLL", "PAGINATE", "LOAD_MORE"]).optional(),
     scroll: z
       .object({
@@ -236,7 +238,14 @@ export function compactSelectorDom(
     return true;
   };
   if (kind === "SCRAPING") {
-    budget = Math.floor(maxChars / 4);
+    // Consent overlays often sit outside <main>; keep their buttons in the AI snapshot.
+    budget = Math.floor(maxChars / 5);
+    for (const root of document.querySelectorAll(
+      '#didomi-notice, #didomi-popup, #onetrust-banner-sdk, [role="dialog"], [id*="cookie"], [class*="cookie-banner"]',
+    )) {
+      if (/cookie|consent|traceur/i.test(root.textContent ?? "") && !walk(root, 0)) break;
+    }
+    budget = Math.min(maxChars, length + Math.floor(maxChars / 4));
     for (const root of scrapingControlRoots(document)) if (!walk(root, 0)) break;
     budget = maxChars;
   }
@@ -252,7 +261,7 @@ export function selectorAnalysisPrompt(
 ): string {
   const task =
     input.kind === "SCRAPING"
-      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector, linkSelector et dateSelector sont RELATIFS à ce bloc. Ces quatre sélecteurs sont obligatoires dans la configuration finale. Cherche activement la date de publication, pas seulement le titre et le lien. Chaque sélecteur désigne un seul élément par bloc. La description est extraite automatiquement côté serveur : ne propose pas de descriptionSelector. Pour la date, repère time, son attribut datetime, une classe de date ou un texte de publication observé. Si aucune date n'est présente, retourne dateSelector:null sans inventer de date ni utiliser le titre comme date. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, sans :contains ni syntaxe Playwright. Inspecte AUSSI les contrôles de chargement prioritaires : PAGINATE pour des liens numérotés ou rel=next, avec strategy QUERY_PARAM pour ?page=2 ou URL_TEMPLATE pour /page/2 et {page} à la place du compteur. Ne confonds pas le numéro de catégorie ou l'identifiant d'article avec le compteur de page. Déduis startPage et les paramètres des liens observés, y compris les pages qui commencent à 0. LOAD_MORE pour un bouton explicite de nouveaux articles avec loadMore={"buttonSelector":"...","waitTimeoutMs":10000}. SCROLL si des articles supplémentaires ont été observés lors du scroll, avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}. Sans contrôle ni ajout observé, SCROLL reste un mode borné à vérifier, pas une preuve de scroll infini. N'invente aucun schéma de pagination. Observation du navigateur : ${page.scrollObserved ? "de nouveaux liens d'articles sont apparus au scroll" : "aucun ajout d'articles au scroll confirmé"}. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
+      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector, linkSelector et dateSelector sont RELATIFS à ce bloc. Ces quatre sélecteurs sont obligatoires dans la configuration finale. Cherche activement la date de publication, pas seulement le titre et le lien. Chaque sélecteur désigne un seul élément par bloc. La description est extraite automatiquement côté serveur : ne propose pas de descriptionSelector. Si une popup de cookies est visible, propose cookieConsentSelector pour un unique bouton de consentement explicite (Accepter, Refuser ou Continuer sans accepter). Ce sélecteur est global à la page, pas relatif aux articles. Ne confonds jamais consentement aux cookies, abonnement, connexion, achat ou CAPTCHA. S'il n'y a pas de popup ou pas de bouton observable, omets cookieConsentSelector : n'invente rien. Pour la date, repère time, son attribut datetime, une classe de date ou un texte de publication observé. Si aucune date n'est présente, retourne dateSelector:null sans inventer de date ni utiliser le titre comme date. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, sans :contains ni syntaxe Playwright. Inspecte AUSSI les contrôles de chargement prioritaires : PAGINATE pour des liens numérotés ou rel=next, avec strategy QUERY_PARAM pour ?page=2 ou URL_TEMPLATE pour /page/2 et {page} à la place du compteur. Ne confonds pas le numéro de catégorie ou l'identifiant d'article avec le compteur de page. Déduis startPage et les paramètres des liens observés, y compris les pages qui commencent à 0. LOAD_MORE pour un bouton explicite de nouveaux articles avec loadMore={"buttonSelector":"...","waitTimeoutMs":10000}. SCROLL si des articles supplémentaires ont été observés lors du scroll, avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}. Sans contrôle ni ajout observé, SCROLL reste un mode borné à vérifier, pas une preuve de scroll infini. N'invente aucun schéma de pagination. Observation du navigateur : ${page.scrollObserved ? "de nouveaux liens d'articles sont apparus au scroll" : "aucun ajout d'articles au scroll confirmé"}. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
       : input.kind === "RSS_LINK"
         ? `Cette page est une notice intermédiaire d'un item RSS. Trouve le lien principal « Consulter le document », « Lire l'article » ou équivalent vers le site du journal EXTERNE. Écarte partage social, publicité, menu, abonnement et autres documents. articleLinkSelector doit cibler exactement une balise a avec href HTTP(S), jamais le site de la notice. Retourne {"articleLinkSelector":"..."}.`
         : `Cette page est un formulaire de connexion PUBLIC. Repère l'input identifiant/email visible, l'input type=password et le bouton qui soumet ce même formulaire. Chaque sélecteur CSS doit cibler un unique élément visible. Utilise les attributs réellement observés, jamais un identifiant utilisateur. Ne tente aucune connexion. Aucun élément propre au compte connecté n'est observable: n'invente JAMAIS successSelector ou un sélecteur de contenu abonné. Retourne uniquement {"emailSelector":"...","passwordSelector":"...","submitSelector":"..."}.`;
@@ -273,7 +282,7 @@ export async function renderPublicSelectorPage(
   url: string,
   fetchPage?: FetchPage,
   createNetwork: BrowserNetworkFactory = () => BrowserNetwork.create(),
-  options: { probeScroll?: boolean } = {},
+  options: { probeScroll?: boolean; cookieConsentSelector?: string } = {},
 ): Promise<PublicSelectorPage> {
   return articleBrowserLimiter.run(async () => {
     let browser;
@@ -299,6 +308,7 @@ export async function renderPublicSelectorPage(
     let navigationError: AppError | undefined;
     let status: number | undefined;
     let navigations = 0;
+    let consentOrigins: ReadonlySet<string> = new Set();
     let rejectNavigation = (_error: unknown) => {};
     const navigationFailure = new Promise<never>((_resolve, reject) => {
       rejectNavigation = reject;
@@ -353,7 +363,10 @@ export async function renderPublicSelectorPage(
           page,
           network,
           (request) => {
-            if (request.method !== "GET")
+            if (
+              request.method !== "GET" &&
+              !consentPostAllowed(request.url, request.method, request.resourceType, consentOrigins)
+            )
               throw new AppError(400, "Cette requête de page n'est pas autorisée.", "UNSAFE_URL");
           },
           (error, request) => {
@@ -377,7 +390,13 @@ export async function renderPublicSelectorPage(
         const mainNavigation =
           request.isNavigationRequest() && request.frame() === page.mainFrame();
         if (
-          request.method() !== "GET" ||
+          (request.method() !== "GET" &&
+            !consentPostAllowed(
+              request.url(),
+              request.method(),
+              request.resourceType(),
+              consentOrigins,
+            )) ||
           ["image", "media", "font"].includes(request.resourceType())
         ) {
           await route.abort().catch(() => {});
@@ -393,6 +412,13 @@ export async function renderPublicSelectorPage(
             throw analysisError("La page boucle sur des redirections.", "REDIRECT_LIMIT");
           const headers = await request.allHeaders();
           const response = await fetchPage!(request.url(), {
+            ...(request.method() === "POST"
+              ? {
+                  method: "POST" as const,
+                  body: request.postData() ?? undefined,
+                  contentType: headers["content-type"],
+                }
+              : {}),
             userAgent: headers["user-agent"],
             cookie: headers.cookie,
             accept: headers.accept,
@@ -441,6 +467,14 @@ export async function renderPublicSelectorPage(
         })(),
         navigationFailure,
       ]);
+      if (navigationError) throw navigationError;
+      await dismissCookieConsent(page, options.cookieConsentSelector, {
+        waitForAppearance: true,
+        onAction: (origins) => {
+          consentOrigins = origins;
+          if (origins.size) network?.beginLoad();
+        },
+      });
       if (navigationError) throw navigationError;
       const scrollObserved = options.probeScroll
         ? await page.evaluate(async () => {
@@ -706,7 +740,13 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
                 "SELECTOR_NOTICE_UNAVAILABLE",
               );
         page = loaded;
-      } else page = await this.renderPage(input.url, { probeScroll: input.kind === "SCRAPING" });
+      } else
+        page = await this.renderPage(input.url, {
+          probeScroll: input.kind === "SCRAPING",
+          ...(input.kind === "SCRAPING" && input.cookieConsentSelector
+            ? { cookieConsentSelector: input.cookieConsentSelector }
+            : {}),
+        });
       signal?.throwIfAborted();
 
       if (input.kind === "JOURNAL_LOGIN") {
@@ -858,6 +898,12 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
             titleSelector: fields.titleSelector,
             linkSelector: fields.linkSelector,
             dateSelector,
+            ...(input.cookieConsentSelector || fields.cookieConsentSelector
+              ? {
+                  cookieConsentSelector:
+                    input.cookieConsentSelector || fields.cookieConsentSelector,
+                }
+              : {}),
             mode,
             ...(mode === "PAGINATE"
               ? { pagination: pagination ?? fields.pagination }
@@ -877,6 +923,36 @@ export class OllamaSelectorAnalysisProvider implements SelectorAnalysisProvider 
               502,
             );
           validateScraping(document, page.url, parsed.data);
+          if (!input.cookieConsentSelector && fields.cookieConsentSelector) {
+            const consent = unique(document, fields.cookieConsentSelector);
+            const label = [
+              consent.textContent,
+              consent.getAttribute("aria-label"),
+              consent.getAttribute("value"),
+            ].join(" ");
+            let cookieContext = false;
+            let ancestor: Element | null = consent;
+            for (let depth = 0; ancestor && ancestor !== document.body && depth < 5; depth++) {
+              cookieContext ||= /cookie|consent|traceur/i.test(
+                [ancestor.id, ancestor.className, ancestor.textContent?.slice(0, 4000)].join(" "),
+              );
+              ancestor = ancestor.parentElement;
+            }
+            if (
+              !consent.matches(
+                'button, input[type="button"], input[type="submit"], [role="button"], a[href]',
+              ) ||
+              !cookieContext ||
+              !/accept|accepte|accepter|refus|reject|decline|continuer sans|tout autoriser|^\s*ok\s*$/i.test(
+                label,
+              ) ||
+              /abonn|acheter|payer|subscribe|connexion|captcha/i.test(label)
+            )
+              throw analysisError(
+                "L'IA n'a pas identifié un bouton de consentement aux cookies fiable.",
+                "INVALID_SELECTOR_ANALYSIS",
+              );
+          }
           return {
             ...base,
             kind: input.kind,

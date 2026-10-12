@@ -7,6 +7,7 @@ export const scrapingSchema = z
     linkSelector: selector,
     descriptionSelector: selector.nullish(),
     dateSelector: selector.nullish(),
+    cookieConsentSelector: selector.nullish(),
     mode: z.enum(["SCROLL", "PAGINATE", "LOAD_MORE"]),
     loadMore: z
       .object({

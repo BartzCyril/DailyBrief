@@ -140,6 +140,37 @@ test("fills scraping fields and retrieval mode, invalidating an existing preview
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
 });
 
+test.each([undefined, "#new-consent"])(
+  "AI sends configured consent and preserves it unless a replacement is proposed: %s",
+  async (proposed) => {
+    const fetcher = vi.fn(async (_url: string, _init?: RequestInit) =>
+      json({
+        ...scrapingResult,
+        scrapingConfig: { ...config, ...(proposed ? { cookieConsentSelector: proposed } : {}) },
+      }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    render(<ScrapingForm />, { wrapper: MemoryRouter });
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("URL du site"), "https://example.com/news");
+    await user.type(
+      screen.getByLabelText("Sélecteur du bouton de cookies (facultatif)"),
+      "#accept-cookies",
+    );
+    await user.click(screen.getByRole("button", { name: "Remplir avec l'IA" }));
+    await screen.findByDisplayValue(".news-card");
+    expect(screen.getByLabelText("Sélecteur du bouton de cookies (facultatif)")).toHaveValue(
+      proposed || "#accept-cookies",
+    );
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      kind: "SCRAPING",
+      url: "https://example.com/news",
+      cookieConsentSelector: "#accept-cookies",
+    });
+    expect(screen.queryByRole("button", { name: "Demander de l'aide" })).toBeNull();
+  },
+);
+
 test.each([
   { mode: "SCROLL" as const, scroll: { maxScrolls: 2, waitAfterScrollMs: 900 } },
   {

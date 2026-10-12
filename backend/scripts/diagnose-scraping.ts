@@ -60,9 +60,18 @@ export async function diagnoseScraping(
   service = new ScrapingService(),
   output = defaultOutput,
 ): Promise<void> {
+  args = [...args];
+  const cookiesIndex = args.indexOf("--cookies");
+  let cookieConsentSelector: string | undefined;
+  if (cookiesIndex !== -1) {
+    cookieConsentSelector = args[cookiesIndex + 1];
+    if (!cookieConsentSelector || cookieConsentSelector.startsWith("--"))
+      throw new Error("Le paramètre --cookies attend le sélecteur CSS du bouton de consentement.");
+    args.splice(cookiesIndex, 2);
+  }
   if (args.length !== 5 && args.length !== 6)
     throw new Error(
-      "Utilisation : npm run diagnose:scraping -- URL ARTICLES TITRE LIEN DATE [BOUTON]",
+      "Utilisation : npm run diagnose:scraping -- URL ARTICLES TITRE LIEN DATE [BOUTON] [--cookies SELECTEUR]",
     );
   const [url, articleSelector, titleSelector, linkSelector, dateSelector, buttonSelector] =
     args as [string, string, string, string, string, string?];
@@ -71,6 +80,7 @@ export async function diagnoseScraping(
     titleSelector,
     linkSelector,
     dateSelector,
+    ...(cookieConsentSelector ? { cookieConsentSelector } : {}),
     ...(buttonSelector
       ? ({ mode: "LOAD_MORE", loadMore: { buttonSelector, waitTimeoutMs: 15000 } } as const)
       : ({ mode: "SCROLL", scroll: { maxScrolls: 0, waitAfterScrollMs: 100 } } as const)),

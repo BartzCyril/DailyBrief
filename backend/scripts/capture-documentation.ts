@@ -27,6 +27,7 @@ const titles = [
   "Les idées qui font avancer la culture",
 ];
 const scrapingConfig = {
+  cookieConsentSelector: "#didomi-notice-agree-button",
   articleSelector: ".article-card",
   titleSelector: "h2",
   linkSelector: "h2 a.title",

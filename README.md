@@ -539,6 +539,19 @@ Pour une pagination par modèle d'URL, conservez `{page}`. Son préfixe suit l'U
 si le modèle utilise cette adresse et n'a pas été modifié manuellement.
 Seul le propriétaire de la source peut la modifier.
 
+Le champ facultatif **Sélecteur du bouton de cookies** permet de choisir le bouton
+Accepter, Refuser ou Continuer sans accepter d'une popup de consentement.
+Exemple à vérifier sur le site : `#didomi-notice-agree-button`. Le sélecteur est global,
+y compris dans une iframe visible. Le navigateur clique dessus avant l'extraction,
+la validation de la source et l'analyse IA si le réglage est déjà renseigné.
+Le choix reste dans le même contexte navigateur pendant les pages de cette collecte.
+Une popup absente ne bloque pas la lecture ; plusieurs boutons correspondants ou
+une popup qui reste ouverte produisent une erreur explicite. L'IA peut proposer un
+bouton observé et vérifié ; elle conserve un réglage existant lorsque la popup a déjà
+disparu. Ce réglage est stocké dans `scrapingConfig` : aucune migration ni nouvelle
+variable d'environnement n'est nécessaire. Il ne résout pas une vérification CAPTCHA
+persistante, qui reste signalée séparément.
+
 Les actions « Modifier » (crayon) et « Supprimer » (corbeille) sont des icônes avec
 un libellé accessible et une infobulle. La corbeille ouvre une fenêtre de confirmation
 qui nomme le type : « Êtes-vous sûr de vouloir supprimer ce flux RSS ? » ou
@@ -629,6 +642,9 @@ Exemple avec les sélecteurs à vérifier pour la rubrique Patrimoine du Monde :
 ```powershell
 npm run diagnose:scraping -- "https://www.lemonde.fr/patrimoine/" ".teaser" ".teaser__title" ".teaser__link" ".meta__date" "#js-more-teaser"
 ```
+
+Ajoutez `--cookies "#didomi-notice-agree-button"` à cette commande pour tester aussi
+le bouton de consentement configuré. Adaptez le sélecteur au bouton réellement présent.
 
 Cette commande affiche les nombres de blocs, titres, liens et éléments de date,
 la présence du bouton visible et les indices de protection/CAPTCHA ou de consentement.

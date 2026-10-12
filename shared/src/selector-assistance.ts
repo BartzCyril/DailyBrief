@@ -1,7 +1,11 @@
 import type { ScrapingConfig } from "./index";
 
 export type SelectorAnalysisKind = "SCRAPING" | "RSS_LINK" | "JOURNAL_LOGIN";
-export type SelectorAnalysisInput = { kind: SelectorAnalysisKind; url: string };
+export type SelectorAnalysisInput = {
+  kind: SelectorAnalysisKind;
+  url: string;
+  cookieConsentSelector?: string;
+};
 type AnalysisDetails = {
   analyzedUrl: string;
   message: string;

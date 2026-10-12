@@ -74,6 +74,7 @@ const configurationNames: Record<SelectorAnalysisKind, string> = {
 
 const fieldNames: Record<SelectorAnalysisKind, Record<string, string>> = {
   SCRAPING: {
+    cookieConsentSelector: "Bouton de la popup de cookies (sélecteur CSS facultatif)",
     articleSelector: "Bloc répété contenant chaque article (sélecteur CSS)",
     titleSelector: "Titre, à l’intérieur de chaque bloc d’article (sélecteur CSS)",
     linkSelector: "Lien vers l’article, à l’intérieur de chaque bloc (sélecteur CSS)",

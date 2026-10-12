@@ -19,6 +19,7 @@ import { inspectScrapingPage, type ScrapingPageDiagnostic } from "./scraping-dia
 import { logger } from "./logger";
 import { readScrapingVerificationWait } from "./config";
 import { verificationPostAllowed } from "./verification-network";
+import { dismissCookieConsent, consentPostAllowed } from "./cookie-consent";
 
 export type ScrapingDiagnosticObserver = (
   diagnostic: ScrapingPageDiagnostic,
@@ -182,6 +183,7 @@ export class ScrapingService {
       let pendingLoads = 0;
       let attemptedLoads = 0;
       let verificationResources = false;
+      let consentOrigins: ReadonlySet<string> = new Set();
       const filteredResources = new Set<string>();
       const recordFilteredResource = (target: string, method: string, type: string) => {
         if (filteredResources.size < 10 && (method === "POST" || ["image", "font"].includes(type)))
@@ -191,10 +193,13 @@ export class ScrapingService {
       const scriptErrors = new Set<string>();
       const timer =
         config.mode === "SCROLL"
-          ? setTimeout(() => {
-              timedOut = true;
-              void context.close();
-            }, 45000 + this.verificationWaitMs)
+          ? setTimeout(
+              () => {
+                timedOut = true;
+                void context.close();
+              },
+              45000 + this.verificationWaitMs + (config.cookieConsentSelector ? 15000 : 0),
+            )
           : undefined;
       try {
         const page = await context.newPage();
@@ -219,15 +224,23 @@ export class ScrapingService {
                 verificationResources,
                 new URL(url).origin,
               );
+              const consentPost = consentPostAllowed(
+                request.url,
+                request.method,
+                request.resourceType,
+                consentOrigins,
+              );
               const post =
-                request.method === "POST" &&
-                (config.mode === "LOAD_MORE" || verificationPost) &&
-                ["xhr", "fetch"].includes(request.resourceType.toLowerCase());
+                consentPost ||
+                (request.method === "POST" &&
+                  (config.mode === "LOAD_MORE" || verificationPost) &&
+                  ["xhr", "fetch"].includes(request.resourceType.toLowerCase()));
               if (request.method !== "GET" && !post)
                 throw new AppError(400, "Cette requête de page n'est pas autorisée.", "UNSAFE_URL");
               if (
                 post &&
                 !verificationPost &&
+                !consentPost &&
                 new URL(request.url).origin !== new URL(page.url()).origin
               )
                 throw new AppError(
@@ -299,10 +312,17 @@ export class ScrapingService {
             verificationResources,
             new URL(url).origin,
           );
+          const consentPost = consentPostAllowed(
+            request.url(),
+            request.method(),
+            request.resourceType(),
+            consentOrigins,
+          );
           const post =
-            request.method() === "POST" &&
-            (config.mode === "LOAD_MORE" || verificationPost) &&
-            ajax;
+            consentPost ||
+            (request.method() === "POST" &&
+              (config.mode === "LOAD_MORE" || verificationPost) &&
+              ajax);
           if (
             (request.method() !== "GET" && !post) ||
             request.resourceType() === "media" ||
@@ -317,6 +337,7 @@ export class ScrapingService {
               if (
                 post &&
                 !verificationPost &&
+                !consentPost &&
                 new URL(request.url()).origin !== new URL(page.url()).origin
               ) {
                 recordFilteredResource(request.url(), request.method(), request.resourceType());
@@ -344,6 +365,7 @@ export class ScrapingService {
             if (
               post &&
               !verificationPost &&
+              !consentPost &&
               new URL(request.url()).origin !== new URL(page.url()).origin
             ) {
               recordFilteredResource(request.url(), request.method(), request.resourceType());
@@ -408,7 +430,24 @@ export class ScrapingService {
         const warnings: string[] = [];
         let initialDiagnostic: ScrapingPageDiagnostic | undefined;
         const prepareInitialArticles = async (initialPage = true) => {
+          const dismissCookies = async () => {
+            if (
+              await dismissCookieConsent(page, config.cookieConsentSelector, {
+                waitForAppearance: initialPage,
+                onAction: (origins) => {
+                  consentOrigins = origins;
+                  if (origins.size) network?.beginLoad();
+                },
+              })
+            )
+              logger.info(
+                "scraping.cookies.dismissed",
+                "Choix de cookies appliqué avant l'extraction.",
+              );
+          };
+          await dismissCookies();
           let diagnostic = await inspectScrapingPage(page, config);
+          const verificationEncountered = !diagnostic.withTitle && diagnostic.pageProtection;
           if (!diagnostic.withTitle && diagnostic.pageProtection && this.verificationWaitMs > 0) {
             const deadline = Date.now() + this.verificationWaitMs;
             logger.info(
@@ -489,6 +528,15 @@ export class ScrapingService {
                 ? "La vérification du navigateur persiste après l'attente."
                 : "La page de vérification n'empêche plus l'extraction.",
             );
+          }
+          // A consent popup may appear only after the verification completes.
+          if (
+            config.cookieConsentSelector &&
+            verificationEncountered &&
+            (!diagnostic.pageProtection || diagnostic.withTitle)
+          ) {
+            await dismissCookies();
+            diagnostic = await inspectScrapingPage(page, config);
           }
           // Network idle does not guarantee that delayed JavaScript has populated the cards.
           if (initialPage && !diagnostic.articleBlocks && !diagnostic.pageProtection) {

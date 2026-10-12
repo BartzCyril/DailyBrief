@@ -400,6 +400,17 @@ export function DocumentationPage() {
               alt="Source de scraping configurée avec les quatre sélecteurs requis et le mode Scroll infini"
               caption="Exemple : une carte .article-card contenant h2, un lien et time."
             />
+            <h3>Fermer une popup de cookies</h3>
+            <p>
+              Si une popup gêne la lecture, renseignez le champ facultatif{" "}
+              <b>Sélecteur du bouton de cookies</b>. Choisissez un seul bouton : Accepter, Refuser
+              ou Continuer sans accepter. Par exemple, <code>#didomi-notice-agree-button</code> peut
+              désigner le bouton Accepter d’une popup Didomi ; vérifiez-le sur votre site. Ce
+              sélecteur se cherche dans la page entière, y compris dans une iframe, plutôt que dans
+              chaque article. Le navigateur clique dessus avant le test et la collecte, puis
+              conserve ce choix pendant la récupération. L’aide IA réutilise aussi ce réglage pour
+              analyser la page. Laissez le champ vide si aucune popup ne gêne la lecture.
+            </p>
             <h3>Choisir comment charger la suite</h3>
             <Table
               headings={[
