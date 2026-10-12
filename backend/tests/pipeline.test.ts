@@ -44,26 +44,65 @@ test("fingerprints are deterministic and normalize tracking", () => {
     "https://example.com/a?a=1&b=2",
   );
 });
-test("templates render escaped HTML, plain text, links and local dates", () => {
+test("newsletters render the saved brief sections, safe sources and the edition date", () => {
   const result = renderNewsletter(
-    [
-      {
-        title: '<script>alert("x")</script>',
-        summary: "Résumé & détails",
-        keyPoints: ["Point <1>"],
-        url: "javascript:alert(1)",
-        source: "RSS",
-        publishedAt: null,
+    {
+      date: "2026-10-07",
+      content: {
+        headline: '<script>alert("x")</script>',
+        lead: "L’essentiel & ses conséquences.",
+        stories: [
+          {
+            title: "Information majeure",
+            text: "Synthèse de plusieurs articles.",
+            articleIds: ["safe", "unsafe", "credentials"],
+          },
+        ],
+        otherNews: [
+          { title: "Information secondaire", text: "Un fait à suivre.", articleIds: ["safe"] },
+        ],
+        trends: "Tendance <1>",
       },
+    },
+    [
+      { id: "safe", title: "Source & détails", url: "https://publisher.example/article?a=1&b=2" },
+      { id: "unsafe", title: "Script", url: "javascript:alert(1)" },
+      { id: "credentials", title: "Secret", url: "https://user:password@publisher.example/" },
     ],
-    "Europe/Paris",
-    new Date("2026-10-06T23:00Z"),
   );
+  for (const body of [result.html, result.text]) {
+    expect(body).toContain("À retenir aujourd’hui");
+    expect(body).toContain("Autres informations intéressantes");
+    expect(body).toContain("Tendances du jour");
+    expect(body).toContain("Synthèse de plusieurs articles.");
+    expect(body).not.toContain("javascript:");
+    expect(body).not.toContain("user:password");
+  }
   expect(result.html).not.toContain("<script>");
-  expect(result.html).not.toContain("javascript:");
   expect(result.html).toContain("&lt;script&gt;");
-  expect(result.text).toContain("Point <1>");
+  expect(result.html).toContain("https://publisher.example/article?a=1&amp;b=2");
+  expect(result.text).toContain("Tendance <1>");
   expect(result.subject).toContain("7 octobre 2026");
+});
+test("newsletters omit empty editorial sections instead of inventing subjects", () => {
+  const result = renderNewsletter(
+    {
+      date: "2026-10-12",
+      content: {
+        headline: "Une seule information",
+        lead: "Une édition courte.",
+        stories: [{ title: "Le sujet du jour", text: "L’information importante.", articleIds: [] }],
+        otherNews: [],
+        trends: "",
+      },
+    },
+    [],
+  );
+  for (const body of [result.html, result.text]) {
+    expect(body).toContain("Le sujet du jour");
+    expect(body).not.toContain("Autres informations intéressantes");
+    expect(body).not.toContain("Tendances du jour");
+  }
 });
 test("Nodemailer service uses account recipient and includes both bodies", async () => {
   const transport = nodemailer.createTransport({ jsonTransport: true });
@@ -385,6 +424,9 @@ describe("DailyBrief pipeline", () => {
       emailSent: true,
     });
     expect(sends[0]?.to).toBe(email);
+    expect(sends[0]?.text).toContain("À retenir aujourd’hui");
+    expect(sends[0]?.text).toContain("Une synthèse croisée des articles pertinents.");
+    expect(sends[0]?.text).not.toContain("Résumé Les détails du texte complet");
     expect(pageFetches).toHaveLength(2);
     expect(summaryInputs.every((content) => content.includes("Les détails du texte complet"))).toBe(
       true,
@@ -595,12 +637,12 @@ describe("DailyBrief pipeline", () => {
     await personalized.run(userId);
     expect(analyzed).toBe(1);
   });
-  test("final synthesis failure preserves summaries, newsletter delivery and a visible FAILED brief", async () => {
+  test("final synthesis failure preserves summaries but sends no obsolete newsletter, then retries without reanalysis", async () => {
     failBrief = true;
     const result = await runner.run(userId);
     expect(result).toMatchObject({
-      status: "SENT",
-      emailSent: true,
+      status: "FAILED",
+      emailSent: false,
       articlesSummarized: 2,
       briefStatus: "FAILED",
     });
@@ -611,7 +653,15 @@ describe("DailyBrief pipeline", () => {
       status: "FAILED",
       error: "La génération du brief est indisponible.",
     });
+    expect(result.failure?.stage).toBe("brief");
+    expect(sends).toHaveLength(0);
+    expect(await db.newsletter.count({ where: { userId } })).toBe(0);
+    failBrief = false;
+    const retried = await runner.run(userId);
+    expect(retried).toMatchObject({ status: "SENT", articlesSummarized: 0, briefStatus: "READY" });
+    expect(summaries).toBe(2);
     expect(sends).toHaveLength(1);
+    expect(sends[0]?.text).toContain("Une synthèse croisée des articles pertinents.");
   });
   test("reruns exclude already sent articles and never send empty mail", async () => {
     await runner.run(userId);
@@ -730,7 +780,10 @@ describe("DailyBrief pipeline", () => {
     });
     expect(pageFetches).toHaveLength(1);
     expect(sends[0]?.text).not.toContain("Ancien résumé");
-    expect(sends[0]?.text).toContain("Les détails du texte complet");
+    expect((await db.article.findFirstOrThrow({ where: { userId } })).summary).toContain(
+      "Les détails du texte complet",
+    );
+    expect(sends[0]?.text).toContain("Une synthèse croisée des articles pertinents.");
   });
   test("isolates AI failures and retries only the unsummarized article", async () => {
     failSummary = true;

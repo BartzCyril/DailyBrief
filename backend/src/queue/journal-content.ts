@@ -69,7 +69,11 @@ export async function prepareJournalContent(
       sourceUpdatedAt: article.source.updatedAt.toISOString(),
     };
     if (!access.enabled) {
-      prepared[article.id]!.outcome = { ...outcome, status: "skipped" };
+      prepared[article.id]!.outcome = {
+        ...outcome,
+        status: "skipped",
+        skipReason: `Le journal ${domain} est désactivé.`,
+      };
       continue;
     }
     if (
@@ -137,7 +141,7 @@ export async function prepareJournalContent(
           articleId: article.id,
           status: failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed",
           newSummary: false,
-          ...(failure.code !== "JOURNAL_DISABLED" ? { failure } : {}),
+          ...(failure.code !== "JOURNAL_DISABLED" ? { failure } : { skipReason: failure.message }),
         };
         await assertOwned();
         await db.article.updateMany({

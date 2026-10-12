@@ -156,6 +156,7 @@ export type ArticleJobResult = {
   articleId: string;
   status: "completed" | "skipped" | "failed";
   newSummary: boolean;
+  skipReason?: string;
   failure?: CollectionFailure;
 };
 export type CollectionRunSnapshot = {
@@ -178,6 +179,7 @@ export type ArticleJobSnapshot = {
   articleId: string;
   title: string;
   sourceUrl: string;
+  articleUrl: string | null;
   state: QueueState;
   attempts: number;
   skipped: boolean;
@@ -185,6 +187,7 @@ export type ArticleJobSnapshot = {
   error: string | null;
   summary: { title: string; summary: string; keyPoints: string[] } | null;
   relevanceReason?: string | null;
+  skipReason?: string | null;
 };
 export type ArticleJobsPage = {
   jobs: ArticleJobSnapshot[];

@@ -438,9 +438,10 @@ export class DailyBriefPipelineService implements CollectionRunner {
         }
         // All article jobs have settled before the final synthesis is dispatched.
         stage = "brief";
+        let brief: DailyBriefSnapshot;
         try {
           await assertOwned();
-          const brief = this.dispatchBrief
+          brief = this.dispatchBrief
             ? await this.dispatchBrief(userId, run.id, observer)
             : await new DailyBriefService(this.db, this.summary, this.journals).run(
                 userId,
@@ -464,7 +465,9 @@ export class DailyBriefPipelineService implements CollectionRunner {
               { userId, runId: run.id, error },
             );
           report({ stage, status: "failed", message: failureFor(error, "brief").message });
-          // Keep successful article summaries and the existing newsletter delivery path usable.
+          result.failure = failureFor(error, "brief");
+          // Preserve summaries for retry, but never deliver the obsolete article-list format.
+          return result;
         }
         if (!included.length) {
           result.status = summaryFailure || result.sourcesFailed ? "FAILED" : "NO_NEW_ARTICLES";
@@ -484,22 +487,33 @@ export class DailyBriefPipelineService implements CollectionRunner {
           });
           return result;
         }
+        if (brief.status !== "READY" || !brief.content)
+          throw new AppError(
+            409,
+            "La revue quotidienne n’est pas disponible pour l’envoi.",
+            "BRIEF_NOT_READY",
+          );
         stage = "newsletter";
         report({
           stage,
           status: "running",
-          message: `Préparation de la newsletter avec ${included.length} articles.`,
+          message: "Préparation de la newsletter à partir de la revue quotidienne.",
+        });
+        const edition = await this.db.dailyBrief.findFirstOrThrow({
+          where: { id: brief.id, runId: run.id, userId, status: "READY" },
+          select: { articleIds: true },
+        });
+        const references = await this.db.article.findMany({
+          where: { userId, id: { in: edition.articleIds } },
+          select: { id: true, title: true, summaryTitle: true, url: true, contentUrl: true },
         });
         const rendered = renderNewsletter(
-          included.map((article) => ({
+          { date: brief.date, content: brief.content },
+          references.map((article) => ({
+            id: article.id,
             title: article.summaryTitle ?? article.title,
-            summary: article.summary!,
-            keyPoints: article.keyPoints,
             url: article.contentUrl ?? article.url,
-            source: `${article.source.type} · ${new URL(article.source.url).hostname}`,
-            publishedAt: article.publishedAt,
           })),
-          settings.timezone,
         );
         const newsletter = await this.db.newsletter.create({
           data: {

@@ -46,6 +46,7 @@ const row = (i: number): ArticleJobSnapshot => {
     articleId: `article-${i}`,
     title: `Article ${i}`,
     sourceUrl: "https://feed.example/rss",
+    articleUrl: `https://publisher.example/articles/${i}`,
     state,
     attempts: 1,
     skipped: i === 2,
@@ -117,11 +118,17 @@ function mount(path = "/jobs") {
 }
 test("opens the collection requested from a Daily Brief and displays the reason for ignored articles", async () => {
   articleJobs[1]!.relevanceReason = "Hors des centres d’intérêt : faits divers.";
+  articleJobs[1]!.skipReason =
+    "L’article traite de faits divers, alors que vos préférences demandent les actualités React et IA.";
   mount("/jobs?run=old&status=skipped");
   expect(await screen.findByRole("cell", { name: "Ignoré" })).toBeInTheDocument();
-  expect(
-    screen.getByRole("cell", { name: "Hors des centres d’intérêt : faits divers." }),
-  ).toBeInTheDocument();
+  const trigger = screen.getByRole("button", { name: "Ignoré" });
+  trigger.focus();
+  await userEvent.keyboard("{Enter}");
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(articleJobs[1]!.skipReason!);
+  await userEvent.keyboard("{Escape}");
+  expect(screen.queryByRole("tooltip")).toBeNull();
+  expect(trigger).toHaveFocus();
   expect(screen.getByLabelText("Récupération")).toHaveValue("old");
   expect(
     fetchMock.mock.calls.some(([url]) =>
@@ -322,4 +329,20 @@ test("ignores an obsolete filtered response and retries an error without losing 
   expect(screen.queryByText("Article 1", { exact: true })).toBeNull();
   expect(filter).toHaveValue("active");
   expect(screen.getByText("1–1 sur 1 article")).toBeInTheDocument();
+});
+
+test("source links open the article on the publisher, including RSS notices", async () => {
+  mount();
+  const [link] = await screen.findAllByRole("link", { name: "publisher.example" });
+  expect(link).toHaveAttribute("href", "https://publisher.example/articles/1");
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(screen.queryByRole("link", { name: "feed.example" })).toBeNull();
+});
+test("an ignored article explains operational skips on tap without showing an AI acceptance reason", async () => {
+  articleJobs[1]!.skipReason = "Le journal est désactivé.";
+  articleJobs[1]!.relevanceReason = null;
+  mount("/jobs?status=skipped");
+  const trigger = await screen.findByRole("button", { name: "Ignoré" });
+  await userEvent.click(trigger);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Le journal est désactivé.");
 });

@@ -65,15 +65,28 @@ export class ScrapingSummaryProcessor {
       include: { source: true },
     });
     const outcome: ArticleJobResult = { articleId, status: "completed", newSummary: false };
-    if (
-      !article ||
-      !article.source.enabled ||
-      article.relevant === false ||
-      (await this.db.newsletterArticle.findFirst({
-        where: { articleId, newsletter: { status: { in: ["SENT", "SENDING"] } } },
-      }))
-    )
-      return { ...outcome, status: "skipped" };
+    if (!article) return { ...outcome, status: "skipped", skipReason: "L’article a été supprimé." };
+    if (!article.source.enabled)
+      return { ...outcome, status: "skipped", skipReason: "La source est désactivée." };
+    if (article.relevant === false)
+      return {
+        ...outcome,
+        status: "skipped",
+        skipReason: article.relevanceReason ?? "Article précédemment écarté par l’IA.",
+      };
+    const delivery = await this.db.newsletterArticle.findFirst({
+      where: { articleId, newsletter: { status: { in: ["SENT", "SENDING"] } } },
+      select: { newsletter: { select: { status: true } } },
+    });
+    if (delivery)
+      return {
+        ...outcome,
+        status: "skipped",
+        skipReason:
+          delivery.newsletter.status === "SENT"
+            ? "Cet article a déjà été traité dans une newsletter envoyée."
+            : "Cet article figure dans une newsletter dont l’envoi est en cours ou reste à vérifier.",
+      };
     const prepared = options.authenticatedPreparation;
     if (prepared && prepared.sourceUpdatedAt !== article.source.updatedAt.toISOString())
       return {
@@ -179,6 +192,7 @@ export class ScrapingSummaryProcessor {
           message: `${article.title} : ${failure.message}`,
         });
         outcome.status = failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed";
+        if (outcome.status === "skipped") outcome.skipReason = failure.message;
         return outcome;
       }
     }
@@ -271,6 +285,7 @@ export class ScrapingSummaryProcessor {
           total: 1,
         });
         outcome.status = failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed";
+        if (outcome.status === "skipped") outcome.skipReason = failure.message;
         return outcome;
       }
     } else {
@@ -301,6 +316,7 @@ export class ScrapingSummaryProcessor {
           message: `${article.title} : ${failure.message}`,
         });
         outcome.status = failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed";
+        if (outcome.status === "skipped") outcome.skipReason = failure.message;
         return outcome;
       }
     }
@@ -360,7 +376,7 @@ export class ScrapingSummaryProcessor {
             completed: processed + 1,
             total: 1,
           });
-          return { ...outcome, status: "skipped" };
+          return { ...outcome, status: "skipped", skipReason: analysis.reason };
         }
         const summary = analysis.summary;
         article = {
@@ -407,6 +423,7 @@ export class ScrapingSummaryProcessor {
           total: 1,
         });
         outcome.status = failure.code === "JOURNAL_DISABLED" ? "skipped" : "failed";
+        if (outcome.status === "skipped") outcome.skipReason = failure.message;
         return outcome;
       }
     } else {

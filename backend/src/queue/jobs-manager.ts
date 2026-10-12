@@ -399,6 +399,9 @@ export class JobsManager {
             select: {
               title: true,
               source: { select: { url: true } },
+              url: true,
+              contentUrl: true,
+              relevant: true,
               summaryTitle: true,
               summary: true,
               keyPoints: true,
@@ -414,12 +417,17 @@ export class JobsManager {
           (job ? queueState(await job.getState()) : run.finishedAt ? "completed" : "waiting");
         const progress =
           job && typeof job.progress === "object" ? (job.progress as CollectionProgress) : null;
-        const skipped = selection.skipped ?? job?.returnvalue?.status === "skipped";
+        const skipped =
+          selection.skipped ??
+          (job
+            ? job.returnvalue?.status === "skipped"
+            : state === "completed" && article?.relevant === false);
         return {
           id: `${run.queueJobId}-${articleId}`,
           articleId,
           title: article?.title ?? "Article supprimé",
           sourceUrl: article?.source.url ?? "",
+          articleUrl: article?.contentUrl ?? article?.url ?? null,
           state,
           attempts: job?.attemptsMade ?? 0,
           skipped,
@@ -428,7 +436,13 @@ export class JobsManager {
             state === "failed"
               ? (progress?.message ?? "Le traitement de l'article a échoué.")
               : null,
-          relevanceReason: skipped ? (article?.relevanceReason ?? null) : null,
+          relevanceReason: skipped && article?.relevant === false ? article.relevanceReason : null,
+          skipReason: skipped
+            ? (job?.returnvalue?.skipReason ??
+              (progress?.status === "skipped" ? progress.message : null) ??
+              (article?.relevant === false ? article.relevanceReason : null) ??
+              "Le motif n’est plus disponible pour cette ancienne exécution.")
+            : null,
           summary:
             state === "completed" && !skipped && article?.summary && article.summarizedAt
               ? {

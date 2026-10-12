@@ -253,6 +253,10 @@ try {
           articleId: `article-demo-${i + 1}`,
           title: titles[i % titles.length]!,
           sourceUrl: sources[i % 2]!.url,
+          articleUrl: `https://articles.exemple.fr/article-${i + 1}`,
+          skipReason: skipped
+            ? "L’article traite de faits divers, qui sont exclus de vos centres d’intérêt."
+            : null,
           state: completed ? "completed" : i === 2 ? "active" : "waiting",
           attempts: completed || i === 2 ? 1 : 0,
           skipped,
@@ -413,6 +417,11 @@ try {
   await page.getByText("10/15 articles traités · 0 en échec · 1 ignorés").waitFor();
   await page.getByText("1–5 sur 15 articles", { exact: true }).waitFor();
   await capture(page, "jobs");
+  await page.getByRole("button", { name: "Ignoré", exact: true }).click();
+  await page.getByRole("tooltip").waitFor();
+  if (!(await page.getByRole("tooltip").innerText()).includes("faits divers"))
+    throw new Error("Le motif précis de l’article ignoré doit être consultable.");
+  await page.keyboard.press("Escape");
   await page
     .getByRole("button", { name: "Voir le résumé de Le cloud de demain", exact: true })
     .click();

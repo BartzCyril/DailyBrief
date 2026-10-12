@@ -44,9 +44,11 @@ describe("durable collection queue", () => {
   let summaryFailure: string | null = null;
   let transientFailures = 0;
   let permanentTitle: string | null = null;
+  let failFinalBrief = false;
   const briefInputs: BriefInput[] = [];
   const summary: SummaryProvider = {
     async generateBrief(input) {
+      if (failFinalBrief) throw new AppError(503, "Modèle de synthèse manquant.", "MODEL_MISSING");
       briefInputs.push(input);
       return {
         headline: "L’essentiel du jour",
@@ -181,6 +183,10 @@ describe("durable collection queue", () => {
       expect(rows.pageSize).toBe(5);
       expect(rows.jobs).toHaveLength(5);
       expect(rows.jobs.every((job) => job.summary === null)).toBe(true);
+      expect(rows.jobs.every((job) => job.articleUrl?.startsWith("https://article.example/"))).toBe(
+        true,
+      );
+      expect(rows.jobs.every((job) => job.articleUrl !== job.sourceUrl)).toBe(true);
       expect((await manager.jobs(owner.id, waiting.id, 2)).jobs).toHaveLength(5);
       const activeJobs = await until(
         () => manager.jobs(owner.id, waiting.id, 1, "active"),
@@ -376,6 +382,10 @@ describe("durable collection queue", () => {
         expect(rows.jobs.every((job) => job.state === "failed" && job.attempts === 1)).toBe(true);
         expect(rows.jobs.every((job) => job.summary === null)).toBe(true);
         expect(
+          rows.jobs.every((job) => job.articleUrl?.startsWith("https://article.example/")),
+        ).toBe(true);
+        expect(rows.jobs.every((job) => job.articleUrl !== job.sourceUrl)).toBe(true);
+        expect(
           logs.mock.calls.some(
             ([event, , context]) =>
               event === "job.failed" &&
@@ -466,6 +476,8 @@ describe("durable collection queue", () => {
           fingerprint: randomUUID(),
           summary: "Ancien résumé à conserver",
           summarizedAt: new Date(),
+          relevant: true,
+          relevanceReason: "Article accepté par l’IA avant la désactivation de sa source.",
         },
       });
       const queued = await manager.enqueue(owner.id);
@@ -484,7 +496,12 @@ describe("durable collection queue", () => {
       );
       const ignored = await manager.jobs(owner.id, queued.id, 1, "skipped");
       expect(ignored.total).toBe(1);
-      expect(ignored.jobs[0]).toMatchObject({ skipped: true, summary: null });
+      expect(ignored.jobs[0]).toMatchObject({
+        skipped: true,
+        summary: null,
+        skipReason: "La source est désactivée.",
+        relevanceReason: null,
+      });
       expect((await manager.jobs(owner.id, queued.id, 1, "completed")).total).toBe(0);
       expect((await db.article.findUniqueOrThrow({ where: { id: article.id } })).summary).toBe(
         "Ancien résumé à conserver",
@@ -634,6 +651,8 @@ describe("durable collection queue", () => {
           title: "Premier article 0",
           summary: null,
           relevanceReason: "Hors des centres d’intérêt.",
+          skipReason: "Hors des centres d’intérêt.",
+          articleUrl: "https://article.example/a/0",
         });
         const article = await db.article.findUniqueOrThrow({
           where: { id: ignored.jobs[0]!.articleId },
@@ -683,6 +702,47 @@ describe("durable collection queue", () => {
         ).toBe(14);
       } finally {
         permanentTitle = null;
+      }
+    },
+  );
+  queueTest(
+    "a failed final brief sends no obsolete email and reuses article summaries on retry",
+    async () => {
+      const owner = await user();
+      const callsBefore = calls;
+      const sendsBefore = sends;
+      failFinalBrief = true;
+      try {
+        const queued = await manager.enqueue(owner.id);
+        const failed = await until(
+          () => manager.snapshot(owner.id, queued.id),
+          (value) => !value.active,
+        );
+        expect(failed.result).toMatchObject({
+          status: "FAILED",
+          briefStatus: "FAILED",
+          emailSent: false,
+        });
+        expect(sends).toBe(sendsBefore);
+        expect(await db.newsletter.count({ where: { userId: owner.id } })).toBe(0);
+        expect(
+          await db.article.count({ where: { userId: owner.id, summarizedAt: { not: null } } }),
+        ).toBe(15);
+        failFinalBrief = false;
+        const retried = await manager.enqueue(owner.id);
+        const ready = await until(
+          () => manager.snapshot(owner.id, retried.id),
+          (value) => !value.active,
+        );
+        expect(ready.result).toMatchObject({
+          status: "SENT",
+          briefStatus: "READY",
+          articlesSummarized: 0,
+        });
+        expect(calls).toBe(callsBefore + 15);
+        expect(sends).toBe(sendsBefore + 1);
+      } finally {
+        failFinalBrief = false;
       }
     },
   );

@@ -14,9 +14,11 @@ import { CollectionProgress } from "@/dashboard/CollectionProgress";
 import { Button } from "@/components/ui/button";
 import { Feedback } from "@/components/Feedback";
 import { ArticleSummaryDialog } from "@/collection/ArticleSummaryDialog";
+import { ArticleSkipReason } from "@/collection/ArticleSkipReason";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeading } from "@/components/PageHeading";
+import { validHttpUrl } from "@/sources/api";
 
 const labels: Record<QueueState, string> = {
   waiting: "En attente",
@@ -258,27 +260,37 @@ export function JobsPage() {
                         <p className="font-medium">{job.title}</p>
                       </td>
                       <td className="min-w-36 px-4 py-4">
-                        {job.sourceUrl && (
+                        {job.articleUrl && validHttpUrl(job.articleUrl) && (
                           <a
-                            href={job.sourceUrl}
+                            href={job.articleUrl}
                             target="_blank"
                             rel="noreferrer"
                             className="break-all underline underline-offset-4"
                           >
-                            {new URL(job.sourceUrl).hostname}
+                            {new URL(job.articleUrl).hostname}
                           </a>
                         )}
                       </td>
                       <td className="px-4 py-4">
-                        <span
-                          className={`inline-flex items-center gap-2 whitespace-nowrap ${job.state === "failed" ? "text-destructive" : ""}`}
-                        >
-                          <span
-                            aria-hidden="true"
-                            className={`size-2 shrink-0 rounded-full ${job.state === "failed" ? "bg-red-500" : job.state === "completed" ? "bg-green-600" : "bg-amber-500"}`}
+                        {job.skipped ? (
+                          <ArticleSkipReason
+                            reason={
+                              job.skipReason ??
+                              job.relevanceReason ??
+                              "Le motif n’est plus disponible pour cette ancienne exécution."
+                            }
                           />
-                          {job.skipped ? "Ignoré" : labels[job.state]}
-                        </span>
+                        ) : (
+                          <span
+                            className={`inline-flex items-center gap-2 whitespace-nowrap ${job.state === "failed" ? "text-destructive" : ""}`}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className={`size-2 shrink-0 rounded-full ${job.state === "failed" ? "bg-red-500" : job.state === "completed" ? "bg-green-600" : "bg-amber-500"}`}
+                            />
+                            {labels[job.state]}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-4">{job.attempts}</td>
                       <td className="min-w-40 px-4 py-4">

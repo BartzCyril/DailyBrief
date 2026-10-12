@@ -57,6 +57,7 @@ export async function startConsumers(
           return {
             articleId: job.data.articleId ?? job.data.runId,
             status: "skipped",
+            skipReason: "La collecte est déjà terminée ou n’existe plus.",
             newSummary: false,
           };
         let writes = Promise.resolve();

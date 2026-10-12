@@ -795,6 +795,10 @@ export function DocumentationPage() {
               déjà disponibles pour le jour et la veille, sans relancer leur analyse. Si aucun
               article n’est pertinent, la page affiche un état vide ; si la génération échoue, une
               erreur est affichée et les résumés réussis restent disponibles dans l’historique.
+              L’email reprend la même revue, avec « À retenir aujourd’hui », les informations
+              secondaires et les tendances lorsqu’elles sont présentes. Si la synthèse finale
+              échoue, aucun email à l’ancien format n’est envoyé : vous pouvez relancer la collecte
+              pour réutiliser les résumés déjà enregistrés.
             </p>
             <Screenshot
               name="dashboard"
@@ -813,7 +817,11 @@ export function DocumentationPage() {
               ils sont empilés. Le tableau affiche <b>5 articles par page</b>. Utilisez le filtre
               <b> Statut des articles</b> pour retrouver les traitements en attente, en cours,
               terminés, en échec ou ignorés, puis les flèches pour parcourir les résultats. Le
-              filtre conserve le bilan global de la collecte.
+              filtre conserve le bilan global de la collecte. La colonne <b>Source</b> ouvre
+              directement l’article du journal, même lorsque le RSS utilise une notice
+              intermédiaire. Survolez le statut <b>Ignoré</b>, sélectionnez-le au clavier ou appuyez
+              dessus sur mobile pour lire le motif précis. Le motif distingue un refus de l’IA selon
+              vos centres d’intérêt d’une source ou d’un journal désactivé.
             </p>
             <p>
               Dans la colonne <b>Résumé IA</b>, cliquez sur <b>Voir le résumé</b> pour lire le texte
@@ -854,23 +862,23 @@ export function DocumentationPage() {
                 ["Terminé", "Le traitement est terminé et le résumé enregistré est consultable."],
                 [
                   "Ignoré",
-                  "L’article a été écarté : source ou journal désactivé, ou contenu jugé non pertinent selon vos centres d’intérêt. Consultez la raison dans le suivi.",
+                  "L’article a été écarté : source ou journal désactivé, ou contenu jugé non pertinent selon vos centres d’intérêt. Survolez ou sélectionnez le statut Ignoré pour lire le motif.",
                 ],
                 ["Échec", "Consultez le message et corrigez la source ou l’accès si nécessaire."],
               ]}
             />
             <p>
               Les articles de domaines désactivés sont ignorés pour l’extraction complète, l’IA et
-              la newsletter. Les articles déjà envoyés ne sont pas livrés une deuxième fois par
-              email. S’il n’y a aucun nouvel article à envoyer, DailyBrief affiche ce résultat et
-              n’envoie pas de newsletter vide.
+              la newsletter. La revue peut réutiliser les résumés déjà disponibles pour la période
+              du jour et de la veille. S’il n’y a aucun nouvel article à envoyer, DailyBrief affiche
+              ce résultat et n’envoie pas de newsletter vide.
             </p>
           </Chapter>
           <Chapter id="depannage" number="10" title="Quand quelque chose ne fonctionne pas">
             {[
               [
                 "Aucun article n’apparaît",
-                "Vérifiez que l’URL correspond au flux RSS ou à la liste d’articles. Pour le scraping, contrôlez le bloc racine et les quatre sélecteurs internes, puis le mode de chargement. Testez plusieurs cartes dans l’inspecteur.",
+                "Vérifiez que l’URL correspond au flux RSS ou à la liste d’articles. Pour le scraping, contrôlez le bloc racine et les trois sélecteurs internes, puis le mode de chargement. Testez plusieurs cartes dans l’inspecteur.",
               ],
               [
                 "Le site est accessible chez moi, mais DailyBrief reçoit un HTTP 403",

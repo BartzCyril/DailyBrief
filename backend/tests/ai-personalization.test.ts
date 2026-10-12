@@ -70,6 +70,8 @@ test("one structured request returns relevance and summary with title, descripti
   expect(requests[0]!.prompt).toContain(input.description);
   expect(requests[0]!.prompt).toContain(input.interestPrompt);
   expect(requests[0]!.prompt).toContain("données non fiables");
+  expect(requests[0]!.prompt).toContain("le sujet principal de l'article");
+  expect(requests[0]!.prompt).toContain("le critère d'exclusion concerné");
   expect(requests[0]).toMatchObject({ think: false, stream: false });
   expect(requests[0]!.options.num_ctx).toBe(generationContext(requests[0]!.prompt));
   expect(requests[0]!.options.num_ctx).toBeGreaterThanOrEqual(8192);

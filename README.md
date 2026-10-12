@@ -302,8 +302,12 @@ analysés à nouveau. `GET /dailybrief/:id/articles?page=1` charge au plus cinq 
 ne reçoit pas la liste entière. `GET /dashboard` retourne `latestBrief` uniquement pour le compte
 connecté. Aucun article pertinent et résumé disponible pour la période donne un brief
 `EMPTY`, sans appel IA de synthèse ni email vide.
-Un échec de génération donne un brief `FAILED` avec une erreur ; les résumés déjà sauvegardés
-restent consultables. Une reprise réutilise un brief terminé au lieu de le générer deux fois.
+L’email utilise cette même revue : **À retenir aujourd’hui**, **Autres informations
+intéressantes** et **Tendances du jour**, avec les liens des articles cités. Les rubriques
+vides sont omises ; les résumés individuels ne sont pas concaténés dans le mail.
+La date est celle de l’édition enregistrée, même après une reprise plus tardive.
+Un échec de génération donne un brief `FAILED` avec une erreur ; aucun email à l’ancien
+format n’est envoyé et les résumés déjà sauvegardés restent consultables. Une reprise réutilise un brief terminé au lieu de le générer deux fois.
 Appliquez les migrations avec `bun run db:migrate` et régénérez le client avec
 `bun run db:generate` après la mise à jour ; aucune nouvelle variable d’environnement n’est requise.
 
@@ -413,7 +417,11 @@ visible pendant la préparation et l'envoi. Le suivi interroge Redis via l'API ;
 fermer ou recharger la page ne supprime pas les jobs. La page
 **[http://localhost:5173/jobs](http://localhost:5173/jobs)** présente les 20 dernières
 collectes dans **« Historique d’exécutions »**, avec leurs articles paginés par 5 : état,
-tentatives, étape, erreur et résumé IA. **« Voir le résumé »** ouvre une fenêtre avec
+tentatives, étape, erreur et résumé IA. La colonne **Source** ouvre l’article du journal,
+en privilégiant `contentUrl` à l’URL de notice ; elle n’ouvre pas le flux ou la rubrique.
+Le statut **Ignoré** affiche le motif au survol, au clavier ou par un appui sur mobile.
+La décision factuelle donnée par l’IA est conservée, avec un motif distinct pour une source
+ou un journal désactivé, un article déjà traité ou une collecte terminée. **« Voir le résumé »** ouvre une fenêtre avec
 le titre généré, le texte enregistré et les points clés, sans nouvel appel à l'IA.
 Les résumés deviennent visibles automatiquement après la fin du traitement. Les tâches
 en attente, ignorées ou en échec n'affichent pas de résumé, y compris si une collecte

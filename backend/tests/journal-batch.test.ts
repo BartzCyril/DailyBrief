@@ -216,6 +216,12 @@ describe("authenticated journal batches across sources and Redis consumers", () 
         expect(snapshot.result?.articlesSummarized).toBe(3);
         expect(jobs.total).toBe(3);
         expect(jobs.jobs.every((job) => job.state === "completed" && job.summary)).toBe(true);
+        expect(
+          jobs.jobs.every((job) =>
+            job.articleUrl?.startsWith("https://publisher.example/article-"),
+          ),
+        ).toBe(true);
+        expect(jobs.jobs.every((job) => job.articleUrl !== job.sourceUrl)).toBe(true);
         expect(summaries).toBe(3);
         expect(loginInAi).toBe(0);
         expect(launch).toHaveBeenCalledTimes(1);
@@ -321,6 +327,8 @@ describe("authenticated journal batches across sources and Redis consumers", () 
       const { jobs } = await execute(user.id);
       expect(jobs.total).toBe(3);
       expect(jobs.jobs.every((job) => job.state === "completed" && job.skipped)).toBe(true);
+      expect(jobs.jobs.every((job) => job.skipReason?.includes("désactivé"))).toBe(true);
+      expect(jobs.jobs.every((job) => job.relevanceReason === null)).toBe(true);
       expect(launch).not.toHaveBeenCalled();
       expect(summaries).toBe(0);
       expect(loginInAi).toBe(0);

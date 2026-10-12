@@ -910,7 +910,16 @@ try {
   assert.equal(messages.length, 1);
   await page.getByRole("heading", { name: "Votre Daily Brief de test", exact: true }).waitFor();
   assert.equal(messages[0]?.to, email);
-  assert(messages[0]?.text.includes("Information finale conservée."));
+  assert(messages[0]?.text.includes("À retenir aujourd’hui"));
+  assert(
+    messages[0]?.text.includes(
+      "Les articles éclairent les évolutions du cloud et des outils numériques.",
+    ),
+  );
+  assert(
+    !messages[0]?.text.includes("Information finale conservée."),
+    "The email must contain the editorial brief, not individual summaries",
+  );
   assert(messages[0]?.text.includes("Article RSS"));
   assert(messages[0]?.html.includes('href="https://publisher.example/full-article"'));
   assert(!messages[0]?.text.includes("Notice de bibliothèque à ne pas résumer"));
