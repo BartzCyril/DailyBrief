@@ -47,6 +47,12 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
       "Un sélecteur de connexion désigne plusieurs éléments. Précisez-le pour obtenir un seul élément visible.",
     JOURNAL_LOGIN_FIELDS_UNFILLED:
       "Les champs de connexion n'ont pas conservé les informations saisies. La page peut les réinitialiser ou empêcher la saisie. Aucun formulaire n'a été envoyé.",
+    JOURNAL_LOGIN_EMAIL_NOT_FOUND:
+      "Le champ email n'a pas été trouvé ou n'est pas visible dans la page de connexion chargée. Vérifiez son sélecteur et l'URL du formulaire.",
+    JOURNAL_LOGIN_PASSWORD_NOT_FOUND:
+      "Le champ mot de passe n'a pas été trouvé ou n'est pas visible dans la page de connexion chargée. Vérifiez son sélecteur et l'URL du formulaire.",
+    JOURNAL_LOGIN_SUBMIT_NOT_FOUND:
+      "Les champs sont remplis, mais le contrôle d'envoi n'a pas été trouvé ou n'est pas visible. Vérifiez son sélecteur : certains formulaires utilisent input[type='submit'] au lieu de button[type='submit'].",
     JOURNAL_LOGIN_INSECURE_FORM:
       "Le formulaire doit envoyer le mot de passe par POST et utiliser un champ de type password.",
     JOURNAL_LOGIN_REDIRECT_BLOCKED:
@@ -129,12 +135,19 @@ export class JournalLoginBrowser {
           const requestOperationId = operationId;
           const url = new URL(request.url());
           const navigation = request.isNavigationRequest();
+          const mainNavigation = navigation && !request.frame()?.parentFrame();
           const method = request.method();
           try {
             if (!["http:", "https:"].includes(url.protocol))
               throw loginError("JOURNAL_UNSAFE_REQUEST");
+            // Public pages embed analytics frames. Block them without treating
+            // their navigation as a redirect of the actual login document.
+            if (navigation && !mainNavigation && !origins.has(url.origin)) {
+              await request.abort();
+              return;
+            }
             if (
-              navigation &&
+              mainNavigation &&
               (!origins.has(url.origin) || url.protocol !== "https:" || ++navigations > 12)
             )
               throw loginError("JOURNAL_LOGIN_REDIRECT_BLOCKED");
@@ -222,7 +235,7 @@ export class JournalLoginBrowser {
               await request.abort().catch(() => {});
               return;
             }
-            if (navigation || (authenticating && method === "POST" && secretsEntered))
+            if (mainNavigation || (authenticating && method === "POST" && secretsEntered))
               networkError = loginError(
                 error instanceof AppError && error.code.startsWith("JOURNAL_")
                   ? error.code
@@ -275,7 +288,6 @@ export class JournalLoginBrowser {
           await page.goto(login.config.loginUrl, { waitUntil: "domcontentloaded" });
           await assertLoginField(page, login.config.emailSelector, false);
           await assertLoginField(page, login.config.passwordSelector, true);
-          await (await uniqueVisible(page, login.config.submitSelector)).dispose();
           const previousSignals = login.config.successSelector
             ? []
             : (await page.evaluate(connectionStateInPage)).signals;
@@ -284,8 +296,10 @@ export class JournalLoginBrowser {
           secretsEntered = true;
           observer?.("Saisie des identifiants dans le formulaire de connexion.");
           await fillLoginForm(page, login);
-          await (await uniqueVisible(page, login.config.submitSelector)).dispose();
           observer?.("Champs de connexion remplis et vérifiés.");
+          await (
+            await uniqueVisible(page, login.config.submitSelector, "JOURNAL_LOGIN_SUBMIT_NOT_FOUND")
+          ).dispose();
           observer?.("Envoi du formulaire et vérification de la connexion.");
           await page.locator(login.config.submitSelector).click();
           if (login.config.successSelector) await uniqueVisible(page, login.config.successSelector);
@@ -459,8 +473,15 @@ async function confirmConnection(page: Page, previousSignals: string[], timeoutM
   throw loginError("JOURNAL_LOGIN_UNVERIFIED");
 }
 
-async function uniqueVisible(page: Page, selector: string): Promise<ElementHandle<Element>> {
-  const element = await page.waitForSelector(selector, { visible: true });
+async function uniqueVisible(
+  page: Page,
+  selector: string,
+  missingCode?: string,
+): Promise<ElementHandle<Element>> {
+  const element = await page.waitForSelector(selector, { visible: true }).catch((error) => {
+    if (missingCode) throw loginError(missingCode);
+    throw error;
+  });
   if (!element || (await page.$$eval(selector, (elements) => elements.length)) !== 1) {
     await element?.dispose();
     throw loginError("JOURNAL_LOGIN_SELECTOR_AMBIGUOUS");
@@ -469,7 +490,11 @@ async function uniqueVisible(page: Page, selector: string): Promise<ElementHandl
 }
 
 async function assertLoginField(page: Page, selector: string, password: boolean) {
-  const field = await uniqueVisible(page, selector);
+  const field = await uniqueVisible(
+    page,
+    selector,
+    password ? "JOURNAL_LOGIN_PASSWORD_NOT_FOUND" : "JOURNAL_LOGIN_EMAIL_NOT_FOUND",
+  );
   try {
     const valid = await field.evaluate(
       (node, password) =>

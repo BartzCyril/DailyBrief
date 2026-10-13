@@ -192,6 +192,80 @@ test("posts the configured form and reads the article in the same fresh authenti
   expect(messages.join(" ")).not.toContain("own-session");
 }, 45000);
 
+test("a third-party iframe on the public login page does not stop credential entry", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    const response = await fixture.fetch(url, options);
+    return url.endsWith("/login")
+      ? {
+          ...response,
+          text:
+            response.text +
+            '<iframe src="https://www.googletagmanager.com/ns.html?id=public-tag"></iframe><iframe src="https://127.0.0.1/private"></iframe>',
+        }
+      : response;
+  }, 1000);
+  const result = await browser.run(
+    "publisher.example",
+    credentials,
+    "https://publisher.example/article",
+  );
+  expect(result.contentHtml).toContain(fullText);
+  const post = fixture.requests.find((request) => request.options?.method === "POST");
+  expect(new URLSearchParams(post?.options?.body).get("email")).toBe(credentials.email);
+  expect(new URLSearchParams(post?.options?.body).get("password")).toBe(credentials.password);
+  expect(
+    fixture.requests.some((request) => /googletagmanager|127\.0\.0\.1/.test(request.url)),
+  ).toBe(false);
+}, 45000);
+
+test("fills the fields before waiting for a submit control revealed by input validation", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    const response = await fixture.fetch(url, options);
+    return url.endsWith("/login")
+      ? {
+          ...response,
+          text:
+            response.text.replace('<button id="submit">', '<button id="submit" hidden>') +
+            '<script>document.addEventListener("input", () => { if (document.querySelector("#email").value && document.querySelector("#password").value) document.querySelector("#submit").hidden = false; });</script>',
+        }
+      : response;
+  }, 1000);
+  await browser.run("publisher.example", credentials);
+  const posts = fixture.requests.filter((request) => request.options?.method === "POST");
+  expect(posts).toHaveLength(1);
+  expect(new URLSearchParams(posts[0]!.options?.body).get("password")).toBe(credentials.password);
+}, 45000);
+
+test.each([
+  ["emailSelector", "JOURNAL_LOGIN_EMAIL_NOT_FOUND"],
+  ["passwordSelector", "JOURNAL_LOGIN_PASSWORD_NOT_FOUND"],
+  ["submitSelector", "JOURNAL_LOGIN_SUBMIT_NOT_FOUND"],
+] as const)(
+  "identifies the missing login control without submitting secrets: %s",
+  async (selector, code) => {
+    const fixture = journalFixture();
+    const messages: string[] = [];
+    const browser = new JournalLoginBrowser(fixture.fetch, 700);
+    await assert.rejects(
+      browser.run(
+        "publisher.example",
+        { ...credentials, config: { ...loginConfig, [selector]: "#missing" } },
+        undefined,
+        (message) => messages.push(message),
+      ),
+      { code },
+    );
+    expect(fixture.requests.some((request) => request.options?.method === "POST")).toBe(false);
+    if (selector === "submitSelector")
+      expect(messages).toContain("Champs de connexion remplis et vérifiés.");
+    expect(messages.join(" ")).not.toContain(credentials.email);
+    expect(messages.join(" ")).not.toContain(credentials.password);
+  },
+  45000,
+);
+
 test.each(["replace-fields", "replace-button", "reset-once"])(
   "fills and submits the live login form after JavaScript changes: %s",
   async (scenario) => {
@@ -348,7 +422,7 @@ test("wrong credentials and selector errors cannot expose passwords or transport
       ...credentials,
       config: { ...loginConfig, emailSelector: "#missing" },
     }),
-    { code: "JOURNAL_LOGIN_FAILED" },
+    { code: "JOURNAL_LOGIN_EMAIL_NOT_FOUND" },
   );
   await assert.rejects(
     new JournalLoginBrowser(async () => {

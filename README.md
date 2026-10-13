@@ -929,6 +929,11 @@ du formulaire, déclenche les événements de saisie et de sortie du champ, puis
 vérifie les valeurs avant l'envoi. Si la page les efface, il reprend la saisie
 (trois tentatives maximum). Des valeurs absentes ou incorrectes déclenchent
 `JOURNAL_LOGIN_FIELDS_UNFILLED` sans envoyer le formulaire.
+Le contrôle d'envoi est recherché après la saisie, car certaines pages ne le
+rendent visible qu'une fois les champs remplis. Les champs ou contrôles absents
+sont distingués par `JOURNAL_LOGIN_EMAIL_NOT_FOUND`,
+`JOURNAL_LOGIN_PASSWORD_NOT_FOUND` et `JOURNAL_LOGIN_SUBMIT_NOT_FOUND`.
+Un contrôle d'envoi peut être un `input[type='submit']` ou un `button[type='submit']`.
 
 Sans ancien sélecteur de réussite enregistré, le serveur confirme la session seulement
 si un nouveau contrôle visible de déconnexion apparaît après soumission
@@ -982,6 +987,8 @@ Les identifiants sont envoyés uniquement par POST à l'origine HTTPS de l'URL d
 connexion configurée. Les navigations sont limitées à cette origine et à l'origine
 HTTPS du journal ; les autres redirections sont refusées. Un formulaire hébergé sur
 un sous-domaine ou un fournisseur externe peut donc être déclaré explicitement.
+Les iframes externes sont bloquées sans interrompre la connexion du document
+principal ; leurs navigations ne sont pas des redirections du formulaire.
 Les requêtes gardent la validation des adresses publiques, l'épinglage DNS, les
 limites de taille et la vérification TLS. Les destinations supplémentaires, les
 CAPTCHA, la double authentification et les formulaires à plusieurs étapes ne sont
