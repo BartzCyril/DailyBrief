@@ -1,4 +1,4 @@
-import puppeteer from "puppeteer";
+import puppeteer, { TimeoutError } from "puppeteer";
 import { addExtra } from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type {
@@ -98,7 +98,66 @@ export async function interceptRequests(
 export const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-export async function navigateScrapingPage(page: Page, url: string): Promise<void> {
+export async function navigateScrapingPage(
+  page: Page,
+  url: string,
+  options: { waitForAllResources?: boolean } = {},
+): Promise<void> {
+  if (options.waitForAllResources === false) {
+    // Puppeteer's lifecycle watcher also waits for child-frame DOMContentLoaded.
+    // Track the newly committed main document, including site redirects, instead.
+    const session = await page.createCDPSession();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await session.send("Page.enable");
+      await session.send("Page.setLifecycleEventsEnabled", { enabled: true });
+      const { frameTree } = await session.send("Page.getFrameTree");
+      let loader: string | undefined;
+      let resolveReady = () => {};
+      const ready = new Promise<void>((resolve) => {
+        resolveReady = resolve;
+      });
+      session.on("Page.frameNavigated", ({ frame }) => {
+        if (frame.id === frameTree.frame.id) loader = frame.loaderId;
+      });
+      session.on("Page.lifecycleEvent", (event) => {
+        if (
+          event.frameId === frameTree.frame.id &&
+          event.loaderId === loader &&
+          event.name === "DOMContentLoaded"
+        )
+          resolveReady();
+      });
+      await Promise.race([
+        (async () => {
+          const navigation = await session.send("Page.navigate", { url });
+          if (navigation.errorText) throw new Error("Main document navigation failed");
+          if (navigation.isDownload)
+            throw new Error("Main document navigation requested a download");
+          if (navigation.loaderId) await ready;
+        })(),
+        new Promise<never>((_resolve, reject) => {
+          const timeout = page.getDefaultNavigationTimeout();
+          if (timeout)
+            timer = setTimeout(
+              () => reject(new TimeoutError("Main document navigation timed out")),
+              timeout,
+            );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+      await session.detach().catch(() => {});
+    }
+    // A stalled iframe or background fetch must not invalidate an available
+    // article list. The collector checks article readiness and network failures.
+    try {
+      await page.waitForNetworkIdle({ idleTime: 500, timeout: 2500 });
+    } catch (error) {
+      if (!(error instanceof TimeoutError)) throw error;
+    }
+    return;
+  }
   // Puppeteer's lifecycle networkidle0 can add a long delay to each Chromium
   // navigation. Track requests directly, retaining the 500 ms idle interval.
   await Promise.all([

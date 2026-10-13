@@ -301,6 +301,36 @@ test("a later page with invalid title selectors fails instead of presenting a pa
     code: "INVALID_SCRAPING_EXTRACTION",
   });
 }, 15000);
+test("waits for delayed article blocks and delayed titles on later pagination pages", async () => {
+  const visited: number[] = [];
+  const service = new ScrapingService(async (url) => {
+    const number = Number(new URL(url).searchParams.get("page"));
+    visited.push(number);
+    if (number === 3)
+      return `<main id="list"></main><script>setTimeout(()=>document.querySelector('#list').innerHTML=${JSON.stringify(html("3"))},1200)</script>`;
+    if (number === 4)
+      return `<article id="late"><h2></h2><a href="/articles/4">Lire</a></article><script>setTimeout(()=>document.querySelector('h2').textContent='Article 4',1200)</script>`;
+    return number < 3 ? html(String(number)) : "<main></main>";
+  });
+  const result = await service.collect("https://fixture.example/items", paginate);
+  expect(visited).toEqual([1, 2, 3, 4, 5]);
+  expect(result.articles.map((article) => article.title)).toEqual(
+    [1, 2, 3, 4].map((number) => `Article ${number}`),
+  );
+}, 15000);
+test("names the failing pagination page for an extraction error", async () => {
+  const service = new ScrapingService(async (url) =>
+    Number(new URL(url).searchParams.get("page")) < 3
+      ? html(new URL(url).searchParams.get("page")!)
+      : "<article><h3>Autre titre</h3><a href='/next'>Lire</a></article>",
+  );
+  const error = await service
+    .collect("https://fixture.example/items?token=private-token", paginate)
+    .catch((error) => error);
+  expect(error).toMatchObject({ code: "INVALID_SCRAPING_EXTRACTION" });
+  expect(error.message).toContain("Page 3 (https://fixture.example/items)");
+  expect(error.message).not.toContain("private-token");
+}, 15000);
 test("browser extracts and deduplicates relative links until an empty page", async () => {
   const requests: string[] = [];
   const service = new ScrapingService(async (url) => {
@@ -360,7 +390,10 @@ test("rejects invalid selectors and empty extraction without leaking internals",
   const service = new ScrapingService(async () => html("1"));
   await expect(
     service.collect("https://fixture.example", { ...scroll, articleSelector: "??" }),
-  ).rejects.toThrow("Impossible d'extraire");
+  ).rejects.toMatchObject({
+    code: "INVALID_SCRAPING_SELECTOR",
+    message: "Le sélecteur CSS des articles est invalide.",
+  });
 }, 15000);
 test("rejects empty extraction", async () => {
   const service = new ScrapingService(async () => html("1"));

@@ -119,8 +119,12 @@ Une erreur sur la première page, une redirection vers une autre page absente ou
 un autre statut HTTP reste un échec. Le message précise le statut et l'URL en erreur.
 Les anciens `maxPages` enregistrés sont acceptés puis ignorés ; aucune migration
 de base n'est nécessaire. La page de départ peut être 0 selon le site.
-Chaque navigation garde son délai de 15 secondes ; la durée totale de pagination
-n'est pas plafonnée. Le mode scroll conserve ses 8 scrolls et ses 45 secondes.
+Le document principal dispose de 15 secondes pour se charger. La collecte attend
+ensuite au plus 2,5 secondes de calme réseau : une iframe ou une requête annexe en
+attente ne bloque pas une liste d’articles déjà présente. Sur chaque page, les
+articles rendus tardivement par JavaScript disposent de 3 secondes supplémentaires.
+Les erreurs précisent le numéro de page et l’étape concernée ; un délai du navigateur
+est signalé comme tel. La durée totale de pagination n'est pas plafonnée. Le mode scroll conserve ses 8 scrolls et ses 45 secondes.
 Le mode « Bouton charger plus » (`LOAD_MORE`) attend un sélecteur CSS de bouton
 et un délai maximum de chargement par clic (1 à 60 secondes, 15 secondes par défaut).
 Exemple : `loadMore: { buttonSelector: ".load-more", waitTimeoutMs: 15000 }`.

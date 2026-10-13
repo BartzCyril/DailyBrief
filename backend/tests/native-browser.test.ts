@@ -31,6 +31,22 @@ const server = createServer((request, response) => {
     ua: request.headers["user-agent"],
   });
   response.setHeader("Content-Type", "text/html; charset=utf-8");
+  if (path === "/pending-document") return;
+  if (path === "/pending-resource") {
+    // Simulate an embedded resource that never completes its HTTP response.
+    response.writeHead(200, { "Content-Type": "text/html" });
+    response.write("<p>Chargement en cours</p>");
+    return;
+  }
+  if (path.startsWith("/pagination-pending/page/")) {
+    const number = Number(path.split("/").filter(Boolean).at(-1));
+    response.end(
+      number > 4
+        ? "<main></main>"
+        : `<article class="post"><h2 class="fl-post-title"><a href="/article-${number}">Article page ${number}</a></h2><a class="fl-post-more-link" href="/article-${number}">Lire</a><p class="fl-post-date">12 octobre 2026</p><div class="fl-post-content"><p>Extrait</p></div></article>${number === 3 ? '<iframe src="/pending-resource"></iframe><script>fetch("/pending-resource").catch(()=>{})</script>' : ""}`,
+    );
+    return;
+  }
   if (path === "/preflight-api") {
     response.setHeader("Access-Control-Allow-Origin", `http://publisher.test:${port}`);
     response.setHeader("Access-Control-Allow-Methods", "GET");
@@ -650,3 +666,50 @@ test.each(["scraping", "selector analysis"])(
   },
   30000,
 );
+
+test("pagination continues past page 3 with articles despite an unfinished iframe and background fetch", async () => {
+  const result = await new ScrapingService(undefined, networkFactory).collect(
+    url("/pagination-pending/"),
+    {
+      articleSelector: ".post",
+      titleSelector: ".fl-post-title a",
+      linkSelector: ".fl-post-more-link",
+      dateSelector: ".fl-post-date",
+      descriptionSelector: ".fl-post-content p",
+      mode: "PAGINATE",
+      pagination: {
+        strategy: "URL_TEMPLATE",
+        startPage: 1,
+        urlTemplate: url("/pagination-pending/page/{page}/"),
+      },
+    },
+  );
+  expect(result.articles.map((article) => article.title)).toEqual(
+    [1, 2, 3, 4].map((number) => `Article page ${number}`),
+  );
+  expect(result.warnings).toBeUndefined();
+}, 40000);
+
+test("a stalled main document remains a timeout with its pagination page instead of a selector error", async () => {
+  await assert.rejects(
+    new ScrapingService(undefined, networkFactory).collect(
+      url("/pending-document?token=private-query-token"),
+      {
+        articleSelector: "article",
+        titleSelector: "h2",
+        linkSelector: "a",
+        mode: "PAGINATE",
+        pagination: { strategy: "QUERY_PARAM", startPage: 3, queryParam: "page" },
+      },
+    ),
+    (error: unknown) => {
+      expect(error).toMatchObject({ code: "TIMEOUT", status: 504 });
+      expect(String(error)).toContain("Page 3");
+      expect(String(error)).toContain("chargement du document");
+      expect(String(error)).not.toContain("private-query-token");
+      expect(String(error)).not.toContain("sélecteurs CSS");
+      expect(error).toHaveProperty("cause");
+      return true;
+    },
+  );
+}, 25000);

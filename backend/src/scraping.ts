@@ -180,6 +180,9 @@ export class ScrapingService {
         throw error;
       }
       const context = await browser.createBrowserContext();
+      let currentTarget = url;
+      let currentPageNumber: number | undefined;
+      let phase: "configuration" | "navigation" | "rendering" | "extraction" = "configuration";
       let timedOut = false;
       let networkError: unknown;
       let failLoad: ((error: unknown) => void) | undefined;
@@ -208,6 +211,38 @@ export class ScrapingService {
           context,
         );
         page.setDefaultTimeout(15000);
+        const invalidSelector = await page.evaluate((config) => {
+          for (const field of [
+            "articleSelector",
+            "titleSelector",
+            "linkSelector",
+            "descriptionSelector",
+            "dateSelector",
+          ] as const) {
+            const selector = config[field];
+            if (!selector) continue;
+            try {
+              document.querySelector(selector);
+            } catch {
+              return field;
+            }
+          }
+          return null;
+        }, config);
+        if (invalidSelector) {
+          const fields = {
+            articleSelector: "des articles",
+            titleSelector: "du titre",
+            linkSelector: "du lien",
+            descriptionSelector: "de la description",
+            dateSelector: "de date",
+          };
+          throw new AppError(
+            422,
+            `Le sélecteur CSS ${fields[invalidSelector]} est invalide.`,
+            "INVALID_SCRAPING_SELECTOR",
+          );
+        }
         if (network) {
           const nativeNetwork = network;
           const tracked = new Set<HTTPRequest>();
@@ -399,6 +434,8 @@ export class ScrapingService {
         });
 
         async function navigate(target: string) {
+          currentTarget = target;
+          phase = "navigation";
           networkError = undefined;
           filteredResources.clear();
           try {
@@ -406,7 +443,7 @@ export class ScrapingService {
               await network.guard(target);
               network.beginLoad();
             }
-            await navigateScrapingPage(page, target);
+            await navigateScrapingPage(page, target, { waitForAllResources: false });
             network?.assertWithinBudget();
           } catch (error) {
             if (networkError instanceof AppError) throw networkError;
@@ -416,7 +453,8 @@ export class ScrapingService {
         }
         const articles: ArticlePreview[] = [];
         const warnings: string[] = [];
-        const prepareInitialArticles = async (initialPage = true) => {
+        const prepareInitialArticles = async () => {
+          phase = "rendering";
           let diagnostic = await inspectScrapingPage(page, config);
           if (!diagnostic.withTitle && diagnostic.pageProtection && this.verificationWaitMs > 0) {
             const deadline = Date.now() + this.verificationWaitMs;
@@ -500,7 +538,7 @@ export class ScrapingService {
             );
           }
           // Network idle does not guarantee that delayed JavaScript has populated the cards.
-          if (initialPage && !diagnostic.articleBlocks && !diagnostic.pageProtection) {
+          if (!diagnostic.withTitle && !diagnostic.pageProtection) {
             try {
               await page.waitForFunction(
                 (config) =>
@@ -530,6 +568,7 @@ export class ScrapingService {
             );
         };
         const readArticles = async () => {
+          phase = "extraction";
           network?.assertWithinBudget();
           const entries = await extract(page, config, options?.window.timezone);
           network?.assertWithinBudget();
@@ -758,7 +797,15 @@ export class ScrapingService {
                         );
                       }),
                     );
-                    if (!pendingLoads && !busy && Date.now() - changedAt >= 300) return entries;
+                    if (!pendingLoads && !busy && Date.now() - changedAt >= 300) {
+                      // A response may finish while the busy-state evaluation is
+                      // in flight. Re-read after it, rather than returning an older DOM.
+                      const settled = await readArticles();
+                      const settledSnapshot = JSON.stringify(settled);
+                      if (settledSnapshot === previous) return settled;
+                      previous = settledSnapshot;
+                      changedAt = Date.now();
+                    }
                     await delay(100);
                   }
                   throw new AppError(
@@ -821,6 +868,7 @@ export class ScrapingService {
           const seenPages = new Set<string>();
           const seenArticles = new Set<string>();
           for (let number = config.pagination!.startPage; ; number++) {
+            currentPageNumber = number;
             const target = paginationUrl(url, config, number);
             try {
               await navigate(target);
@@ -839,7 +887,7 @@ export class ScrapingService {
               }
               throw error;
             }
-            await prepareInitialArticles(number === config.pagination!.startPage);
+            await prepareInitialArticles();
             const entries = await readArticles();
             if (!entries.length) break;
             // Ignore ordering changes when a site repeats a page or cycles through
@@ -878,15 +926,42 @@ export class ScrapingService {
           ...(warnings.length ? { warnings } : {}),
         };
       } catch (error) {
-        if (networkError instanceof AppError) throw networkError;
-        if (error instanceof AppError) throw error;
-        throw new AppError(
-          timedOut ? 504 : 422,
-          timedOut
-            ? "Délai de scraping dépassé."
-            : "Impossible d'extraire les articles. Vérifiez la page et les sélecteurs CSS.",
-          timedOut ? "TIMEOUT" : "SCRAPING_ERROR",
+        const failure = networkError instanceof AppError ? networkError : error;
+        const target = new URL(currentTarget);
+        const location = `${currentPageNumber === undefined ? "Page" : `Page ${currentPageNumber}`} (${target.origin}${target.pathname})`;
+        const stages = {
+          configuration: "la validation des sélecteurs",
+          navigation: "le chargement du document",
+          rendering: "l’attente des articles",
+          extraction: "l’extraction des articles",
+        };
+        logger.debug("scraping.failed", "Échec du navigateur de collecte.", {
+          phase,
+          pageNumber: currentPageNumber,
+          pageUrl: target.origin + target.pathname,
+          error: failure,
+        });
+        if (failure instanceof AppError) {
+          if (currentPageNumber !== undefined) failure.message = `${location} : ${failure.message}`;
+          throw failure;
+        }
+        const expired = timedOut || failure instanceof TimeoutError;
+        const documentChanged =
+          failure instanceof Error &&
+          /Execution context was destroyed|Cannot find context|Target closed|Session closed/.test(
+            failure.message,
+          );
+        const result = new AppError(
+          expired ? 504 : 422,
+          expired
+            ? `${location} : délai dépassé pendant ${stages[phase]}.`
+            : documentChanged
+              ? `${location} : le document a été rechargé ou fermé pendant ${stages[phase]}.`
+              : `${location} : le navigateur a rencontré une erreur pendant ${stages[phase]}.`,
+          expired ? "TIMEOUT" : documentChanged ? "SCRAPING_DOCUMENT_CHANGED" : "SCRAPING_ERROR",
         );
+        Object.defineProperty(result, "cause", { value: failure });
+        throw result;
       } finally {
         clearTimeout(timer);
         await browser.close();
