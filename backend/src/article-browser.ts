@@ -1,4 +1,9 @@
-import { chromium } from "playwright";
+import {
+  launchScrapingBrowser,
+  createScrapingPage,
+  interceptRequests,
+  navigateScrapingPage,
+} from "./browser";
 import { AppError } from "./errors";
 import { ConcurrencyLimiter } from "./concurrency";
 import type { FetchPage } from "./network";
@@ -30,11 +35,7 @@ export class ArticleBrowser {
       let network: BrowserNetwork | undefined;
       try {
         if (!this.fetchPage) network = await this.createNetwork();
-        browser = await chromium.launch({
-          headless: true,
-          executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
-          ...network?.launchOptions,
-        });
+        browser = await launchScrapingBrowser(network?.launchOptions);
       } catch {
         await network?.close();
         throw new AppError(
@@ -43,7 +44,7 @@ export class ArticleBrowser {
           "ARTICLE_BROWSER_UNAVAILABLE",
         );
       }
-      const context = await browser.newContext(publicBrowserOptions(browser.version()));
+      const context = await browser.createBrowserContext();
       let networkError: unknown;
       let failNavigation = (_error: unknown) => {};
       const navigationFailure = new Promise<never>((_resolve, reject) => {
@@ -59,7 +60,11 @@ export class ArticleBrowser {
       }, 45000);
       try {
         if (network) await network.guard(url);
-        const page = await context.newPage();
+        const page = await createScrapingPage(
+          browser,
+          publicBrowserOptions(await browser.version()),
+          context,
+        );
         if (network) {
           const nativeNetwork = network;
           const fail = (error: AppError) => {
@@ -117,13 +122,12 @@ export class ArticleBrowser {
               fail(nativeNetwork.failure(request.url(), request.failure()?.errorText));
           });
         }
-        await context.route("**/*", async (route) => {
-          const request = route.request();
+        await interceptRequests(page, async (request) => {
           if (
             request.method() !== "GET" ||
             ["image", "media", "font"].includes(request.resourceType())
           ) {
-            await route.abort().catch(() => {});
+            await request.abort().catch(() => {});
             return;
           }
           try {
@@ -139,7 +143,7 @@ export class ArticleBrowser {
               );
             if (network) {
               await network.guard(request.url());
-              await route.continue();
+              await request.continue();
               return;
             }
             if (request.isNavigationRequest() && ++navigations > 8)
@@ -148,7 +152,7 @@ export class ArticleBrowser {
                 "La page boucle sur des redirections navigateur.",
                 "REDIRECT_LIMIT",
               );
-            const headers = await request.allHeaders();
+            const headers = request.headers();
             const response = await this.fetchPage!(request.url(), {
               userAgent: headers["user-agent"],
               cookie: headers.cookie,
@@ -179,7 +183,7 @@ export class ArticleBrowser {
                 target.password
               )
                 throw new AppError(400, "Cette redirection n'est pas autorisée.", "UNSAFE_URL");
-              // Native HTTP redirects may bypass Playwright's route handler. Start a new
+              // Native HTTP redirects may bypass the browser's request interception. Start a new
               // document navigation instead, so every destination remains DNS-pinned.
               body = `<html><body><script>window.location.replace(${JSON.stringify(target.href).replace(/</g, "\\u003c")});</script></body></html>`;
               status = 200;
@@ -187,14 +191,14 @@ export class ArticleBrowser {
             }
             const cookieOriginMatches =
               !response.url || new URL(response.url).origin === new URL(request.url()).origin;
-            await route.fulfill({
+            await request.respond({
               status,
               body,
               headers: {
                 // The shared transport already decoded the remote charset to UTF-8 text.
                 "content-type": `${renderedType.replace(/;\s*charset\s*=\s*[^;]+/i, "")}; charset=utf-8`,
                 ...(response.cookies.length && cookieOriginMatches
-                  ? { "set-cookie": response.cookies.join("\n") }
+                  ? { "set-cookie": response.cookies }
                   : {}),
               },
             });
@@ -203,18 +207,19 @@ export class ArticleBrowser {
               networkError = error;
               failNavigation(error);
             }
-            await route.abort().catch(() => {});
+            await request.abort().catch(() => {});
           }
         });
-        await context.routeWebSocket("**/*", (socket) => socket.close());
+
         page.setDefaultTimeout(15000);
         await Promise.race([
           (async () => {
-            await page.goto(url, { waitUntil: "networkidle" });
+            await navigateScrapingPage(page, url);
             if (linkSelector) {
               await page.waitForFunction(
                 (selector) =>
                   Boolean(document.querySelector(selector)?.getAttribute("href")?.trim()),
+                {},
                 linkSelector,
               );
               return;

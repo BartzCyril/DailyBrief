@@ -1,4 +1,11 @@
-import { chromium, errors, type Page, type Request } from "playwright";
+import {
+  launchScrapingBrowser,
+  createScrapingPage,
+  interceptRequests,
+  navigateScrapingPage,
+  delay,
+} from "./browser";
+import { TimeoutError, type Page, type HTTPRequest, type ElementHandle } from "puppeteer";
 import type { ArticlePreview, ScrapingConfig, SourcePreview } from "@dailybrief/shared";
 import { scrapingSchema } from "../../shared/src/scraping";
 import type { FetchText } from "./network";
@@ -167,16 +174,12 @@ export class ScrapingService {
       const network = this.fetchText ? undefined : await this.createNetwork();
       let browser;
       try {
-        browser = await chromium.launch({
-          headless: true,
-          executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
-          ...network?.launchOptions,
-        });
+        browser = await launchScrapingBrowser(network?.launchOptions);
       } catch (error) {
         await network?.close();
         throw error;
       }
-      const context = await browser.newContext(publicBrowserOptions(browser.version()));
+      const context = await browser.createBrowserContext();
       let timedOut = false;
       let networkError: unknown;
       let failLoad: ((error: unknown) => void) | undefined;
@@ -202,11 +205,15 @@ export class ScrapingService {
             )
           : undefined;
       try {
-        const page = await context.newPage();
+        const page = await createScrapingPage(
+          browser,
+          publicBrowserOptions(await browser.version()),
+          context,
+        );
         page.setDefaultTimeout(15000);
         if (network) {
           const nativeNetwork = network;
-          const tracked = new Set<Request>();
+          const tracked = new Set<HTTPRequest>();
           const fail = (error: AppError) => {
             if (networkError instanceof AppError) return;
             networkError = error;
@@ -275,7 +282,7 @@ export class ScrapingService {
               if (new URL(request.url()).origin === new URL(page.url()).origin) attemptedLoads++;
             }
           });
-          const finish = (request: Request) => {
+          const finish = (request: HTTPRequest) => {
             if (tracked.delete(request)) pendingLoads--;
           };
           page.on("requestfinished", finish);
@@ -298,12 +305,12 @@ export class ScrapingService {
           });
         }
         page.on("pageerror", (error) => {
-          if (scriptErrors.size < 3) scriptErrors.add(error.message.slice(0, 300));
+          if (scriptErrors.size < 3 && error instanceof Error)
+            scriptErrors.add(error.message.slice(0, 300));
         });
         // Production continues Chromium requests through a public-address TCP relay.
         // Explicit fetchers only supply deterministic fixture responses in tests.
-        await context.route("**/*", async (route) => {
-          const request = route.request();
+        await interceptRequests(page, async (request) => {
           const ajax = ["xhr", "fetch"].includes(request.resourceType());
           const verificationPost = verificationPostAllowed(
             request.url(),
@@ -329,7 +336,7 @@ export class ScrapingService {
             (!verificationResources && ["image", "font"].includes(request.resourceType()))
           ) {
             recordFilteredResource(request.url(), request.method(), request.resourceType());
-            await route.abort();
+            await request.abort();
             return;
           }
           if (network) {
@@ -342,11 +349,11 @@ export class ScrapingService {
               ) {
                 recordFilteredResource(request.url(), request.method(), request.resourceType());
                 if (failLoad) blockedPosts.add(request.url());
-                await route.abort().catch(() => {});
+                await request.abort().catch(() => {});
                 return;
               }
               await network.guard(request.url());
-              await route.continue();
+              await request.continue();
             } catch (error) {
               if (
                 (request.isNavigationRequest() && request.frame() === page.mainFrame()) ||
@@ -355,7 +362,7 @@ export class ScrapingService {
                 networkError = error;
                 failLoad?.(error);
               }
-              await route.abort().catch(() => {});
+              await request.abort().catch(() => {});
             }
             return;
           }
@@ -372,7 +379,7 @@ export class ScrapingService {
               // A click can also trigger analytics or other unrelated POSTs. Abort
               // them without failing an article batch that loads successfully.
               if (tracked) blockedPosts.add(request.url());
-              await route.abort().catch(() => {});
+              await request.abort().catch(() => {});
               return;
             }
             if (tracked && new URL(request.url()).origin === new URL(page.url()).origin)
@@ -386,6 +393,7 @@ export class ScrapingService {
               accept: headers.accept,
               requestedWith: headers["x-requested-with"],
               cookie: headers.cookie,
+              userAgent: headers["user-agent"],
             });
             const contentType =
               (
@@ -395,7 +403,7 @@ export class ScrapingService {
                   stylesheet: "text/css",
                 } as Record<string, string>
               )[request.resourceType()] ?? "application/json";
-            await route.fulfill({ body, contentType: `${contentType}; charset=utf-8` });
+            await request.respond({ body, contentType: `${contentType}; charset=utf-8` });
           } catch (error) {
             if (
               (request.isNavigationRequest() && request.frame() === page.mainFrame()) ||
@@ -404,12 +412,12 @@ export class ScrapingService {
               networkError = error;
               failLoad?.(error);
             }
-            await route.abort().catch(() => {});
+            await request.abort().catch(() => {});
           } finally {
             if (tracked) pendingLoads--;
           }
         });
-        await context.routeWebSocket("**/*", (socket) => socket.close());
+
         async function navigate(target: string) {
           networkError = undefined;
           filteredResources.clear();
@@ -418,7 +426,7 @@ export class ScrapingService {
               await network.guard(target);
               network.beginLoad();
             }
-            await page.goto(target, { waitUntil: "networkidle" });
+            await navigateScrapingPage(page, target);
             network?.assertWithinBudget();
           } catch (error) {
             if (networkError instanceof AppError) throw networkError;
@@ -483,7 +491,7 @@ export class ScrapingService {
               try {
                 const updated = await beforeDeadline(async () => {
                   await page.reload({
-                    waitUntil: "networkidle",
+                    waitUntil: "networkidle0",
                     timeout: Math.max(1, Math.min(10000, deadline - Date.now())),
                   });
                   return inspectScrapingPage(page, config);
@@ -491,7 +499,7 @@ export class ScrapingService {
                 if (updated) diagnostic = updated;
               } catch (error) {
                 if (networkError instanceof AppError) throw networkError;
-                if (!(error instanceof errors.TimeoutError)) throw error;
+                if (!(error instanceof TimeoutError)) throw error;
               }
             }
             while (!diagnostic.withTitle && diagnostic.pageProtection && Date.now() < deadline) {
@@ -501,7 +509,7 @@ export class ScrapingService {
               if (remaining <= 0) break;
               try {
                 const updated = await beforeDeadline(async () => {
-                  await page.waitForTimeout(Math.min(250, remaining));
+                  await delay(Math.min(250, remaining));
                   return inspectScrapingPage(page, config);
                 });
                 if (!updated) break;
@@ -546,11 +554,11 @@ export class ScrapingService {
                   [...document.querySelectorAll(config.articleSelector)].some((block) =>
                     block.querySelector(config.titleSelector)?.textContent?.trim(),
                   ),
-                config,
                 { timeout: 3000 },
+                config,
               );
             } catch (error) {
-              if (!(error instanceof errors.TimeoutError)) throw error;
+              if (!(error instanceof TimeoutError)) throw error;
             }
             diagnostic = await inspectScrapingPage(page, config);
           }
@@ -613,7 +621,7 @@ export class ScrapingService {
           for (let i = 0; !stop && i < (firstPageOnly ? 0 : config.scroll!.maxScrolls); i++) {
             network?.beginLoad();
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await page.waitForTimeout(config.scroll!.waitAfterScrollMs);
+            await delay(config.scroll!.waitAfterScrollMs);
             const entries = await readArticles();
             articles.push(...entries);
             stop = reachedArchives(entries);
@@ -640,8 +648,22 @@ export class ScrapingService {
           let clicks = 0;
           let stop = reachedArchives(initial);
           while (!firstPageOnly && !stop) {
-            const buttons = page.locator(buttonSelector).filter({ visible: true });
-            const count = await buttons.count();
+            const visibleButtons = await page.$$eval(buttonSelector, (elements) =>
+              elements
+                .filter((element) => {
+                  const style = getComputedStyle(element);
+                  return (
+                    style.visibility !== "hidden" &&
+                    style.visibility !== "collapse" &&
+                    Boolean(element.getClientRects().length)
+                  );
+                })
+                .map(
+                  (element) =>
+                    !element.matches(":disabled") && !element.closest('[aria-disabled="true"]'),
+                ),
+            );
+            const count = visibleButtons.length;
             if (!count) {
               if (!clicks)
                 warnings.push(
@@ -655,7 +677,7 @@ export class ScrapingService {
                 "Plusieurs boutons correspondent au sélecteur. Précisez le sélecteur du bouton à cliquer.",
                 "INVALID_LOAD_MORE_BUTTON",
               );
-            if (!(await buttons.isEnabled())) break;
+            if (!visibleButtons[0]) break;
             network?.beginLoad();
             networkError = undefined;
             blockedPosts.clear();
@@ -667,7 +689,25 @@ export class ScrapingService {
             try {
               entries = await Promise.race([
                 (async () => {
-                  await buttons.click({ timeout: waitTimeoutMs });
+                  const handle = await page.evaluateHandle(
+                    (selector) =>
+                      Array.from(document.querySelectorAll(selector)).find((element) => {
+                        const style = getComputedStyle(element);
+                        return (
+                          style.visibility !== "hidden" &&
+                          style.visibility !== "collapse" &&
+                          Boolean(element.getClientRects().length)
+                        );
+                      }) ?? null,
+                    buttonSelector,
+                  );
+                  try {
+                    const button = handle.asElement() as ElementHandle<Element> | null;
+                    if (!button) throw new Error("Load more button disappeared before the click");
+                    await button.asLocator().setTimeout(waitTimeoutMs).click();
+                  } finally {
+                    await handle.dispose();
+                  }
                   clicks++;
                   const deadline = Date.now() + waitTimeoutMs;
                   try {
@@ -722,11 +762,11 @@ export class ScrapingService {
                           },
                         );
                       },
-                      { config, known: Array.from(seen) },
                       { timeout: waitTimeoutMs, polling: 100 },
+                      { config, known: Array.from(seen) },
                     );
                   } catch (error) {
-                    if (!(error instanceof errors.TimeoutError)) throw error;
+                    if (!(error instanceof TimeoutError)) throw error;
                     return undefined;
                   }
                   // Networkidle can already have fired for the initial document. Wait for
@@ -742,15 +782,21 @@ export class ScrapingService {
                     }
                     // Some themes ignore clicks while their own loading lock is set,
                     // even after the new DOM is stable and the AJAX response has finished.
-                    const busy = await buttons.evaluateAll((elements) =>
-                      elements.some((button) =>
-                        button.matches(
-                          '.fetching, .loading, .is-loading, [aria-busy="true"], [data-loading="true"]',
-                        ),
-                      ),
+                    const busy = await page.$$eval(buttonSelector, (elements) =>
+                      elements.some((button) => {
+                        const style = getComputedStyle(button);
+                        return (
+                          style.visibility !== "hidden" &&
+                          style.visibility !== "collapse" &&
+                          Boolean(button.getClientRects().length) &&
+                          button.matches(
+                            '.fetching, .loading, .is-loading, [aria-busy="true"], [data-loading="true"]',
+                          )
+                        );
+                      }),
                     );
                     if (!pendingLoads && !busy && Date.now() - changedAt >= 300) return entries;
-                    await page.waitForTimeout(100);
+                    await delay(100);
                   }
                   throw new AppError(
                     504,

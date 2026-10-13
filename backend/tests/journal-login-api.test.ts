@@ -4,6 +4,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import request from "supertest";
 import { createApp } from "../src/app";
 import { JournalLoginBrowser } from "../src/journal-login";
+import type { BriefInput } from "../src/ai";
 import { JournalAccessService, JournalSecretCipher } from "../src/journal-access";
 import { ArticleContentService } from "../src/article-content";
 import { RssService } from "../src/rss";
@@ -39,6 +40,19 @@ describe("configured journal login API and pipeline", () => {
       expect(input.content).not.toContain("journal-test-password");
       return { title: "Article", summary: "Résumé", keyPoints: [] };
     },
+    generateBrief: async (input: BriefInput) => ({
+      headline: "Brief du jour",
+      lead: "Les articles du journal.",
+      stories: [
+        {
+          title: "Article",
+          text: "Résumé",
+          articleIds: input.articles.map((article) => article.id),
+        },
+      ],
+      otherNews: [],
+      trends: "",
+    }),
   };
   const email = {
     send: async () => {

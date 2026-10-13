@@ -1,4 +1,5 @@
-import type { Frame, Locator, Page } from "playwright";
+import type { Frame, ElementHandle, Page } from "puppeteer";
+import { delay } from "./browser";
 import { AppError } from "./errors";
 
 export function consentPostAllowed(
@@ -31,29 +32,39 @@ export async function dismissCookieConsent(
     );
   }
   const find = async () => {
-    const matches: { frame: Frame; button: Locator }[] = [];
+    const matches: { frame: Frame; button: ElementHandle<Element> }[] = [];
     for (const frame of page.frames()) {
       if (frame.isDetached()) continue;
-      if (frame !== page.mainFrame() && !(await (await frame.frameElement()).isVisible())) continue;
-      const buttons = frame.locator(selector).filter({ visible: true });
-      for (let i = 0; i < (await buttons.count()); i++)
-        matches.push({ frame, button: buttons.nth(i) });
+      if (frame !== page.mainFrame()) {
+        const element = await frame.frameElement();
+        try {
+          if (!element || !(await element.isVisible())) continue;
+        } finally {
+          await element?.dispose();
+        }
+      }
+      for (const button of await frame.$$(selector)) {
+        if (await button.isVisible()) matches.push({ frame, button });
+        else await button.dispose();
+      }
     }
     return matches;
   };
   let matches = await find();
   const appearanceDeadline = Date.now() + (options.waitForAppearance ? 2000 : 0);
   while (!matches.length && Date.now() < appearanceDeadline) {
-    await page.waitForTimeout(100);
+    await delay(100);
     matches = await find();
   }
   if (!matches.length) return false; // The choice may already have been stored in this context.
-  if (matches.length !== 1)
+  if (matches.length !== 1) {
+    await Promise.all(matches.map(({ button }) => button.dispose()));
     throw new AppError(
       422,
       "Plusieurs boutons correspondent au sélecteur de cookies. Choisissez un sélecteur plus précis.",
       "INVALID_COOKIE_CONSENT_SELECTOR",
     );
+  }
   const { frame, button } = matches[0]!;
   if (
     !(await button.evaluate((element) =>
@@ -75,9 +86,20 @@ export async function dismissCookieConsent(
     options.onAction?.(origins);
     await Promise.race([
       (async () => {
-        await button.click({ timeout: 5000 });
-        while (!finished && !frame.isDetached() && (await button.isVisible()))
-          await page.waitForTimeout(100);
+        try {
+          await button.asLocator().setTimeout(5000).click();
+        } catch (error) {
+          if (!frame.isDetached()) throw error;
+        }
+        while (!finished && !frame.isDetached()) {
+          try {
+            if (!(await button.isVisible())) break;
+          } catch (error) {
+            if (frame.isDetached()) break;
+            throw error;
+          }
+          await delay(100);
+        }
       })(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
@@ -105,5 +127,6 @@ export async function dismissCookieConsent(
     finished = true;
     clearTimeout(timer);
     options.onAction?.(new Set());
+    await button.dispose().catch(() => {});
   }
 }

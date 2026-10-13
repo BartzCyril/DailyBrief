@@ -1,5 +1,6 @@
 import { createServer, connect, type Socket } from "node:net";
-import type { BrowserContextOptions, LaunchOptions, Page } from "playwright";
+import type { LaunchOptions, Page } from "puppeteer";
+import { setRequestGuard } from "./browser";
 import { AppError } from "./errors";
 import { validateRemoteUrl, remoteConnectionError, RemoteConnectionError } from "./network";
 import { MAX_REMOTE_BYTES } from "./remote-response";
@@ -19,7 +20,7 @@ export type NativeBrowserRequest = {
   redirected: boolean;
 };
 
-export function publicBrowserOptions(version: string): BrowserContextOptions {
+export function publicBrowserOptions(version: string): { locale: string; userAgent: string } {
   const platform =
     process.platform === "win32"
       ? "Windows NT 10.0; Win64; x64"
@@ -27,10 +28,8 @@ export function publicBrowserOptions(version: string): BrowserContextOptions {
         ? "Macintosh; Intel Mac OS X 10_15_7"
         : "X11; Linux x86_64";
   return {
-    serviceWorkers: "block",
-    acceptDownloads: false,
     locale: "fr-FR",
-    userAgent: `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version} Safari/537.36`,
+    userAgent: `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version.replace(/^.*\//, "")} Safari/537.36`,
   };
 }
 
@@ -39,7 +38,7 @@ export function publicBrowserOptions(version: string): BrowserContextOptions {
  * No HTML, passwords, certificates or cookies are read or stored by this relay.
  */
 export class BrowserNetwork {
-  readonly launchOptions: Pick<LaunchOptions, "proxy" | "args">;
+  readonly launchOptions: Pick<LaunchOptions, "args">;
   private sockets = new Set<Socket>();
   private failures = new Map<string, AppError>();
   private receivedBytes = 0;
@@ -53,8 +52,9 @@ export class BrowserNetwork {
     private maxLoadBytes: number,
   ) {
     this.launchOptions = {
-      proxy: { server: `socks5://127.0.0.1:${port}`, bypass: "<-loopback>" },
       args: [
+        `--proxy-server=socks5://127.0.0.1:${port}`,
+        "--proxy-bypass-list=<-loopback>",
         "--disable-quic",
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
@@ -265,7 +265,7 @@ export async function watchBrowserResponseSize(
     onFailure(error);
     void page.close().catch(() => {});
   });
-  const session = await page.context().newCDPSession(page);
+  const session = await page.createCDPSession();
   const sizes = new Map<string, number>();
   await session.send("Network.enable");
   session.on("Network.dataReceived", ({ requestId, dataLength }) => {
@@ -286,61 +286,31 @@ export async function watchBrowserResponseSize(
   session.on("Network.loadingFailed", ({ requestId }) => sizes.delete(requestId));
 }
 
-/** Playwright routing skips subsequent URLs of an HTTP redirect. CDP checks every
- * request before Chromium transmits it, including redirected AJAX requests whose
- * paused event does not always include redirectedRequestId.
- */
+/** Puppeteer interception checks every redirected request before Chromium sends it. */
 export async function watchBrowserRequests(
   page: Page,
   network: BrowserNetwork,
   check: (request: NativeBrowserRequest) => void,
   onFailure: (error: AppError, request: NativeBrowserRequest) => void,
 ) {
-  const session = await page.context().newCDPSession(page);
-  const { frameTree } = await session.send("Page.getFrameTree");
-  const firstUrls = new Map<string, string>();
-  const redirects = new Set<string>();
-  session.on("Network.requestWillBeSent", (event) => {
-    if (event.redirectResponse) redirects.add(event.requestId);
+  setRequestGuard(page, async (intercepted) => {
+    const request: NativeBrowserRequest = {
+      url: intercepted.url(),
+      method: intercepted.method(),
+      resourceType:
+        intercepted.resourceType() === "xhr"
+          ? "XHR"
+          : intercepted.resourceType().replace(/^./, (letter) => letter.toUpperCase()),
+      mainNavigation: intercepted.isNavigationRequest() && intercepted.frame() === page.mainFrame(),
+      redirected: intercepted.redirectChain().length > 0,
+    };
+    try {
+      await network.guard(request.url);
+      check(request);
+    } catch (error) {
+      const failure = error instanceof AppError ? error : new RemoteConnectionError("UNKNOWN");
+      if (!page.isClosed()) onFailure(failure, request);
+      throw failure;
+    }
   });
-  const finish = ({ requestId }: { requestId: string }) => {
-    firstUrls.delete(requestId);
-    redirects.delete(requestId);
-  };
-  session.on("Network.loadingFinished", finish);
-  session.on("Network.loadingFailed", finish);
-  await session.send("Network.enable");
-  session.on("Fetch.requestPaused", (event) => {
-    void (async () => {
-      const firstUrl = event.networkId ? firstUrls.get(event.networkId) : undefined;
-      const redirected = Boolean(
-        event.redirectedRequestId ||
-        (event.networkId && redirects.has(event.networkId)) ||
-        (firstUrl && firstUrl !== event.request.url),
-      );
-      if (event.networkId && !firstUrl) firstUrls.set(event.networkId, event.request.url);
-      const request = {
-        url: event.request.url,
-        method: event.request.method,
-        resourceType: event.resourceType,
-        mainNavigation: event.resourceType === "Document" && event.frameId === frameTree.frame.id,
-        redirected,
-      };
-      try {
-        await network.guard(request.url);
-        check(request);
-        await session.send("Fetch.continueRequest", { requestId: event.requestId });
-      } catch (error) {
-        if (!page.isClosed())
-          onFailure(
-            error instanceof AppError ? error : new RemoteConnectionError("UNKNOWN"),
-            request,
-          );
-        await session
-          .send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" })
-          .catch(() => {});
-      }
-    })();
-  });
-  await session.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
 }

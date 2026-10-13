@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, spyOn } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
-import { chromium, type Browser } from "playwright";
+import type { Browser } from "puppeteer";
+import { scrapingBrowser } from "../src/browser";
 import { config, db, redis, connect, disconnect } from "./helpers";
 import { journalFixture, loginConfig, fullText } from "./fixtures/journal-login";
 import { JournalLoginBrowser } from "../src/journal-login";
@@ -210,7 +211,7 @@ describe("authenticated journal batches across sources and Redis consumers", () 
     "%s: three sources use one login/browser and three AI jobs with no secrets in Redis",
     async (trigger) => {
       const user = await owner(true, "reader@example.com", trigger === "scheduled");
-      const launch = spyOn(chromium, "launch");
+      const launch = spyOn(scrapingBrowser, "launch");
       try {
         const { snapshot, jobs } = await execute(user.id, trigger);
         expect(snapshot.result?.articlesSummarized).toBe(3);
@@ -322,7 +323,7 @@ describe("authenticated journal batches across sources and Redis consumers", () 
 
   test("disabled journals create skipped jobs without launching a browser or calling AI", async () => {
     const user = await owner(false);
-    const launch = spyOn(chromium, "launch");
+    const launch = spyOn(scrapingBrowser, "launch");
     try {
       const { jobs } = await execute(user.id);
       expect(jobs.total).toBe(3);
@@ -415,7 +416,7 @@ describe("authenticated journal batches across sources and Redis consumers", () 
     await execute(user.id);
     failAi = false;
     summaries = 0;
-    const launch = spyOn(chromium, "launch");
+    const launch = spyOn(scrapingBrowser, "launch");
     try {
       const { snapshot } = await execute(user.id);
       expect(snapshot.result?.articlesSummarized).toBe(3);
@@ -448,7 +449,7 @@ describe("authenticated journal batches across sources and Redis consumers", () 
         loginUrl: "https://second.publisher.example/login",
       },
     });
-    const launch = spyOn(chromium, "launch");
+    const launch = spyOn(scrapingBrowser, "launch");
     try {
       const { snapshot } = await execute(user.id);
       expect(snapshot.result?.articlesSummarized).toBe(3);

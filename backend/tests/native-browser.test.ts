@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { strict as assert } from "node:assert";
 import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
-import { chromium } from "playwright";
+import { launchScrapingBrowser, createScrapingPage } from "../src/browser";
 import { once } from "node:events";
 import { gzipSync } from "node:zlib";
 import { BrowserNetwork, type BrowserNetworkFactory } from "../src/browser-network";
@@ -499,14 +499,14 @@ afterAll(async () => {
 
 test("Chromium owns the HTTPS handshake and negotiates HTTP/2 through the TCP relay", async () => {
   const network = await networkFactory();
-  const browser = await chromium.launch({
+  const browser = await launchScrapingBrowser({
     headless: true,
     executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
     ...network.launchOptions,
+    acceptInsecureCerts: true,
   });
   try {
-    const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    const page = await context.newPage();
+    const page = await createScrapingPage(browser);
     await page.goto(`https://publisher.test:${tlsPort}/`);
     expect(await page.content()).toContain("Page HTTPS native");
     expect(protocol).toBe("2.0");

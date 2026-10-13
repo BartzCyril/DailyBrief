@@ -1,5 +1,11 @@
 import { beforeAll, afterAll, expect, test } from "bun:test";
-import { chromium, type Browser } from "playwright";
+import type { Browser } from "puppeteer";
+import {
+  launchScrapingBrowser,
+  createScrapingPage,
+  interceptRequests,
+  navigateScrapingPage,
+} from "../src/browser";
 import type { ScrapingConfig } from "@dailybrief/shared";
 import { consentPostAllowed, dismissCookieConsent } from "../src/cookie-consent";
 import { ScrapingService } from "../src/scraping";
@@ -8,10 +14,7 @@ import { selectorAnalysisInputSchema } from "../src/selector-assistance";
 
 let browser: Browser;
 beforeAll(async () => {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
-  });
+  browser = await launchScrapingBrowser();
 }, 30000);
 afterAll(async () => browser?.close());
 
@@ -64,19 +67,19 @@ test("only scraping analysis accepts the optional nonempty consent selector", ()
 });
 
 test("clicks a visible consent button inside an iframe and resets temporary permissions", async () => {
-  const context = await browser.newContext();
+  const context = await browser.createBrowserContext();
   try {
-    await context.route("**/*", async (route) =>
-      route.fulfill({
+    const page = await createScrapingPage(browser, {}, context);
+    await interceptRequests(page, async (request) =>
+      request.respond({
         contentType: "text/html",
         body:
-          new URL(route.request().url()).hostname === "cmp.example"
+          new URL(request.url()).hostname === "cmp.example"
             ? '<div id="cookies"><button id="accept-cookies" onclick="parent.postMessage(\'accepted\',\'*\')">Refuser</button></div>'
             : '<iframe src="https://cmp.example/consent"></iframe><script>onmessage=()=>document.querySelector("iframe").remove()</script>',
       }),
     );
-    const page = await context.newPage();
-    await page.goto("https://publisher.example/", { waitUntil: "networkidle" });
+    await navigateScrapingPage(page, "https://publisher.example/");
     const calls: string[][] = [];
     expect(
       await dismissCookieConsent(page, "#accept-cookies", {
@@ -84,7 +87,7 @@ test("clicks a visible consent button inside an iframe and resets temporary perm
       }),
     ).toBe(true);
     expect(calls).toEqual([["https://publisher.example", "https://cmp.example"], []]);
-    expect(await page.locator("iframe").count()).toBe(0);
+    expect(await page.$$eval("iframe", (elements) => elements.length)).toBe(0);
   } finally {
     await context.close();
   }

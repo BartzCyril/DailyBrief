@@ -21,7 +21,7 @@
     "db:migrate": "bun --env-file=../.env run --cwd backend db:migrate",
     "services:up": "docker compose up -d --wait postgres redis",
     "services:down": "docker compose down",
-    "browser:install": "bun run --cwd backend playwright install chromium",
+    "browser:install": "bun run --cwd backend puppeteer browsers install chrome",
     "browser:prepare": "bun run --cwd backend scripts/prepare-browser.ts",
     "diagnose:page": "bun --env-file=../.env run --cwd backend scripts/diagnose-page.ts",
     "diagnose:scraping": "bun --env-file=../.env run --cwd backend scripts/diagnose-scraping.ts",
@@ -29,7 +29,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:e2e": "bun --env-file=../.env run --cwd backend scripts/prepare-test-db.ts && bun --env-file=../.env run --cwd backend scripts/test-e2e.ts",
-    "env:prepare": "bun run --cwd backend scripts/prepare-local-env.ts"
+    "env:prepare": "bun run --cwd backend scripts/prepare-local-env.ts",
+    "browser:install:deps": "bun run --cwd backend puppeteer browsers install chrome --install-deps"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

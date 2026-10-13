@@ -1,5 +1,5 @@
+import { launchScrapingBrowser, createScrapingPage, interceptRequests } from "./browser";
 import { JSDOM } from "jsdom";
-import { chromium } from "playwright";
 import { z } from "zod";
 import type {
   ScrapingConfig,
@@ -261,7 +261,7 @@ export function selectorAnalysisPrompt(
 ): string {
   const task =
     input.kind === "SCRAPING"
-      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector, linkSelector et dateSelector sont RELATIFS à ce bloc. Ces quatre sélecteurs sont obligatoires dans la configuration finale. Cherche activement la date de publication, pas seulement le titre et le lien. Chaque sélecteur désigne un seul élément par bloc. La description est extraite automatiquement côté serveur : ne propose pas de descriptionSelector. Si une popup de cookies est visible, propose cookieConsentSelector pour un unique bouton de consentement explicite (Accepter, Refuser ou Continuer sans accepter). Ce sélecteur est global à la page, pas relatif aux articles. Ne confonds jamais consentement aux cookies, abonnement, connexion, achat ou CAPTCHA. S'il n'y a pas de popup ou pas de bouton observable, omets cookieConsentSelector : n'invente rien. Pour la date, repère time, son attribut datetime, une classe de date ou un texte de publication observé. Si aucune date n'est présente, retourne dateSelector:null sans inventer de date ni utiliser le titre comme date. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, sans :contains ni syntaxe Playwright. Inspecte AUSSI les contrôles de chargement prioritaires : PAGINATE pour des liens numérotés ou rel=next, avec strategy QUERY_PARAM pour ?page=2 ou URL_TEMPLATE pour /page/2 et {page} à la place du compteur. Ne confonds pas le numéro de catégorie ou l'identifiant d'article avec le compteur de page. Déduis startPage et les paramètres des liens observés, y compris les pages qui commencent à 0. LOAD_MORE pour un bouton explicite de nouveaux articles avec loadMore={"buttonSelector":"...","waitTimeoutMs":10000}. SCROLL si des articles supplémentaires ont été observés lors du scroll, avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}. Sans contrôle ni ajout observé, SCROLL reste un mode borné à vérifier, pas une preuve de scroll infini. N'invente aucun schéma de pagination. Observation du navigateur : ${page.scrollObserved ? "de nouveaux liens d'articles sont apparus au scroll" : "aucun ajout d'articles au scroll confirmé"}. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
+      ? `Identifie les blocs d'articles de la liste. articleSelector désigne chaque bloc; titleSelector, linkSelector et dateSelector sont RELATIFS à ce bloc. Ces quatre sélecteurs sont obligatoires dans la configuration finale. Cherche activement la date de publication, pas seulement le titre et le lien. Chaque sélecteur désigne un seul élément par bloc. La description est extraite automatiquement côté serveur : ne propose pas de descriptionSelector. Si une popup de cookies est visible, propose cookieConsentSelector pour un unique bouton de consentement explicite (Accepter, Refuser ou Continuer sans accepter). Ce sélecteur est global à la page, pas relatif aux articles. Ne confonds jamais consentement aux cookies, abonnement, connexion, achat ou CAPTCHA. S'il n'y a pas de popup ou pas de bouton observable, omets cookieConsentSelector : n'invente rien. Pour la date, repère time, son attribut datetime, une classe de date ou un texte de publication observé. Si aucune date n'est présente, retourne dateSelector:null sans inventer de date ni utiliser le titre comme date. Écarte navigation, publicité, abonnement et liens sociaux. Choisis des sélecteurs CSS stables, précis, sans :contains ni pseudo-sélecteurs de navigateur. Inspecte AUSSI les contrôles de chargement prioritaires : PAGINATE pour des liens numérotés ou rel=next, avec strategy QUERY_PARAM pour ?page=2 ou URL_TEMPLATE pour /page/2 et {page} à la place du compteur. Ne confonds pas le numéro de catégorie ou l'identifiant d'article avec le compteur de page. Déduis startPage et les paramètres des liens observés, y compris les pages qui commencent à 0. LOAD_MORE pour un bouton explicite de nouveaux articles avec loadMore={"buttonSelector":"...","waitTimeoutMs":10000}. SCROLL si des articles supplémentaires ont été observés lors du scroll, avec scroll={"maxScrolls":3,"waitAfterScrollMs":800}. Sans contrôle ni ajout observé, SCROLL reste un mode borné à vérifier, pas une preuve de scroll infini. N'invente aucun schéma de pagination. Observation du navigateur : ${page.scrollObserved ? "de nouveaux liens d'articles sont apparus au scroll" : "aucun ajout d'articles au scroll confirmé"}. Retourne l'objet scrapingConfig lui-même, sans enveloppe.`
       : input.kind === "RSS_LINK"
         ? `Cette page est une notice intermédiaire d'un item RSS. Trouve le lien principal « Consulter le document », « Lire l'article » ou équivalent vers le site du journal EXTERNE. Écarte partage social, publicité, menu, abonnement et autres documents. articleLinkSelector doit cibler exactement une balise a avec href HTTP(S), jamais le site de la notice. Retourne {"articleLinkSelector":"..."}.`
         : `Cette page est un formulaire de connexion PUBLIC. Repère l'input identifiant/email visible, l'input type=password et le bouton qui soumet ce même formulaire. Chaque sélecteur CSS doit cibler un unique élément visible. Utilise les attributs réellement observés, jamais un identifiant utilisateur. Ne tente aucune connexion. Aucun élément propre au compte connecté n'est observable: n'invente JAMAIS successSelector ou un sélecteur de contenu abonné. Retourne uniquement {"emailSelector":"...","passwordSelector":"...","submitSelector":"..."}.`;
@@ -291,11 +291,7 @@ export async function renderPublicSelectorPage(
       // An injected fetcher is reserved for deterministic fixtures. Production always
       // uses Chromium's network stack, with no HTTP pre-download or route.fulfill.
       if (!fetchPage) network = await createNetwork();
-      browser = await chromium.launch({
-        headless: true,
-        executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
-        ...network?.launchOptions,
-      });
+      browser = await launchScrapingBrowser(network?.launchOptions);
     } catch {
       await network?.close();
       throw analysisError(
@@ -304,7 +300,7 @@ export async function renderPublicSelectorPage(
         503,
       );
     }
-    const context = await browser.newContext(publicBrowserOptions(browser.version()));
+    const context = await browser.createBrowserContext();
     let navigationError: AppError | undefined;
     let status: number | undefined;
     let navigations = 0;
@@ -355,7 +351,11 @@ export async function renderPublicSelectorPage(
           throw navigationError;
         }
       }
-      const page = await context.newPage();
+      const page = await createScrapingPage(
+        browser,
+        publicBrowserOptions(await browser.version()),
+        context,
+      );
       if (network) {
         const nativeNetwork = network;
         await watchBrowserResponseSize(page, fail, nativeNetwork);
@@ -385,8 +385,7 @@ export async function renderPublicSelectorPage(
             fail(nativeNetwork.failure(request.url(), request.failure()?.errorText));
         });
       }
-      await context.route("**/*", async (route) => {
-        const request = route.request();
+      await interceptRequests(page, async (request) => {
         const mainNavigation =
           request.isNavigationRequest() && request.frame() === page.mainFrame();
         if (
@@ -399,18 +398,18 @@ export async function renderPublicSelectorPage(
             )) ||
           ["image", "media", "font"].includes(request.resourceType())
         ) {
-          await route.abort().catch(() => {});
+          await request.abort().catch(() => {});
           return;
         }
         try {
           if (network) {
             await network.guard(request.url());
-            await route.continue();
+            await request.continue();
             return;
           }
           if (mainNavigation && ++navigations > 8)
             throw analysisError("La page boucle sur des redirections.", "REDIRECT_LIMIT");
-          const headers = await request.allHeaders();
+          const headers = request.headers();
           const response = await fetchPage!(request.url(), {
             ...(request.method() === "POST"
               ? {
@@ -440,29 +439,29 @@ export async function renderPublicSelectorPage(
             status = 200;
             contentType = "text/html";
           }
-          await route.fulfill({
+          await request.respond({
             status,
             body,
             headers: {
               "content-type": `${contentType.replace(/;\s*charset\s*=\s*[^;]+/i, "")}; charset=utf-8`,
               ...(response.cookies.length &&
               (!response.url || new URL(response.url).origin === new URL(request.url()).origin)
-                ? { "set-cookie": response.cookies.join("\n") }
+                ? { "set-cookie": response.cookies }
                 : {}),
             },
           });
         } catch (error) {
           if (mainNavigation) fail(error);
-          await route.abort().catch(() => {});
+          await request.abort().catch(() => {});
         }
       });
-      await context.routeWebSocket("**/*", (socket) => socket.close());
+
       await Promise.race([
         (async () => {
           const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
           status = response?.status();
           // Allow hydration without waiting for analytics that never become idle.
-          await page.waitForLoadState("networkidle", { timeout: 2500 }).catch(() => {});
+          await page.waitForNetworkIdle({ timeout: 2500 }).catch(() => {});
           return;
         })(),
         navigationFailure,

@@ -29,7 +29,6 @@ const scrapingConfig = {
   articleSelector: "article",
   titleSelector: "h2",
   linkSelector: "a",
-  descriptionSelector: "p",
   dateSelector: "time",
   mode: "SCROLL" as const,
   scroll: { maxScrolls: 0, waitAfterScrollMs: 300 },

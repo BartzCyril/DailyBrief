@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import type { Page } from "puppeteer";
 import type { ScrapingConfig } from "@dailybrief/shared";
 
 export type ScrapingPageDiagnostic = {

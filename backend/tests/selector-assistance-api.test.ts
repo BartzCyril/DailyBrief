@@ -99,7 +99,7 @@ beforeEach(async () => {
   userId = user.id;
   agent = request.agent(app);
   await agent.post("/auth/login").send({ email, password: "Password123456" }).expect(200);
-});
+}, 15000);
 afterEach(async () => {
   const keys = await redis.keys(`dailybrief:selector-help:*${userId}*`);
   if (keys.length) await redis.del(keys);

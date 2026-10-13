@@ -9,7 +9,7 @@ cd DailyBrief
 cp .env.example .env
 bun install --frozen-lockfile
 bun run env:prepare
-bun run --cwd backend playwright install --with-deps chromium
+bun run browser:install
 bun run services:up
 bun run db:generate
 bun run db:migrate
@@ -99,14 +99,14 @@ tronqués restent refusés avec une ligne/colonne de diagnostic. Une page HTML
 renvoyée à la place du flux a un message distinct. Les déclarations DTD et
 d'entités XML sont refusées ; les CDATA et commentaires restent inchangés.
 
-Les requêtes RSS et Playwright refusent les adresses privées (y compris IPv6),
+Les requêtes RSS et Puppeteer refusent les adresses privées (y compris IPv6),
 épinglent les résultats DNS, contrôlent les redirections et limitent les réponses
 à 2 Mio avant et après décompression. Le transport décode gzip, deflate, Brotli
 et zstd avant de lire le texte, même si un site compresse malgré la demande
 `Accept-Encoding: identity`. Il tient compte du charset HTTP, de la déclaration
 XML et des BOM UTF-8/UTF-16. Les réponses compressées corrompues et les encodages
 invalides ont des erreurs distinctes du XML mal formé.
-Playwright bloque WebSockets, service workers et mutations HTTP. Le
+Puppeteer bloque WebSockets, service workers, téléchargements et mutations HTTP. Le
 scraping utilise au maximum 2 navigateurs simultanés. La pagination continue
 jusqu'à une page sans article, sans plafond de pages, d'articles par page ou
 d'articles au total. Une page déjà rencontrée (même si l'ordre change) arrête
@@ -143,8 +143,23 @@ sans attribuer automatiquement l'arrêt à ces services annexes. Les erreurs de
 chargement AJAX restent des échecs de collecte.
 Seuls des sites accessibles sans connexion sont pris en charge.
 
-Installez Chromium avec `bun run browser:install`. Si le CDN Playwright est
-indisponible, `bun run browser:prepare` extrait la distribution npm Chromium ;
+Tous les parcours navigateur du backend (collecte, rendu des articles, analyse
+des sélecteurs et connexion aux journaux) utilisent `puppeteer`, `puppeteer-extra`
+et `puppeteer-extra-plugin-stealth`. Le plugin stealth est enregistré une seule
+fois dans `backend/src/browser.ts`. Chaque opération dispose d'un contexte isolé.
+Les pages publiques conservent leur navigation native via le relais SOCKS avec
+validation et épinglage DNS. Puppeteer contrôle chaque requête et redirection ;
+les transports HTTP injectés restent réservés aux fixtures et aux sessions journal.
+Playwright reste uniquement une dépendance de développement pour les tests
+d'interface et leurs captures de documentation, avec le même exécutable.
+Cette migration de moteur ne nécessite aucune migration SQL ; les sources et
+leurs configurations existantes restent compatibles.
+
+Installez Chrome for Testing avec `bun run browser:install` (ou
+`bun run browser:install:deps` pour installer aussi les bibliothèques Linux,
+avec les droits administrateur nécessaires). Puppeteer utilise son cache par
+défaut ; `CHROMIUM_EXECUTABLE_PATH` permet de choisir un autre exécutable.
+Si le CDN Chrome for Testing est indisponible, `bun run browser:prepare` extrait la distribution npm Chromium ;
 configurez `CHROMIUM_EXECUTABLE_PATH` avec le chemin affiché. Le fallback contient
 uniquement le navigateur ; une machine Linux doit également disposer de ses
 bibliothèques système. Aucun contrôle TLS ou checksum n'est désactivé.
@@ -793,7 +808,7 @@ d'heure et les nouvelles tentatives SMTP. La CI exécute ces mêmes vérificatio
 
 Dans le cloud, autorisez `registry.ollama.ai` et les hôtes de téléchargement
 retournés par le registre pour télécharger un modèle. Le navigateur de secours
-peut être préparé depuis npm lorsque le CDN Playwright est inaccessible.
+peut être préparé depuis npm lorsque le CDN Chrome for Testing est inaccessible.
 Le fonctionnement avec un vrai modèle et un serveur SMTP réel doit être vérifié
 avec vos paramètres ; les transports de test ne constituent pas cette validation.
 

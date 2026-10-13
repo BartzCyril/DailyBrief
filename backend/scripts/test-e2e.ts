@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import nodemailer from "nodemailer";
 import { chromium } from "playwright";
+import { browserExecutablePath } from "../src/browser";
 import { createApp } from "../src/app";
 import { JobsManager } from "../src/queue/jobs-manager";
 import { startConsumers } from "../src/queue/consumers";
@@ -240,7 +241,7 @@ const frontend = spawn(
   },
 );
 const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+  executablePath: browserExecutablePath(),
   headless: true,
 });
 const email = `e2e-${randomUUID()}@example.test`;
@@ -447,7 +448,7 @@ try {
   await page.getByLabel("Sélecteur du lien", { exact: true }).fill("a");
   await page.getByRole("combobox", { name: "Mode de récupération" }).click();
   await page.getByRole("option", { name: "Bouton charger plus", exact: true }).click();
-  await page.getByLabel("Sélecteur du bouton").fill(".more");
+  await page.getByLabel("Sélecteur du bouton", { exact: true }).fill(".more");
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article scraping", { exact: true }).waitFor();
   await page.getByText("Article supplémentaire", { exact: true }).waitFor();
@@ -503,8 +504,8 @@ try {
   for (const label of ["Sélecteur de date"]) {
     assert.equal(await page.getByLabel(label).getAttribute("required"), "");
   }
-  assert.equal(await page.getByLabel("Sélecteur du bouton").inputValue(), ".more");
-  await page.getByLabel("Sélecteur du bouton").fill("#more");
+  assert.equal(await page.getByLabel("Sélecteur du bouton", { exact: true }).inputValue(), ".more");
+  await page.getByLabel("Sélecteur du bouton", { exact: true }).fill("#more");
   await page.getByLabel("Délai maximum après un clic (ms)").fill("20000");
   await page.getByRole("button", { name: "Tester", exact: true }).click();
   await page.getByText("Article supplémentaire", { exact: true }).waitFor();

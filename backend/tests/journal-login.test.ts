@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test, expect, spyOn } from "bun:test";
-import { chromium, type Browser } from "playwright";
+import type { Browser } from "puppeteer";
+import { scrapingBrowser } from "../src/browser";
 import { JournalLoginBrowser } from "../src/journal-login";
 import { journalFixture, loginConfig, fullText } from "./fixtures/journal-login";
 
@@ -13,7 +14,7 @@ const credentials = {
 test("reads concurrent batch requests in one browser, authenticates once, and closes before returning", async () => {
   const fixture = journalFixture();
   const browser = new JournalLoginBrowser(fixture.fetch);
-  const launch = spyOn(chromium, "launch");
+  const launch = spyOn(scrapingBrowser, "launch");
   const ids = Array.from({ length: 13 }, (_, index) => index + 1);
   try {
     const pages = await browser.withSession("publisher.example", credentials, (read) =>
@@ -57,7 +58,7 @@ test("a missing article does not discard the authenticated session or prevent th
 test("an expired batch session fails subsequent reads without attempting another login and closes on callback failure", async () => {
   const fixture = journalFixture();
   const browser = new JournalLoginBrowser(fixture.fetch);
-  const launch = spyOn(chromium, "launch");
+  const launch = spyOn(scrapingBrowser, "launch");
   try {
     await assert.rejects(
       browser.withSession("publisher.example", credentials, async (read) => {

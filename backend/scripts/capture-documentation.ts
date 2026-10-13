@@ -1,3 +1,4 @@
+import { browserExecutablePath } from "../src/browser";
 /** Real UI screenshots with deterministic demo API responses; no database, AI or email calls. */
 import { chromium, type Page } from "playwright";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -222,7 +223,7 @@ try {
     await Bun.sleep(100);
   }
   browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
+    executablePath: browserExecutablePath(),
     headless: true,
   });
   const page = await browser.newPage({

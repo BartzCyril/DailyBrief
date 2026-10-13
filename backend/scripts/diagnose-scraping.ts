@@ -1,7 +1,7 @@
 import { ScrapingService } from "../src/scraping";
 import { AppError } from "../src/errors";
 import type { ScrapingConfig } from "@dailybrief/shared";
-import type { Page } from "playwright";
+import type { Page } from "puppeteer";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,13 +44,16 @@ export async function writeScrapingArtifacts(
     };
   }, config);
   await writeFile(structurePath, JSON.stringify(structure, null, 2) + "\n", { mode: 0o600 });
-  await page.screenshot({
-    path: screenshotPath,
-    fullPage: false,
-    animations: "disabled",
-    timeout: 5000,
-    mask: [page.locator('input, textarea, [contenteditable="true"]')],
+  const mask = await page.addStyleTag({
+    content:
+      'input, textarea, [contenteditable="true"] { visibility: hidden !important; } * { animation: none !important; transition: none !important; }',
   });
+  try {
+    await page.screenshot({ path: screenshotPath, fullPage: false });
+  } finally {
+    await mask.evaluate((element) => element.remove()).catch(() => {});
+    await mask.dispose();
+  }
   return { screenshotPath, structurePath };
 }
 

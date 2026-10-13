@@ -1,4 +1,11 @@
-import { chromium, type Page, type Locator } from "playwright";
+import {
+  launchScrapingBrowser,
+  createScrapingPage,
+  interceptRequests,
+  delay,
+  isVisible,
+} from "./browser";
+import type { Page, ElementHandle, HTTPRequest } from "puppeteer";
 import type { JournalLoginConfig } from "@dailybrief/shared";
 import { AppError } from "./errors";
 import { fetchRemotePage, type FetchPage } from "./network";
@@ -90,10 +97,7 @@ export class JournalLoginBrowser {
       const origins = new Set([loginOrigin, journalOrigin]);
       let browser;
       try {
-        browser = await chromium.launch({
-          headless: true,
-          executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
-        });
+        browser = await launchScrapingBrowser();
       } catch {
         throw new AppError(
           503,
@@ -101,12 +105,10 @@ export class JournalLoginBrowser {
           "JOURNAL_BROWSER_UNAVAILABLE",
         );
       }
-      const context = await browser
-        .newContext({ serviceWorkers: "block", acceptDownloads: false })
-        .catch(async () => {
-          await browser.close().catch(() => {});
-          throw loginError();
-        });
+      const context = await browser.createBrowserContext().catch(async () => {
+        await browser.close().catch(() => {});
+        throw loginError();
+      });
       let timer: ReturnType<typeof setTimeout> | undefined;
       let expired = false;
       let callbackStarted = false;
@@ -121,9 +123,8 @@ export class JournalLoginBrowser {
       });
       void networkFailure.catch(() => {});
       try {
-        await context.route("**/*", async (route) => {
+        const handleRequest = async (request: HTTPRequest) => {
           const requestOperationId = operationId;
-          const request = route.request();
           const url = new URL(request.url());
           const navigation = request.isNavigationRequest();
           const method = request.method();
@@ -140,7 +141,7 @@ export class JournalLoginBrowser {
               (secretsEntered && !origins.has(url.origin)) ||
               ["image", "media", "font"].includes(request.resourceType())
             ) {
-              await route.abort();
+              await request.abort();
               return;
             }
             if (
@@ -150,7 +151,7 @@ export class JournalLoginBrowser {
             ) {
               if (navigation || (authenticating && method === "POST" && secretsEntered))
                 throw loginError("JOURNAL_LOGIN_REQUEST_BLOCKED");
-              await route.abort();
+              await request.abort();
               return;
             }
             if (
@@ -165,7 +166,7 @@ export class JournalLoginBrowser {
             const body = method === "POST" ? (request.postData() ?? "") : undefined;
             if (body && Buffer.byteLength(body) > 256 * 1024)
               throw loginError("JOURNAL_LOGIN_REQUEST_TOO_LARGE");
-            const headers = await request.allHeaders();
+            const headers = request.headers();
             const response = await this.fetchPage(request.url(), {
               method: method as "GET" | "POST",
               body,
@@ -201,22 +202,22 @@ export class JournalLoginBrowser {
               status = 200;
               contentType = "text/html";
             }
-            await route.fulfill({
+            await request.respond({
               status,
               body: html,
               headers: {
                 "content-type": `${contentType.replace(/;\s*charset\s*=\s*[^;]+/i, "")}; charset=utf-8`,
                 ...(response.cookies.length &&
                 (!response.url || new URL(response.url).origin === url.origin)
-                  ? { "set-cookie": response.cookies.join("\n") }
+                  ? { "set-cookie": response.cookies }
                   : {}),
               },
             });
           } catch (error) {
-            // Transport/Playwright errors can contain passwords, tokens or query parameters.
+            // Transport/Puppeteer errors can contain passwords, tokens or query parameters.
             // Only fixed messages and codes leave this browser operation.
             if (requestOperationId !== operationId) {
-              await route.abort().catch(() => {});
+              await request.abort().catch(() => {});
               return;
             }
             if (navigation || (authenticating && method === "POST" && secretsEntered))
@@ -225,12 +226,12 @@ export class JournalLoginBrowser {
                   ? error.code
                   : undefined,
               );
-            await route.abort().catch(() => {});
+            await request.abort().catch(() => {});
             if (networkError) rejectNetwork(networkError);
           }
-        });
-        await context.routeWebSocket("**/*", (socket) => socket.close());
-        const page = await context.newPage();
+        };
+        const page = await createScrapingPage(browser, {}, context);
+        await interceptRequests(page, handleRequest);
         page.setDefaultTimeout(this.timeoutMs);
         const execute = async <R>(
           action: () => Promise<R>,
@@ -276,13 +277,10 @@ export class JournalLoginBrowser {
           const previousSignals = login.config.successSelector
             ? []
             : (await page.evaluate(connectionStateInPage)).signals;
-          if (
-            login.config.successSelector &&
-            (await page.locator(login.config.successSelector).isVisible())
-          )
+          if (login.config.successSelector && (await isVisible(page, login.config.successSelector)))
             throw loginError("JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID");
           if (
-            (await password.getAttribute("type")) !== "password" ||
+            (await password.evaluate((node) => node.getAttribute("type"))) !== "password" ||
             (await password.evaluate(
               (node) =>
                 node instanceof HTMLInputElement && node.form?.method.toLowerCase() === "get",
@@ -290,10 +288,10 @@ export class JournalLoginBrowser {
           )
             throw loginError("JOURNAL_LOGIN_INSECURE_FORM");
           secretsEntered = true;
-          await email.fill(login.email);
-          await password.fill(login.password);
+          await email.asLocator().fill(login.email);
+          await password.asLocator().fill(login.password);
           observer?.("Envoi du formulaire et vérification de la connexion.");
-          await submit.click();
+          await submit.asLocator().click();
           if (login.config.successSelector) await uniqueVisible(page, login.config.successSelector);
           else await confirmConnection(page, previousSignals, this.timeoutMs);
           authenticating = false;
@@ -305,9 +303,10 @@ export class JournalLoginBrowser {
           // Keep the authenticated context and cookies, but isolate failed
           // navigations in a temporary tab so Chromium's error page cannot
           // interrupt the following article.
-          const articlePage = await context.newPage().catch(() => {
+          const articlePage = await createScrapingPage(browser, {}, context).catch(() => {
             throw loginError("JOURNAL_SESSION_EXPIRED");
           });
+          await interceptRequests(articlePage, handleRequest);
           articlePage.setDefaultTimeout(this.timeoutMs);
           try {
             return await execute(
@@ -360,7 +359,7 @@ export class JournalLoginBrowser {
                     page,
                     login.config.articleContentSelector,
                   );
-                  contentHtml = `<article>${await fullArticle.innerHTML()}</article>`;
+                  contentHtml = `<article>${await fullArticle.evaluate((node) => node.innerHTML)}</article>`;
                 }
                 return { html, url: page.url(), contentHtml };
               },
@@ -459,33 +458,36 @@ async function confirmConnection(page: Page, previousSignals: string[], timeoutM
       // A form submission can replace the document during this check.
       if (page.isClosed()) throw loginError();
     }
-    await page.waitForTimeout(100);
+    await delay(100);
   }
   throw loginError("JOURNAL_LOGIN_UNVERIFIED");
 }
 
-async function uniqueVisible(page: Page, selector: string): Promise<Locator> {
-  const locator = page.locator(selector);
-  await locator.waitFor({ state: "visible" });
-  if ((await locator.count()) !== 1) throw loginError("JOURNAL_LOGIN_SELECTOR_AMBIGUOUS");
-  return locator;
+async function uniqueVisible(page: Page, selector: string): Promise<ElementHandle<Element>> {
+  const element = await page.waitForSelector(selector, { visible: true });
+  if (!element || (await page.$$eval(selector, (elements) => elements.length)) !== 1) {
+    await element?.dispose();
+    throw loginError("JOURNAL_LOGIN_SELECTOR_AMBIGUOUS");
+  }
+  return element;
 }
 
 async function assertArticleAccess(page: Page, login: JournalLogin, journalOrigin: string) {
   if (new URL(page.url()).origin !== journalOrigin) throw loginError("JOURNAL_SESSION_EXPIRED");
   if (
-    (await page.locator(login.config.passwordSelector).isVisible()) &&
-    (await page.locator(login.config.emailSelector).isVisible())
+    (await isVisible(page, login.config.passwordSelector)) &&
+    (await isVisible(page, login.config.emailSelector))
   )
     throw loginError("JOURNAL_SESSION_EXPIRED");
-  const blocking = page.locator(
-    ".paywall, #paywall, [data-paywall], #challenge-form, #cf-challenge-running, #captcha",
-  );
-  for (let i = 0; i < (await blocking.count()); i++)
-    if (await blocking.nth(i).isVisible())
-      throw new AppError(
-        422,
-        "L'article reste protégé après connexion. La session ou l'abonnement ne donne pas accès au contenu complet.",
-        "JOURNAL_ARTICLE_ACCESS_DENIED",
-      );
+  if (
+    await isVisible(
+      page,
+      ".paywall, #paywall, [data-paywall], #challenge-form, #cf-challenge-running, #captcha",
+    )
+  )
+    throw new AppError(
+      422,
+      "L'article reste protégé après connexion. La session ou l'abonnement ne donne pas accès au contenu complet.",
+      "JOURNAL_ARTICLE_ACCESS_DENIED",
+    );
 }

@@ -33,7 +33,9 @@
     "luxon": "^3.7.2",
     "nodemailer": "^10.0.15",
     "pg": "^8.23.1",
-    "playwright": "^1.63.0",
+    "puppeteer": "^24.43.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "redis": "^6.3.0",
     "zod": "^4.1.0"
   },
@@ -48,6 +50,7 @@
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
+    "playwright": "^1.63.0",
     "prisma": "6.19.2",
     "supertest": "^7.3.1",
     "typescript": "^5.9.0"

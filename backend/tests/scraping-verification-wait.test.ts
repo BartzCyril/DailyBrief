@@ -39,7 +39,7 @@ test("continues extraction when a transient verification clears and retains the 
     async (diagnostic, page) => {
       expect(diagnostic.withTitle).toBe(1);
       expect(diagnostic.pageProtection).toBe(false);
-      retainedCookie = (await page.context().cookies()).some(
+      retainedCookie = (await page.browserContext().cookies()).some(
         (cookie) => cookie.name === "verification_completed" && cookie.value === "1",
       );
     },

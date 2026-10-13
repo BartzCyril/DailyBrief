@@ -128,6 +128,26 @@ test("reports a missing button and rejects ambiguous visible buttons", async () 
   ).toMatchObject({ code: "INVALID_LOAD_MORE_BUTTON" });
 }, 10000);
 
+test("clicks the visible responsive button when a hidden match comes first", async () => {
+  const service = new ScrapingService(async () =>
+    page(
+      `document.querySelector('#more').onclick=()=>{
+      document.querySelector('#more').insertAdjacentHTML('beforebegin',${JSON.stringify(card("second"))});
+      document.querySelector('#more').disabled=true;
+    };`,
+      '<button class="more loading" style="display:none">Mobile</button><button id="more" class="more">Plus</button>',
+    ),
+  );
+  const result = await service.collect("https://fixture.example/news", {
+    ...config,
+    loadMore: { ...config.loadMore!, buttonSelector: ".more" },
+  });
+  expect(result.articles.map((article) => article.title)).toEqual([
+    "Article first",
+    "Article second",
+  ]);
+}, 10000);
+
 test("forwards same-origin AJAX POST bodies and headers through the guarded transport", async () => {
   const calls: Array<{ url: string; options?: RemotePageOptions }> = [];
   const service = new ScrapingService(async (url, options) => {
@@ -141,6 +161,10 @@ test("forwards same-origin AJAX POST bodies and headers through the guarded tran
   });
   const result = await service.collect("https://fixture.example/news", config);
   expect(result.articles).toHaveLength(2);
+  for (const call of calls) {
+    expect(call.options?.userAgent).toContain("Chrome/");
+    expect(call.options?.userAgent).not.toContain("HeadlessChrome");
+  }
   expect(calls[1]).toMatchObject({
     url: "https://fixture.example/ajax",
     options: {
