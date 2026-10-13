@@ -192,6 +192,72 @@ test("posts the configured form and reads the article in the same fresh authenti
   expect(messages.join(" ")).not.toContain("own-session");
 }, 45000);
 
+test.each(["replace-fields", "replace-button", "reset-once"])(
+  "fills and submits the live login form after JavaScript changes: %s",
+  async (scenario) => {
+    const fixture = journalFixture();
+    const browser = new JournalLoginBrowser(async (url, options) => {
+      const response = await fixture.fetch(url, options);
+      if (url.endsWith("/login"))
+        return {
+          ...response,
+          text:
+            response.text +
+            `<script>
+              let changed = false;
+              document.addEventListener(${JSON.stringify(scenario === "reset-once" ? "change" : "input")}, (event) => {
+                if (changed || event.target.id !== ${JSON.stringify(scenario === "replace-button" ? "password" : "email")}) return;
+                changed = true;
+                if (${JSON.stringify(scenario)} === "reset-once") document.querySelector("form").reset();
+                if (${JSON.stringify(scenario)} !== "replace-button") {
+                  const password = document.querySelector("#password");
+                  password.replaceWith(password.cloneNode(true));
+                }
+                const submit = document.querySelector("#submit");
+                submit.replaceWith(submit.cloneNode(true));
+              });
+            </script>`,
+        };
+      return response;
+    }, 1000);
+    const result = await browser.run(
+      "publisher.example",
+      credentials,
+      "https://publisher.example/article",
+    );
+    expect(result.contentHtml).toContain(fullText);
+    const posts = fixture.requests.filter((request) => request.options?.method === "POST");
+    expect(posts).toHaveLength(1);
+    const body = new URLSearchParams(posts[0]!.options?.body);
+    expect(body.get("email")).toBe(credentials.email);
+    expect(body.get("password")).toBe(credentials.password);
+  },
+  45000,
+);
+
+test("does not submit credentials when JavaScript keeps clearing a filled field", async () => {
+  const fixture = journalFixture();
+  const messages: string[] = [];
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    const response = await fixture.fetch(url, options);
+    return url.endsWith("/login")
+      ? {
+          ...response,
+          text:
+            response.text +
+            '<script>document.querySelector("#password").addEventListener("change", event => { event.target.value = ""; });</script>',
+        }
+      : response;
+  }, 1000);
+  await assert.rejects(
+    browser.run("publisher.example", credentials, undefined, (message) => messages.push(message)),
+    { code: "JOURNAL_LOGIN_FIELDS_UNFILLED" },
+  );
+  expect(fixture.requests.some((request) => request.options?.method === "POST")).toBe(false);
+  expect(messages.join(" ")).not.toContain(credentials.password);
+  expect(messages.join(" ")).not.toContain(credentials.email);
+}, 45000);
+
 test("isolates cookies between users and drops them after a connection test", async () => {
   const fixture = journalFixture();
   const browser = new JournalLoginBrowser(fixture.fetch);

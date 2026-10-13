@@ -45,6 +45,8 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
       "La connexion n'a pas pu être confirmée automatiquement. Vérifiez vos identifiants sur le site du journal ; une validation supplémentaire peut être nécessaire.",
     JOURNAL_LOGIN_SELECTOR_AMBIGUOUS:
       "Un sélecteur de connexion désigne plusieurs éléments. Précisez-le pour obtenir un seul élément visible.",
+    JOURNAL_LOGIN_FIELDS_UNFILLED:
+      "Les champs de connexion n'ont pas conservé les informations saisies. La page peut les réinitialiser ou empêcher la saisie. Aucun formulaire n'a été envoyé.",
     JOURNAL_LOGIN_INSECURE_FORM:
       "Le formulaire doit envoyer le mot de passe par POST et utiliser un champ de type password.",
     JOURNAL_LOGIN_REDIRECT_BLOCKED:
@@ -271,27 +273,21 @@ export class JournalLoginBrowser {
         await execute(async () => {
           observer?.("Ouverture du formulaire de connexion du journal.");
           await page.goto(login.config.loginUrl, { waitUntil: "domcontentloaded" });
-          const email = await uniqueVisible(page, login.config.emailSelector);
-          const password = await uniqueVisible(page, login.config.passwordSelector);
-          const submit = await uniqueVisible(page, login.config.submitSelector);
+          await assertLoginField(page, login.config.emailSelector, false);
+          await assertLoginField(page, login.config.passwordSelector, true);
+          await (await uniqueVisible(page, login.config.submitSelector)).dispose();
           const previousSignals = login.config.successSelector
             ? []
             : (await page.evaluate(connectionStateInPage)).signals;
           if (login.config.successSelector && (await isVisible(page, login.config.successSelector)))
             throw loginError("JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID");
-          if (
-            (await password.evaluate((node) => node.getAttribute("type"))) !== "password" ||
-            (await password.evaluate(
-              (node) =>
-                node instanceof HTMLInputElement && node.form?.method.toLowerCase() === "get",
-            ))
-          )
-            throw loginError("JOURNAL_LOGIN_INSECURE_FORM");
           secretsEntered = true;
-          await email.asLocator().fill(login.email);
-          await password.asLocator().fill(login.password);
+          observer?.("Saisie des identifiants dans le formulaire de connexion.");
+          await fillLoginForm(page, login);
+          await (await uniqueVisible(page, login.config.submitSelector)).dispose();
+          observer?.("Champs de connexion remplis et vérifiés.");
           observer?.("Envoi du formulaire et vérification de la connexion.");
-          await submit.asLocator().click();
+          await page.locator(login.config.submitSelector).click();
           if (login.config.successSelector) await uniqueVisible(page, login.config.successSelector);
           else await confirmConnection(page, previousSignals, this.timeoutMs);
           authenticating = false;
@@ -470,6 +466,60 @@ async function uniqueVisible(page: Page, selector: string): Promise<ElementHandl
     throw loginError("JOURNAL_LOGIN_SELECTOR_AMBIGUOUS");
   }
   return element;
+}
+
+async function assertLoginField(page: Page, selector: string, password: boolean) {
+  const field = await uniqueVisible(page, selector);
+  try {
+    const valid = await field.evaluate(
+      (node, password) =>
+        node instanceof HTMLInputElement &&
+        (password
+          ? node.type === "password" && node.form?.method.toLowerCase() !== "get"
+          : ["email", "text"].includes(node.type)),
+      password,
+    );
+    if (!valid)
+      throw loginError(password ? "JOURNAL_LOGIN_INSECURE_FORM" : "JOURNAL_LOGIN_FIELDS_UNFILLED");
+  } finally {
+    await field.dispose();
+  }
+}
+
+async function fillLoginForm(page: Page, login: JournalLogin) {
+  // Selectors must be resolved again: hydration or validation can replace the
+  // inputs and submit button while typing. Never reuse their original handles.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    for (const [selector, value, password] of [
+      [login.config.emailSelector, login.email, false],
+      [login.config.passwordSelector, login.password, true],
+    ] as const) {
+      await assertLoginField(page, selector, password);
+      try {
+        await page
+          .locator(selector)
+          .filter((node) => node instanceof HTMLInputElement && !node.readOnly)
+          .fill(value);
+        // Commit native change/blur handlers before inspecting the current DOM.
+        await page.keyboard.press("Tab");
+      } catch {
+        throw loginError("JOURNAL_LOGIN_FIELDS_UNFILLED");
+      }
+    }
+    await delay(100);
+    await assertLoginField(page, login.config.passwordSelector, true);
+    const filled = await page.evaluate(({ config, email, password }) => {
+      const matches = (selector: string, value: string) => {
+        const fields = document.querySelectorAll(selector);
+        return (
+          fields.length === 1 && fields[0] instanceof HTMLInputElement && fields[0].value === value
+        );
+      };
+      return matches(config.emailSelector, email) && matches(config.passwordSelector, password);
+    }, login);
+    if (filled) return;
+  }
+  throw loginError("JOURNAL_LOGIN_FIELDS_UNFILLED");
 }
 
 async function assertArticleAccess(page: Page, login: JournalLogin, journalOrigin: string) {

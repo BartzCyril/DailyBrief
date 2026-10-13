@@ -924,6 +924,11 @@ sélecteurs CSS des champs email et mot de passe et du bouton de connexion.
 Les sélecteurs doivent désigner un seul
 élément visible. Le champ de mot de passe doit être de type `password` ; les
 formulaires GET sont refusés afin de ne pas mettre le secret dans une URL.
+Le navigateur retrouve les champs et le bouton après les mises à jour JavaScript
+du formulaire, déclenche les événements de saisie et de sortie du champ, puis
+vérifie les valeurs avant l'envoi. Si la page les efface, il reprend la saisie
+(trois tentatives maximum). Des valeurs absentes ou incorrectes déclenchent
+`JOURNAL_LOGIN_FIELDS_UNFILLED` sans envoyer le formulaire.
 
 Sans ancien sélecteur de réussite enregistré, le serveur confirme la session seulement
 si un nouveau contrôle visible de déconnexion apparaît après soumission
