@@ -200,6 +200,9 @@ Par exemple : `24 Sept. 2026`, `08.10.2026`, `Publié le 29 septembre 2026`,
 Les espaces insécables, accents, jours de semaine et préfixes de publication sont
 normalisés. Sans décalage explicite, l'heure est interprétée dans le fuseau du compte.
 Les dates relatives (`hier`, `aujourd'hui`, `il y a 2 heures`) utilisent l'heure de lecture.
+Les libellés `Modifié le 25 septembre 2026` sont également reconnus. Quand une
+publication est suivie d'une modification, par exemple `Publié aujourd’hui à 01h33,
+modifié à 08h18`, la date et l'heure de publication sont conservées.
 
 Le sélecteur de date est évalué dans chaque bloc d'article. Le collecteur privilégie
 les attributs `datetime`, `content`, `data-date` et `data-published-at`, y compris

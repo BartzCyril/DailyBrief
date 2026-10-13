@@ -8,6 +8,14 @@ test.each([
   ["24 Sept. 2026", "2026-09-23T22:00:00.000Z"],
   ["08.10.2026", "2026-10-07T22:00:00.000Z"],
   ["Publié le 29 septembre 2026", "2026-09-28T22:00:00.000Z"],
+  ["Modifié le 25 septembre 2026", "2026-09-24T22:00:00.000Z"],
+  ["MODIFIÉE LE\u202f25\u00a0SEPT.\u00a02026", "2026-09-24T22:00:00.000Z"],
+  ["Modifié le 25 septembre 2026 à 08h18", "2026-09-25T06:18:00.000Z"],
+  ["Publié le 29 septembre 2026, modifié le 30 septembre 2026", "2026-09-28T22:00:00.000Z"],
+  [
+    "Publié le 29 septembre 2026 à 01h33 ; mis à jour le 30 septembre 2026 à 08h18",
+    "2026-09-28T23:33:00.000Z",
+  ],
   ["PUBLIÉ LE\u202f29\u00a0SEPT.\u00a02026", "2026-09-28T22:00:00.000Z"],
   ["Date de publication : jeudi 8 octobre 2026", "2026-10-07T22:00:00.000Z"],
   ["Mise en ligne le 8 oct. 2026 à 8 h 05", "2026-10-08T06:05:00.000Z"],
@@ -62,6 +70,11 @@ test.each([
   "Du 8 octobre 2026 au 12 octobre 2026",
   "Une conférence le 8 octobre 2026",
   "3 min de lecture",
+  "Modifié le 31 février 2026",
+  "Modifié à 08h18",
+  "Publié le 31 février 2026, modifié le 25 septembre 2026",
+  "Publié aujourd’hui à 25h33, modifié à 08h18",
+  "Publié le 29 septembre 2026, publié le 30 septembre 2026",
 ])("does not invent or roll over invalid/ambiguous date %s", (value) => {
   expect(parsePublicationDate(value, timezone)).toBeNull();
 });
@@ -76,6 +89,17 @@ test("relative publication dates use an explicit reference and the user's calend
     "2026-10-11T21:30:00.000Z",
   );
   expect(parsePublicationDate("2 days ago", timezone, reference)).toBe("2026-10-09T23:30:00.000Z");
+});
+
+test.each([
+  ["Publié aujourd’hui à 01h33, modifié à 08h18", "2026-10-11T23:33:00.000Z"],
+  ["Publié aujourd'hui à 01 h 33 · Modifié à 08 h 18", "2026-10-11T23:33:00.000Z"],
+  ["Publié hier à 23h33, modifié aujourd’hui à 08h18", "2026-10-11T21:33:00.000Z"],
+  ["Publié il y a 2 heures, modifié il y a 1 heure", "2026-10-11T21:30:00.000Z"],
+  ["Published today at 01:33, updated at 08:18", "2026-10-11T23:33:00.000Z"],
+])("retains publication time in compound metadata: %s", (value, expected) => {
+  const reference = new Date("2026-10-11T23:30:00Z");
+  expect(parsePublicationDate(value!, timezone, reference)).toBe(expected!);
 });
 
 test("publication dates use the requested zone instead of the host timezone", () => {
@@ -100,6 +124,8 @@ test("selector validation uses the same calendar parser as collection, including
   const document = new JSDOM(`<main>
     <p class="date">24 Sept. 2026</p><p class="date">08.10.2026</p>
     <p class="date" datetime="">Publié le 29 septembre 2026</p>
+    <p class="date">Modifié le 25 septembre 2026</p>
+    <p class="date"><span>Publié aujourd’hui à 01h33</span>, <span>modifié à 08h18</span></p>
     <meta itemprop="datePublished" content="2026-10-08T12:30:00Z">
     <time datetime="not-a-date">08.10.2026</time>
     <p class="invalid">31.02.2026</p><p class="invalid">2026</p>

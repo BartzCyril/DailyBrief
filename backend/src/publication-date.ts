@@ -119,9 +119,12 @@ export function parsePublicationDate(
     .replace(/\u2212/g, "-");
   text = text
     .replace(
-      /^(?:(?:date\s+de\s+publication|publication|publiee?|parue?|mise?\s+en\s+ligne|mise?\s+a\s+jour|published|posted|updated)(?:\s+(?:le|on))?\s*[:\-–—]?\s*|le\s+)/,
+      /^(?:(?:date\s+de\s+publication|publication|publiee?|parue?|modifiee?|mise?\s+en\s+ligne|mise?\s+a\s+jour|published|posted|updated)(?:\s+(?:le|on))?\s*[:\-–—]?\s*|le\s+)/,
       "",
     )
+    // Keep the leading publication date/time when an update follows it.
+    // A modification-only label was already removed by the prefix rule above.
+    .replace(/(?:\s*[,;|•·–—]\s*|\s+)(?:modifiee?|mise?\s+a\s+jour|updated)\b.*$/, "")
     .replace(
       /\s+(?:[|•·–—]\s*)?(?:par\s+.+|by\s+.+|(?:temps\s+de\s+)?lecture\s*[:\-]?.*|\d+\s*min(?:utes)?(?:\s+de\s+lecture)?)$/,
       "",

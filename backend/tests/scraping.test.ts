@@ -81,6 +81,28 @@ test("extracts descriptions automatically, skips date-only paragraphs and falls 
     "Extrait visible.",
   ]);
 });
+test("extracts modification-only dates and publication dates followed by update metadata", async () => {
+  const beforeDay = new Date().toISOString().slice(0, 10);
+  const service = new ScrapingService(
+    async () => `<main>
+    <article><h2>Date de modification seule</h2><a href="/modified">Lire</a><p class="date">Modifié le 25 septembre 2026</p></article>
+    <article><h2>Publication et modification</h2><a href="/both">Lire</a><p class="date">Publié le 29 septembre 2026, modifié le 30 septembre 2026</p></article>
+    <article><h2>Publication relative</h2><a href="/relative">Lire</a><p class="date"><span>Publié aujourd’hui à 01h33</span>, <span>modifié à 08h18</span></p></article>
+  </main>`,
+  );
+  const result = await service.collect("https://fixture.example/news", {
+    ...scroll,
+    dateSelector: ".date",
+    scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+  });
+  expect(result.articles[0]?.publishedAt).toBe("2026-09-25T00:00:00.000Z");
+  expect(result.articles[1]?.publishedAt).toBe("2026-09-29T00:00:00.000Z");
+  const relativeDate = result.articles[2]?.publishedAt;
+  if (!relativeDate) throw new Error("Expected the relative publication date to be extracted");
+  expect(relativeDate.slice(11)).toBe("01:33:00.000Z");
+  expect([beforeDay, new Date().toISOString().slice(0, 10)]).toContain(relativeDate.slice(0, 10));
+}, 15000);
+
 test("validates both modes and rejects incomplete configurations", () => {
   expect(scrapingSchema.safeParse(scroll).success).toBe(true);
   expect(scrapingSchema.safeParse(paginate).success).toBe(true);
