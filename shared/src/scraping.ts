@@ -1,13 +1,12 @@
 import { z } from "zod";
 const selector = z.string().trim().min(1).max(200);
-export const scrapingSchema = z
+const currentScrapingSchema = z
   .object({
     articleSelector: selector,
     titleSelector: selector,
     linkSelector: selector,
     descriptionSelector: selector.nullish(),
     dateSelector: selector.nullish(),
-    cookieConsentSelector: selector.nullish(),
     mode: z.enum(["SCROLL", "PAGINATE", "LOAD_MORE"]),
     loadMore: z
       .object({
@@ -83,6 +82,14 @@ export const scrapingSchema = z
 // Reading saved sources remains compatible with configurations created before
 // date became mandatory. Descriptions are extracted automatically; existing
 // description selectors remain compatible without exposing a configuration field.
-export const scrapingInputSchema = scrapingSchema.safeExtend({
-  dateSelector: selector,
-});
+// Discard the removed setting in saved configurations without restoring consent behavior.
+function withoutLegacyConsent(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { cookieConsentSelector: _removed, ...config } = value as Record<string, unknown>;
+  return config;
+}
+export const scrapingSchema = z.preprocess(withoutLegacyConsent, currentScrapingSchema);
+export const scrapingInputSchema = z.preprocess(
+  withoutLegacyConsent,
+  currentScrapingSchema.safeExtend({ dateSelector: selector }),
+);

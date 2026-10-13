@@ -43,7 +43,6 @@ export type ScrapingConfig = {
   linkSelector: string;
   descriptionSelector?: string | null;
   dateSelector?: string | null;
-  cookieConsentSelector?: string | null;
   mode: "SCROLL" | "PAGINATE" | "LOAD_MORE";
   scroll?: { maxScrolls: number; waitAfterScrollMs: number };
   loadMore?: { buttonSelector: string; waitTimeoutMs: number };

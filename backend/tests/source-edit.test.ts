@@ -268,30 +268,23 @@ describe("source URL editing", () => {
       legacy,
     );
   });
-  test("persists, retrieves and clears the optional consent selector in source configuration", async () => {
-    const configured = { ...scrapingConfig, cookieConsentSelector: "#accept-cookies" };
-    const created = await agent.post("/sources").send({
-      url: "https://fixture.example/scroll",
-      type: "SCRAPING",
-      scrapingConfig: configured,
+  test("edits a legacy source without using or retaining its removed consent setting", async () => {
+    await db.source.update({
+      where: { id: sourceId },
+      data: {
+        type: "SCRAPING",
+        url: "https://fixture.example/scroll",
+        scrapingConfig: { ...scrapingConfig, cookieConsentSelector: "??" },
+      },
     });
-    expect(created.status).toBe(201);
-    const id = created.body.id;
-    expect((await agent.get(`/sources/${id}`)).body.scrapingConfig.cookieConsentSelector).toBe(
-      "#accept-cookies",
+    const result = await agent
+      .patch(`/sources/${sourceId}`)
+      .send({ scrapingConfig: { ...scrapingConfig, cookieConsentSelector: "#accept-cookies" } });
+    expect(result.status).toBe(204);
+    expect((await db.source.findUniqueOrThrow({ where: { id: sourceId } })).scrapingConfig).toEqual(
+      scrapingConfig,
     );
-    expect(
-      (
-        await agent
-          .patch(`/sources/${id}`)
-          .send({ scrapingConfig: { ...configured, cookieConsentSelector: "#reject-cookies" } })
-      ).status,
-    ).toBe(204);
-    expect((await db.source.findUniqueOrThrow({ where: { id } })).scrapingConfig).toMatchObject({
-      cookieConsentSelector: "#reject-cookies",
-    });
-    expect((await agent.patch(`/sources/${id}`).send({ scrapingConfig })).status).toBe(204);
-    expect((await agent.get(`/sources/${id}`)).body.scrapingConfig).not.toHaveProperty(
+    expect((await agent.get(`/sources/${sourceId}`)).body.scrapingConfig).not.toHaveProperty(
       "cookieConsentSelector",
     );
   }, 30000);

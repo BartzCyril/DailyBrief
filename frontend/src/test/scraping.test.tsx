@@ -143,31 +143,24 @@ test("requires a page placeholder for template pagination", async () => {
   await ui.click(screen.getByRole("button", { name: "Tester" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("{page}");
 });
-test("sends the optional consent selector to preview and save, then invalidates an edited preview", async () => {
+test("configures and saves extraction without a consent field", async () => {
   const mock = mockApi();
   mount();
   const ui = await fill();
-  const input = screen.getByLabelText("Sélecteur du bouton de cookies (facultatif)");
-  expect(input).not.toBeRequired();
-  await ui.type(input, "#accept-cookies");
+  expect(screen.queryByLabelText(/bouton de cookies/i)).toBeNull();
   await ui.click(screen.getByRole("button", { name: "Tester" }));
   await screen.findByText("Article extrait");
   const tested = JSON.parse(
     String(mock.mock.calls.find((call) => call[0].endsWith("/scraping/test"))?.[1]?.body),
   ).config;
-  expect(tested.cookieConsentSelector).toBe("#accept-cookies");
-  await ui.type(input, " button");
-  expect(screen.queryByText("Article extrait")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Enregistrer la source" })).toBeDisabled();
-  await ui.click(screen.getByRole("button", { name: "Tester" }));
-  await screen.findByText("Article extrait");
+  expect(tested).not.toHaveProperty("cookieConsentSelector");
   await ui.click(screen.getByRole("button", { name: "Enregistrer la source" }));
   await screen.findByText("SCRAPING");
   const save = mock.mock.calls.find(
     (call) => call[0].endsWith("/sources") && call[1]?.method === "POST",
   );
-  expect(JSON.parse(String(save?.[1]?.body)).scrapingConfig.cookieConsentSelector).toBe(
-    "#accept-cookies button",
+  expect(JSON.parse(String(save?.[1]?.body)).scrapingConfig).not.toHaveProperty(
+    "cookieConsentSelector",
   );
 });
 test("requires a load-more button, tests its settings and saves only the selected mode", async () => {

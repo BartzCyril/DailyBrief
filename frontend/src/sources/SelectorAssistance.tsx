@@ -28,11 +28,10 @@ function hasRequiredSelectors(result: SelectorAnalysisResponse) {
 
 export type SelectorAssistancePending = "analysis" | "help" | null;
 
-/** Send the public URL, analysis type and optional consent selector, never credentials. */
+/** Send the public URL and analysis type, never credentials. */
 export function SelectorAssistance({
   kind,
   url,
-  cookieConsentSelector,
   disabled = false,
   onStart,
   onResult,
@@ -51,8 +50,8 @@ export function SelectorAssistance({
   const [helpRequestId, setHelpRequestId] = useState<string>();
   const [helpSent, setHelpSent] = useState(false);
   const currentRequest = useRef<AbortController | null>(null);
-  const context = useRef({ kind, url, cookieConsentSelector });
-  context.current = { kind, url, cookieConsentSelector };
+  const context = useRef({ kind, url });
+  context.current = { kind, url };
   const callbacks = useRef({ onStart, onResult, onBusyChange, onPendingChange });
   callbacks.current = { onStart, onResult, onBusyChange, onPendingChange };
 
@@ -93,8 +92,7 @@ export function SelectorAssistance({
     const obsolete = () =>
       controller.signal.aborted ||
       requestContext.kind !== context.current.kind ||
-      requestContext.url !== context.current.url ||
-      requestContext.cookieConsentSelector !== context.current.cookieConsentSelector;
+      requestContext.url !== context.current.url;
     currentRequest.current = controller;
     setPending(action);
     callbacks.current.onBusyChange?.(true);
@@ -113,9 +111,6 @@ export function SelectorAssistance({
           body: {
             kind,
             url: url.trim(),
-            ...(kind === "SCRAPING" && cookieConsentSelector?.trim()
-              ? { cookieConsentSelector: cookieConsentSelector.trim() }
-              : {}),
           },
           signal: controller.signal,
         });

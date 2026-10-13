@@ -8,7 +8,6 @@ export type ScrapingPageDiagnostic = {
   withDate: number;
   loadMoreButtons: number;
   pageProtection: boolean;
-  consentVisible: boolean;
   pageTitleMatches: number;
   pageLinkMatches: number;
   pageDateMatches: number;
@@ -78,11 +77,6 @@ export function inspectScrapingPage(
             '#challenge-form, #cf-challenge-running, #captcha, .g-recaptcha, iframe[src*="captcha-delivery.com/"], iframe[src*="challenges.cloudflare.com/"]',
           ),
         ].some(visible),
-      consentVisible: [
-        ...document.querySelectorAll(
-          "#didomi-popup, #didomi-popup-container, #onetrust-banner-sdk, .gdpr-lmd-wall",
-        ),
-      ].some(visible),
       pageTitleMatches: document.querySelectorAll(config.titleSelector).length,
       pageLinkMatches: document.querySelectorAll(config.linkSelector).length,
       pageDateMatches: config.dateSelector

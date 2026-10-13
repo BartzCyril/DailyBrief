@@ -158,7 +158,6 @@ export function EditSourceForm({
       <SelectorAssistance
         kind={source.type === "RSS" ? "RSS_LINK" : "SCRAPING"}
         url={url}
-        cookieConsentSelector={source.type === "SCRAPING" ? draft.cookieConsentSelector : undefined}
         disabled={busy || testing}
         onBusyChange={setAssistanceBusy}
         onStart={() => {
@@ -168,14 +167,7 @@ export function EditSourceForm({
         onResult={(result) => {
           if (result.kind === "RSS_LINK") setArticleLinkSelector(result.articleLinkSelector);
           else if (result.kind === "SCRAPING") {
-            setDraft((previous) =>
-              createScrapingDraft({
-                ...result.scrapingConfig,
-                cookieConsentSelector:
-                  result.scrapingConfig.cookieConsentSelector ??
-                  (previous.cookieConsentSelector || undefined),
-              }),
-            );
+            setDraft(createScrapingDraft(result.scrapingConfig));
             setTemplateEdited(false);
           }
         }}

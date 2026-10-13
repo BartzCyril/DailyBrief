@@ -38,6 +38,30 @@ test("requires a date but accepts automatically extracted descriptions and legac
   const legacy = { ...scroll, descriptionSelector: null, dateSelector: undefined };
   expect(scrapingSchema.safeParse(legacy).success).toBe(true);
 });
+test("discards the removed consent setting in saved configs while retaining strict validation", () => {
+  const legacy = { ...scroll, cookieConsentSelector: "??" };
+  expect(scrapingSchema.parse(legacy)).toEqual(scroll);
+  expect(scrapingInputSchema.parse(legacy)).toEqual({ ...scroll, dateSelector: "time" });
+  expect(scrapingSchema.safeParse({ ...legacy, unknownSetting: true }).success).toBe(false);
+});
+test("reads initial articles without clicking or reloading a consent overlay, including legacy settings", async () => {
+  const calls: string[] = [];
+  const service = new ScrapingService(async (url) => {
+    calls.push(url);
+    return `${html("first")}<div role="dialog" style="position:fixed;inset:0;z-index:100">
+      Cookies<button id="accept" onclick="fetch('/must-not-click',{method:'POST'})">Accepter</button></div>`;
+  });
+  const legacy = {
+    ...scroll,
+    cookieConsentSelector: "#accept",
+    scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+  };
+  await service.validateFirstPage("https://fixture.example/news", legacy);
+  const result = await service.collect("https://fixture.example/news", legacy);
+  expect(result.articles[0]?.title).toBe("Article first");
+  expect(result.warnings).toBeUndefined();
+  expect(calls).toEqual(["https://fixture.example/news", "https://fixture.example/news"]);
+}, 15000);
 test("extracts descriptions automatically, skips date-only paragraphs and falls back to the title", async () => {
   const { descriptionSelector: _description, ...config } = scroll;
   const service = new ScrapingService(

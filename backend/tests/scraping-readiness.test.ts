@@ -103,7 +103,6 @@ test("first-page diagnosis counts selectors without clicking the button or expos
     withDate: 1,
     loadMoreButtons: 1,
     pageProtection: false,
-    consentVisible: false,
     pageTitleMatches: 1,
     pageLinkMatches: 1,
     pageDateMatches: 1,
@@ -112,10 +111,10 @@ test("first-page diagnosis counts selectors without clicking the button or expos
   expect(JSON.stringify(diagnostic)).not.toContain("Article public");
 }, 15000);
 
-test("missing blocks and a visible consent screen produce distinct useful diagnostics", async () => {
+test("missing article blocks remain an extraction error regardless of overlays", async () => {
   for (const [markup, expected] of [
     ["<main>Rubrique vide</main>", "sélecteur des articles"],
-    ['<div id="didomi-popup">Choisissez vos préférences</div>', "consentement"],
+    ['<div id="didomi-popup">Choisissez vos préférences</div>', "sélecteur des articles"],
   ]) {
     const service = new ScrapingService(async () => markup!);
     let diagnostic: ScrapingPageDiagnostic | undefined;

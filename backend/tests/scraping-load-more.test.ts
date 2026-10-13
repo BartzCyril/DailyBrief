@@ -368,7 +368,7 @@ test("reports a loading lock that never clears instead of sending ignored clicks
   expect(error.message).toContain("bouton");
 }, 10000);
 
-test("a cookie wall covering load-more is reported before any article click", async () => {
+test("preserves the first articles when an overlay covers load-more without clicking it", async () => {
   const calls: string[] = [];
   const service = new ScrapingService(async (url) => {
     calls.push(url);
@@ -377,9 +377,9 @@ test("a cookie wall covering load-more is reported before any article click", as
       '<button id="more">Plus</button><div class="gdpr-lmd-wall" style="position:fixed;inset:0;z-index:100">Cookies</div>',
     );
   });
-  await expect(service.collect("https://fixture.example/news", config)).rejects.toMatchObject({
-    code: "LOAD_MORE_CONSENT_REQUIRED",
-  });
+  const result = await service.collect("https://fixture.example/news", config);
+  expect(result.articles.map((item) => item.title)).toEqual(["Article first"]);
+  expect(result.warnings?.join(" ")).toContain("articles déjà récupérés sont conservés");
   expect(calls).toEqual(["https://fixture.example/news"]);
 }, 10000);
 

@@ -211,28 +211,6 @@ test("edits a scraping URL without replacing its extraction configuration", asyn
     screen.getByRole("switch", { name: "Activer https://example.com/new-news" }),
   ).toBeChecked();
 });
-test.each(["#reject-cookies", ""])(
-  "prefills and changes the saved consent selector to '%s'",
-  async (next) => {
-    const source: Source = {
-      ...scraping,
-      scrapingConfig: { ...scraping.scrapingConfig!, cookieConsentSelector: "#accept-cookies" },
-    };
-    stored = [source];
-    render(<Harness />);
-    const ui = userEvent.setup();
-    await openEdit(source, ui);
-    const input = screen.getByLabelText("Sélecteur du bouton de cookies (facultatif)");
-    expect(input).toHaveValue("#accept-cookies");
-    expect(screen.getByRole("button", { name: "Enregistrer les modifications" })).toBeDisabled();
-    await ui.clear(input);
-    if (next) await ui.type(input, next);
-    await ui.click(screen.getByRole("button", { name: "Enregistrer les modifications" }));
-    await screen.findByText("Source modifiée.");
-    expect(stored[0]?.scrapingConfig?.cookieConsentSelector).toBe(next || undefined);
-  },
-);
-
 test.each([rss, scraping])("does not expose source ordering for $type", async (source) => {
   stored = [source];
   render(<Harness />);

@@ -31,32 +31,18 @@ const server = createServer((request, response) => {
     ua: request.headers["user-agent"],
   });
   response.setHeader("Content-Type", "text/html; charset=utf-8");
-  if (path === "/consent-preflight") {
+  if (path === "/preflight-api") {
     response.setHeader("Access-Control-Allow-Origin", `http://publisher.test:${port}`);
     response.setHeader("Access-Control-Allow-Methods", "GET");
-    response.setHeader("Access-Control-Allow-Headers", "X-Consent-Check");
+    response.setHeader("Access-Control-Allow-Headers", "X-Public-Check");
     response.writeHead(request.method === "OPTIONS" ? 204 : 200).end("{}");
     return;
   }
-  if (path === "/persist-consent") {
-    setTimeout(() => {
-      response.setHeader("Set-Cookie", "accepted=yes; Path=/; HttpOnly; SameSite=Lax");
-      response.end("{}");
-    }, 800);
-    return;
-  }
-  if (path === "/consent-reload") {
-    if (request.headers.cookie?.includes("accepted=yes")) {
-      response.end(
-        '<article><h2>Article après consentement</h2><a href="/article">Lire</a></article>',
-      );
-      return;
-    }
-    response.end(`<div class="gdpr-lmd-wall"><button class="gdpr-lmd-button" data-gdpr-expression="acceptAll">Accepter et continuer</button></div>
-      <script>document.querySelector('button').onclick=async()=>{
-        await fetch('http://ads.test:${port}/consent-preflight',{headers:{'X-Consent-Check':'yes'}});
-        await fetch('/persist-consent',{method:'POST',body:'accepted'});
-      };</script>`);
+  if (path === "/public-with-overlay") {
+    response.end(`<div role="dialog" style="position:fixed;inset:0;z-index:100">Cookies<button onclick="fetch('/must-not-click',{method:'POST'})">Accepter</button></div><main></main>
+      <script>fetch('http://ads.test:${port}/preflight-api',{headers:{'X-Public-Check':'yes'}}).then(()=>{
+        document.querySelector('main').innerHTML='<article><h2>Premier article accessible</h2><a href="/article">Lire</a></article>';
+      });</script>`);
     return;
   }
   if (path === "/wide-script") {
@@ -630,44 +616,37 @@ test("native navigation rejects embedded credentials before Chromium can send au
 }, 45000);
 
 test.each(["scraping", "selector analysis"])(
-  "%s waits for CORS preflight and AJAX Set-Cookie before reloading consent",
+  "%s reads the initial articles behind an overlay, allowing CORS preflight without reload or consent",
   async (kind) => {
     const start = requests.length;
-    const selector = 'button.gdpr-lmd-button[data-gdpr-expression="acceptAll"]';
     if (kind === "scraping") {
       const result = await new ScrapingService(undefined, networkFactory).collect(
-        url("/consent-reload"),
+        url("/public-with-overlay"),
         {
           articleSelector: "article",
           titleSelector: "h2",
           linkSelector: "a",
-          cookieConsentSelector: selector,
           mode: "SCROLL",
           scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
         },
       );
-      expect(result.articles[0]?.title).toBe("Article après consentement");
+      expect(result.articles[0]?.title).toBe("Premier article accessible");
     } else {
       const result = await renderPublicSelectorPage(
-        url("/consent-reload"),
+        url("/public-with-overlay"),
         undefined,
         networkFactory,
-        { cookieConsentSelector: selector },
       );
-      expect(result.html).toContain("Article après consentement");
-      expect(result.html).not.toContain("gdpr-lmd-wall");
+      expect(result.html).toContain("Premier article accessible");
     }
     const sent = requests.slice(start);
     expect(
-      sent.filter((item) => item.path === "/consent-preflight").map((item) => item.method),
+      sent.filter((item) => item.path === "/preflight-api").map((item) => item.method),
     ).toEqual(["OPTIONS", "GET"]);
-    expect(
-      sent.filter((item) => item.path === "/persist-consent").map((item) => item.method),
-    ).toEqual(["POST"]);
-    const loads = sent.filter((item) => item.path === "/consent-reload");
-    expect(loads).toHaveLength(2);
-    expect(loads[0]?.cookie).toBeUndefined();
-    expect(loads[1]?.cookie).toContain("accepted=yes");
+    expect(sent.filter((item) => item.path === "/public-with-overlay")).toHaveLength(1);
+    expect(sent.some((item) => item.method === "POST" || item.path === "/must-not-click")).toBe(
+      false,
+    );
   },
   30000,
 );

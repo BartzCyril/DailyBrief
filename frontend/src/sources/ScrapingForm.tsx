@@ -98,7 +98,6 @@ export function ScrapingForm() {
         <SelectorAssistance
           kind="SCRAPING"
           url={url}
-          cookieConsentSelector={draft.cookieConsentSelector}
           disabled={!!busy}
           onBusyChange={setAssistanceBusy}
           onStart={() => {
@@ -106,15 +105,7 @@ export function ScrapingForm() {
             setError("");
           }}
           onResult={(result) => {
-            if (result.kind === "SCRAPING")
-              setDraft((previous) =>
-                createScrapingDraft({
-                  ...result.scrapingConfig,
-                  cookieConsentSelector:
-                    result.scrapingConfig.cookieConsentSelector ??
-                    (previous.cookieConsentSelector || undefined),
-                }),
-              );
+            if (result.kind === "SCRAPING") setDraft(createScrapingDraft(result.scrapingConfig));
           }}
         />
         <fieldset disabled={pending} className="space-y-5">

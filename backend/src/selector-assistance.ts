@@ -10,7 +10,6 @@ import type { SelectorHelpService } from "./selector-support";
 export const selectorAnalysisInputSchema = z
   .object({
     kind: z.enum(["SCRAPING", "RSS_LINK", "JOURNAL_LOGIN"]),
-    cookieConsentSelector: z.string().trim().min(1).max(200).optional(),
     url: z
       .url({ protocol: /^https?$/ })
       .max(2048)
@@ -19,11 +18,7 @@ export const selectorAnalysisInputSchema = z
         return !url.username && !url.password;
       }, "Les identifiants ne doivent pas figurer dans l'URL."),
   })
-  .strict()
-  .refine(
-    (input) => input.kind === "SCRAPING" || input.cookieConsentSelector === undefined,
-    "Le sélecteur de cookies concerne uniquement les sources de scraping.",
-  );
+  .strict();
 const helpInputSchema = z.object({ helpRequestId: z.uuid() }).strict();
 
 export function selectorAssistanceRouter(

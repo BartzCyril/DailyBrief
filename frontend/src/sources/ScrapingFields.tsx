@@ -7,7 +7,6 @@ export type ScrapingDraft = {
   linkSelector: string;
   descriptionSelector: string;
   dateSelector: string;
-  cookieConsentSelector: string;
   mode: ScrapingConfig["mode"];
   buttonSelector: string;
   waitTimeoutMs: string;
@@ -24,7 +23,6 @@ export const defaultDraft: ScrapingDraft = {
   linkSelector: "",
   descriptionSelector: "",
   dateSelector: "",
-  cookieConsentSelector: "",
   mode: "SCROLL",
   buttonSelector: "",
   waitTimeoutMs: "15000",
@@ -45,7 +43,6 @@ export function createScrapingDraft(config?: ScrapingConfig | null): ScrapingDra
     linkSelector: config.linkSelector,
     descriptionSelector: config.descriptionSelector ?? "",
     dateSelector: config.dateSelector ?? "",
-    cookieConsentSelector: config.cookieConsentSelector ?? "",
     mode: config.mode,
     buttonSelector: config.loadMore?.buttonSelector ?? "",
     waitTimeoutMs: String(config.loadMore?.waitTimeoutMs ?? defaultDraft.waitTimeoutMs),
@@ -66,9 +63,6 @@ export function buildScrapingConfig(draft: ScrapingDraft): ScrapingConfig {
       ? { descriptionSelector: draft.descriptionSelector.trim() }
       : {}),
     dateSelector: draft.dateSelector,
-    ...(draft.cookieConsentSelector.trim()
-      ? { cookieConsentSelector: draft.cookieConsentSelector.trim() }
-      : {}),
     mode: draft.mode,
     ...(draft.mode === "SCROLL"
       ? {
@@ -196,13 +190,6 @@ export function PaginationFields({ draft, update }: Props) {
 export function ScrapingFields({ draft, update }: Props) {
   return (
     <div className="space-y-5">
-      <Field
-        label="Sélecteur du bouton de cookies (facultatif)"
-        value={draft.cookieConsentSelector}
-        onChange={(event) => update({ cookieConsentSelector: event.target.value })}
-        placeholder="#didomi-notice-agree-button"
-        hint="Bouton de la popup à cliquer avant de lire les articles : Accepter, Refuser ou Continuer sans accepter. Laissez vide si aucune popup ne gêne la collecte."
-      />
       <div className="grid sm:grid-cols-2 gap-4">
         {(
           [
