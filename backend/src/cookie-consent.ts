@@ -1,5 +1,5 @@
 import type { Frame, ElementHandle, Page } from "puppeteer";
-import { delay } from "./browser";
+import { delay, waitForClickTarget } from "./browser";
 import { AppError } from "./errors";
 
 export function consentPostAllowed(
@@ -19,7 +19,11 @@ export function consentPostAllowed(
 export async function dismissCookieConsent(
   page: Page,
   selector?: string | null,
-  options: { waitForAppearance?: boolean; onAction?: (origins: ReadonlySet<string>) => void } = {},
+  options: {
+    waitForAppearance?: boolean;
+    onAction?: (origins: ReadonlySet<string>) => void;
+    reload?: () => Promise<void>;
+  } = {},
 ): Promise<boolean> {
   if (!selector) return false;
   try {
@@ -80,53 +84,56 @@ export async function dismissCookieConsent(
     );
   const origins = new Set([new URL(page.url()).origin]);
   if (/^https?:/.test(frame.url())) origins.add(new URL(frame.url()).origin);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let finished = false;
+  let actionActive = true;
   try {
     options.onAction?.(origins);
-    await Promise.race([
-      (async () => {
-        try {
-          await button.asLocator().setTimeout(5000).click();
-        } catch (error) {
-          if (!frame.isDetached()) throw error;
-        }
-        while (!finished && !frame.isDetached()) {
-          try {
-            if (!(await button.isVisible())) break;
-          } catch (error) {
-            if (frame.isDetached()) break;
-            throw error;
-          }
-          await delay(100);
-        }
-      })(),
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new AppError(
-                422,
-                "La popup de cookies n'a pas disparu après le clic. Vérifiez le bouton choisi.",
-                "COOKIE_CONSENT_FAILED",
-              ),
-            ),
-          5000,
-        );
-      }),
-    ]);
+    await waitForClickTarget(button, 5000);
+    try {
+      await button.asLocator().setTimeout(5000).click();
+    } catch (error) {
+      if (!frame.isDetached()) throw error;
+    }
+    // Keep this browser context: the click can persist consent through an AJAX
+    // response (including Set-Cookie) before the popup changes its appearance.
+    try {
+      await page.waitForNetworkIdle({ idleTime: 500, timeout: 10000 });
+    } catch {
+      throw new AppError(
+        422,
+        "Les appels réseau après le clic sur le bouton de cookies ne se sont pas terminés. La page n'a pas été rechargée.",
+        "COOKIE_CONSENT_FAILED",
+      );
+    }
+    options.onAction?.(new Set());
+    actionActive = false;
+    if (options.reload) await options.reload();
+    else
+      await Promise.all([
+        page.reload({ waitUntil: "load", timeout: 15000 }),
+        page.waitForNetworkIdle({ idleTime: 500, timeout: 15000 }),
+      ]);
+    // Re-query after navigation: the original button handle belongs to the old
+    // document. Give a delayed CMP the same appearance window as on first load.
+    await delay(2000);
+    const remaining = await find();
+    const visible = remaining.length > 0;
+    await Promise.all(remaining.map(({ button }) => button.dispose()));
+    if (visible)
+      throw new AppError(
+        422,
+        "La popup de cookies est toujours visible après le clic et le rechargement. Le consentement n'a pas été mémorisé ou appliqué. Vérifiez le bouton choisi et les appels réseau de consentement.",
+        "COOKIE_CONSENT_FAILED",
+      );
     return true;
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw new AppError(
       422,
-      "Impossible de cliquer sur le bouton de cookies. Vérifiez le sélecteur et la popup.",
+      "Impossible de cliquer sur le bouton de cookies ou de recharger la page. Vérifiez le sélecteur et la popup.",
       "COOKIE_CONSENT_FAILED",
     );
   } finally {
-    finished = true;
-    clearTimeout(timer);
-    options.onAction?.(new Set());
+    if (actionActive) options.onAction?.(new Set());
     await button.dispose().catch(() => {});
   }
 }

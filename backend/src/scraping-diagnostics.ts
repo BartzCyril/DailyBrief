@@ -80,7 +80,7 @@ export function inspectScrapingPage(
         ].some(visible),
       consentVisible: [
         ...document.querySelectorAll(
-          "#didomi-popup, #didomi-popup-container, #onetrust-banner-sdk",
+          "#didomi-popup, #didomi-popup-container, #onetrust-banner-sdk, .gdpr-lmd-wall",
         ),
       ].some(visible),
       pageTitleMatches: document.querySelectorAll(config.titleSelector).length,

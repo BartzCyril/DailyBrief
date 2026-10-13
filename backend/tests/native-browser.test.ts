@@ -31,6 +31,34 @@ const server = createServer((request, response) => {
     ua: request.headers["user-agent"],
   });
   response.setHeader("Content-Type", "text/html; charset=utf-8");
+  if (path === "/consent-preflight") {
+    response.setHeader("Access-Control-Allow-Origin", `http://publisher.test:${port}`);
+    response.setHeader("Access-Control-Allow-Methods", "GET");
+    response.setHeader("Access-Control-Allow-Headers", "X-Consent-Check");
+    response.writeHead(request.method === "OPTIONS" ? 204 : 200).end("{}");
+    return;
+  }
+  if (path === "/persist-consent") {
+    setTimeout(() => {
+      response.setHeader("Set-Cookie", "accepted=yes; Path=/; HttpOnly; SameSite=Lax");
+      response.end("{}");
+    }, 800);
+    return;
+  }
+  if (path === "/consent-reload") {
+    if (request.headers.cookie?.includes("accepted=yes")) {
+      response.end(
+        '<article><h2>Article après consentement</h2><a href="/article">Lire</a></article>',
+      );
+      return;
+    }
+    response.end(`<div class="gdpr-lmd-wall"><button class="gdpr-lmd-button" data-gdpr-expression="acceptAll">Accepter et continuer</button></div>
+      <script>document.querySelector('button').onclick=async()=>{
+        await fetch('http://ads.test:${port}/consent-preflight',{headers:{'X-Consent-Check':'yes'}});
+        await fetch('/persist-consent',{method:'POST',body:'accepted'});
+      };</script>`);
+    return;
+  }
   if (path === "/wide-script") {
     response.setHeader("Content-Type", "application/javascript");
     response.end(`/*${"x".repeat(1792 * 1024)}*/window.loadedScripts=(window.loadedScripts||0)+1;`);
@@ -600,3 +628,46 @@ test("native navigation rejects embedded credentials before Chromium can send au
   });
   expect(requests.slice(start)).toHaveLength(0);
 }, 45000);
+
+test.each(["scraping", "selector analysis"])(
+  "%s waits for CORS preflight and AJAX Set-Cookie before reloading consent",
+  async (kind) => {
+    const start = requests.length;
+    const selector = 'button.gdpr-lmd-button[data-gdpr-expression="acceptAll"]';
+    if (kind === "scraping") {
+      const result = await new ScrapingService(undefined, networkFactory).collect(
+        url("/consent-reload"),
+        {
+          articleSelector: "article",
+          titleSelector: "h2",
+          linkSelector: "a",
+          cookieConsentSelector: selector,
+          mode: "SCROLL",
+          scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+        },
+      );
+      expect(result.articles[0]?.title).toBe("Article après consentement");
+    } else {
+      const result = await renderPublicSelectorPage(
+        url("/consent-reload"),
+        undefined,
+        networkFactory,
+        { cookieConsentSelector: selector },
+      );
+      expect(result.html).toContain("Article après consentement");
+      expect(result.html).not.toContain("gdpr-lmd-wall");
+    }
+    const sent = requests.slice(start);
+    expect(
+      sent.filter((item) => item.path === "/consent-preflight").map((item) => item.method),
+    ).toEqual(["OPTIONS", "GET"]);
+    expect(
+      sent.filter((item) => item.path === "/persist-consent").map((item) => item.method),
+    ).toEqual(["POST"]);
+    const loads = sent.filter((item) => item.path === "/consent-reload");
+    expect(loads).toHaveLength(2);
+    expect(loads[0]?.cookie).toBeUndefined();
+    expect(loads[1]?.cookie).toContain("accepted=yes");
+  },
+  30000,
+);

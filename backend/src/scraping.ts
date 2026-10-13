@@ -4,6 +4,7 @@ import {
   interceptRequests,
   navigateScrapingPage,
   delay,
+  waitForClickTarget,
 } from "./browser";
 import { TimeoutError, type Page, type HTTPRequest, type ElementHandle } from "puppeteer";
 import type { ArticlePreview, ScrapingConfig, SourcePreview } from "@dailybrief/shared";
@@ -194,6 +195,7 @@ export class ScrapingService {
       };
       const blockedPosts = new Set<string>();
       const scriptErrors = new Set<string>();
+      const clickScriptErrors = new Set<string>();
       const timer =
         config.mode === "SCROLL"
           ? setTimeout(
@@ -242,7 +244,7 @@ export class ScrapingService {
                 (request.method === "POST" &&
                   (config.mode === "LOAD_MORE" || verificationPost) &&
                   ["xhr", "fetch"].includes(request.resourceType.toLowerCase()));
-              if (request.method !== "GET" && !post)
+              if (request.method !== "GET" && request.method !== "OPTIONS" && !post)
                 throw new AppError(400, "Cette requête de page n'est pas autorisée.", "UNSAFE_URL");
               if (
                 post &&
@@ -305,8 +307,8 @@ export class ScrapingService {
           });
         }
         page.on("pageerror", (error) => {
-          if (scriptErrors.size < 3 && error instanceof Error)
-            scriptErrors.add(error.message.slice(0, 300));
+          const errors = failLoad ? clickScriptErrors : scriptErrors;
+          if (errors.size < 3 && error instanceof Error) errors.add(error.message.slice(0, 300));
         });
         // Production continues Chromium requests through a public-address TCP relay.
         // Explicit fetchers only supply deterministic fixture responses in tests.
@@ -331,7 +333,7 @@ export class ScrapingService {
               (config.mode === "LOAD_MORE" || verificationPost) &&
               ajax);
           if (
-            (request.method() !== "GET" && !post) ||
+            (request.method() !== "GET" && !(network && request.method() === "OPTIONS") && !post) ||
             request.resourceType() === "media" ||
             (!verificationResources && ["image", "font"].includes(request.resourceType()))
           ) {
@@ -442,6 +444,7 @@ export class ScrapingService {
             if (
               await dismissCookieConsent(page, config.cookieConsentSelector, {
                 waitForAppearance: initialPage,
+                reload: () => navigate(page.url()),
                 onAction: (origins) => {
                   consentOrigins = origins;
                   if (origins.size) network?.beginLoad();
@@ -681,6 +684,7 @@ export class ScrapingService {
             network?.beginLoad();
             networkError = undefined;
             blockedPosts.clear();
+            clickScriptErrors.clear();
             attemptedLoads = 0;
             const failure = new Promise<never>((_resolve, reject) => {
               failLoad = reject;
@@ -704,6 +708,21 @@ export class ScrapingService {
                   try {
                     const button = handle.asElement() as ElementHandle<Element> | null;
                     if (!button) throw new Error("Load more button disappeared before the click");
+                    try {
+                      await waitForClickTarget(button, waitTimeoutMs);
+                    } catch (error) {
+                      if (!(error instanceof TimeoutError)) throw error;
+                      const diagnostic = await inspectScrapingPage(page, config);
+                      throw new AppError(
+                        422,
+                        diagnostic.consentVisible
+                          ? "La popup de cookies recouvre le bouton de chargement. Renseignez ou vérifiez le sélecteur du bouton de cookies, puis retestez la source. Aucun clic de chargement n'a été effectué."
+                          : "Un élément de la page recouvre le bouton de chargement. Vérifiez les popups et le sélecteur du bouton. Aucun clic de chargement n'a été effectué.",
+                        diagnostic.consentVisible
+                          ? "LOAD_MORE_CONSENT_REQUIRED"
+                          : "LOAD_MORE_BUTTON_OBSCURED",
+                      );
+                    }
                     await button.asLocator().setTimeout(waitTimeoutMs).click();
                   } finally {
                     await handle.dispose();
@@ -819,9 +838,13 @@ export class ScrapingService {
                 warnings.push(
                   "Aucune requête de chargement AJAX vers le site n'a été observée après le clic. Vérifiez le fonctionnement du bouton et l'initialisation de son script.",
                 );
+              if (clickScriptErrors.size)
+                warnings.push(
+                  `Erreur(s) JavaScript après le clic : ${Array.from(clickScriptErrors).join(" ; ")}.`,
+                );
               if (scriptErrors.size)
                 warnings.push(
-                  `Erreur(s) JavaScript observée(s) : ${Array.from(scriptErrors).join(" ; ")}.`,
+                  `Erreur(s) JavaScript pendant l'initialisation de la page : ${Array.from(scriptErrors).join(" ; ")}. Ces erreurs étaient présentes avant le clic.`,
                 );
               if (blockedPosts.size)
                 warnings.push(

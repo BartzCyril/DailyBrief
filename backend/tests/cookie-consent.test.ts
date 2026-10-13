@@ -73,10 +73,11 @@ test("clicks a visible consent button inside an iframe and resets temporary perm
     await interceptRequests(page, async (request) =>
       request.respond({
         contentType: "text/html",
-        body:
-          new URL(request.url()).hostname === "cmp.example"
+        body: request.headers().cookie?.includes("consent=accepted")
+          ? "<main>Consentement mémorisé</main>"
+          : new URL(request.url()).hostname === "cmp.example"
             ? '<div id="cookies"><button id="accept-cookies" onclick="parent.postMessage(\'accepted\',\'*\')">Refuser</button></div>'
-            : '<iframe src="https://cmp.example/consent"></iframe><script>onmessage=()=>document.querySelector("iframe").remove()</script>',
+            : '<iframe src="https://cmp.example/consent"></iframe><script>onmessage=()=>{document.cookie="consent=accepted; path=/";document.querySelector("iframe").remove()}</script>',
       }),
     );
     await navigateScrapingPage(page, "https://publisher.example/");
@@ -110,7 +111,13 @@ test("an absent popup is harmless, but invalid, ambiguous and stuck buttons are 
     expect(
       await page.evaluate(() => (window as unknown as { clicked?: boolean }).clicked),
     ).toBeUndefined();
-    await page.setContent('<div id="cookies"><button id="accept-cookies">Accepter</button></div>');
+    await interceptRequests(page, async (request) =>
+      request.respond({
+        contentType: "text/html",
+        body: '<div id="cookies"><button id="accept-cookies">Accepter</button></div>',
+      }),
+    );
+    await navigateScrapingPage(page, "https://publisher.example/stuck");
     await expect(dismissCookieConsent(page, "#accept-cookies")).rejects.toMatchObject({
       code: "COOKIE_CONSENT_FAILED",
     });
@@ -125,7 +132,13 @@ test("pagination applies consent before extraction and reuses its cookie on subs
     requests.push({ url, method: options?.method, cookie: options?.cookie, body: options?.body });
     if (url.endsWith("/consent")) return "{}";
     const page = Number(new URL(url).searchParams.get("page"));
-    return page === 1 ? popup(article("1")) : page === 2 ? article("2") : "<main></main>";
+    return page === 1
+      ? options?.cookie?.includes("consent=accepted")
+        ? article("1")
+        : popup(article("1"))
+      : page === 2
+        ? article("2")
+        : "<main></main>";
   });
   const config: ScrapingConfig = {
     ...base,
@@ -145,8 +158,12 @@ test("pagination applies consent before extraction and reuses its cookie on subs
 test.each(["SCROLL", "LOAD_MORE"] as const)(
   "%s validation closes consent before checking required article selectors",
   async (mode) => {
-    const service = new ScrapingService(async (url) =>
-      url.endsWith("/consent") ? "{}" : popup(article("first")),
+    const service = new ScrapingService(async (url, options) =>
+      url.endsWith("/consent")
+        ? "{}"
+        : options?.cookie?.includes("consent=accepted")
+          ? article("first")
+          : popup(article("first")),
     );
     const config: ScrapingConfig = {
       ...base,
@@ -169,11 +186,15 @@ test.each(["SCROLL", "LOAD_MORE"] as const)(
 test("selector analysis closes a configured popup before producing the public HTML snapshot", async () => {
   const result = await renderPublicSelectorPage(
     "https://publisher.example/news",
-    async (url) => ({
+    async (url, options) => ({
       url,
       status: 200,
       cookies: [],
-      text: url.endsWith("/consent") ? "{}" : popup(article("IA")),
+      text: url.endsWith("/consent")
+        ? "{}"
+        : options?.cookie?.includes("consent=accepted")
+          ? article("IA")
+          : popup(article("IA")),
       contentType: url.endsWith("/consent") ? "application/json" : "text/html",
     }),
     undefined,
@@ -188,10 +209,14 @@ test("handles a consent popup that appears after the browser verification finish
   const consentMarkup =
     '<div id="cookies">Cookies<button id="accept-cookies">Refuser</button></div>';
   const service = new ScrapingService(
-    async () => `<p>vérifie votre navigateur...</p><script>
+    async (_url, options) =>
+      options?.cookie?.includes("consent=accepted")
+        ? content
+        : `<p>vérifie votre navigateur...</p><script>
       setTimeout(() => {
         document.body.innerHTML = ${JSON.stringify(consentMarkup)};
         document.querySelector('#accept-cookies').onclick = () => {
+          document.cookie="consent=accepted; path=/";
           document.body.innerHTML = ${JSON.stringify(content)};
         };
       }, 3500);
@@ -206,3 +231,88 @@ test("handles a consent popup that appears after the browser verification finish
   });
   expect(result.articles[0]?.title).toBe("Article after-verification");
 }, 30000);
+
+test("waits for AJAX consent and reloads the same session even while the wall stays visible", async () => {
+  const calls: { path: string; cookie?: string }[] = [];
+  let consentCompleted = false;
+  const service = new ScrapingService(async (url, options) => {
+    const path = new URL(url).pathname;
+    calls.push({ path, cookie: options?.cookie });
+    if (path === "/consent") {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      consentCompleted = true;
+      return "{}";
+    }
+    if (options?.cookie?.includes("consent=accepted")) {
+      expect(consentCompleted).toBe(true);
+      return article("after-reload");
+    }
+    return `<footer class="gdpr-lmd-wall__footer">
+      <button class="gdpr-lmd-button" data-gdpr-expression="acceptAll">Accepter et continuer</button>
+      <a class="gdpr-lmd-button" href="/subscribe">S'abonner</a>
+      </footer><script>
+        document.querySelector('button.gdpr-lmd-button').onclick=async()=>{
+          await fetch('/consent',{method:'POST'});
+          document.cookie='consent=accepted; path=/';
+          // The wall deliberately remains in the old document.
+        };
+      </script>`;
+  });
+  const config: ScrapingConfig = {
+    ...base,
+    cookieConsentSelector: 'button.gdpr-lmd-button[data-gdpr-expression="acceptAll"]',
+    mode: "SCROLL",
+    scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+  };
+  for (let i = 0; i < 2; i++) {
+    const result = await service.collect("https://publisher.example/news", config);
+    expect(result.articles[0]?.title).toBe("Article after-reload");
+  }
+  expect(calls.map(({ path }) => path)).toEqual([
+    "/news",
+    "/consent",
+    "/news",
+    "/news",
+    "/consent",
+    "/news",
+  ]);
+  expect(calls[0]?.cookie ?? "").not.toContain("consent=accepted");
+  expect(calls[2]?.cookie).toContain("consent=accepted");
+  expect(calls[3]?.cookie ?? "").not.toContain("consent=accepted");
+}, 30000);
+
+test("a popup hidden by the click but returning after reload is a consent failure", async () => {
+  const service = new ScrapingService(
+    async () => `${article("first")}
+    <div id="cookies"><button id="accept-cookies" onclick="document.querySelector('#cookies').remove()">Accepter</button></div>`,
+  );
+  await expect(
+    service.validateFirstPage("https://publisher.example/news", {
+      ...base,
+      mode: "SCROLL",
+      scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+    }),
+  ).rejects.toMatchObject({
+    code: "COOKIE_CONSENT_FAILED",
+    message: expect.stringContaining("rechargement"),
+  });
+}, 15000);
+
+test("a consent wall appearing late after reload is still detected", async () => {
+  const markup = '<div id="cookies"><button id="accept-cookies">Accepter</button></div>';
+  const service = new ScrapingService(async (_url, options) =>
+    options?.cookie?.includes("consent=accepted")
+      ? `${article("first")}<script>setTimeout(()=>document.body.insertAdjacentHTML('beforeend',${JSON.stringify(markup)}),1000)</script>`
+      : `${markup}<script>document.querySelector('#accept-cookies').onclick=()=>{document.cookie='consent=accepted; path=/'}</script>`,
+  );
+  await expect(
+    service.validateFirstPage("https://publisher.example/news", {
+      ...base,
+      mode: "SCROLL",
+      scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+    }),
+  ).rejects.toMatchObject({
+    code: "COOKIE_CONSENT_FAILED",
+    message: expect.stringContaining("rechargement"),
+  });
+}, 15000);

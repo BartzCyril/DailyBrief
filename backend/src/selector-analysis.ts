@@ -310,7 +310,10 @@ export async function renderPublicSelectorPage(
       rejectNavigation = reject;
     });
     void navigationFailure.catch(() => {});
-    const timer = setTimeout(() => void context.close().catch(() => {}), 35000);
+    const timer = setTimeout(
+      () => void context.close().catch(() => {}),
+      options.cookieConsentSelector ? 60000 : 35000,
+    );
     const fail = (error: unknown) => {
       // Never retain URLs, raw browser exceptions, cookies or query parameters.
       const message =
@@ -365,6 +368,7 @@ export async function renderPublicSelectorPage(
           (request) => {
             if (
               request.method !== "GET" &&
+              request.method !== "OPTIONS" &&
               !consentPostAllowed(request.url, request.method, request.resourceType, consentOrigins)
             )
               throw new AppError(400, "Cette requête de page n'est pas autorisée.", "UNSAFE_URL");
@@ -390,6 +394,7 @@ export async function renderPublicSelectorPage(
           request.isNavigationRequest() && request.frame() === page.mainFrame();
         if (
           (request.method() !== "GET" &&
+            !(network && request.method() === "OPTIONS") &&
             !consentPostAllowed(
               request.url(),
               request.method(),
@@ -469,6 +474,13 @@ export async function renderPublicSelectorPage(
       if (navigationError) throw navigationError;
       await dismissCookieConsent(page, options.cookieConsentSelector, {
         waitForAppearance: true,
+        reload: async () => {
+          network?.beginLoad();
+          const response = await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+          status = response?.status();
+          await page.waitForNetworkIdle({ timeout: 2500 }).catch(() => {});
+          if (navigationError) throw navigationError;
+        },
         onAction: (origins) => {
           consentOrigins = origins;
           if (origins.size) network?.beginLoad();

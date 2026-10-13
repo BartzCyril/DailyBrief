@@ -559,9 +559,12 @@ Accepter, Refuser ou Continuer sans accepter d'une popup de consentement.
 Exemple à vérifier sur le site : `#didomi-notice-agree-button`. Le sélecteur est global,
 y compris dans une iframe visible. Le navigateur clique dessus avant l'extraction,
 la validation de la source et l'analyse IA si le réglage est déjà renseigné.
-Le choix reste dans le même contexte navigateur pendant les pages de cette collecte.
+Après le clic, le navigateur attend les appels réseau, puis recharge la page dans
+le même contexte pour conserver les cookies et vérifier que le consentement est
+mémorisé. Une popup qui reste visible avant le rechargement ne suffit donc pas à
+faire échouer la validation. Le choix reste disponible pendant les pages de cette collecte.
 Une popup absente ne bloque pas la lecture ; plusieurs boutons correspondants ou
-une popup qui reste ouverte produisent une erreur explicite. L'IA peut proposer un
+une popup qui revient après le rechargement produisent une erreur explicite. L'IA peut proposer un
 bouton observé et vérifié ; elle conserve un réglage existant lorsque la popup a déjà
 disparu. Ce réglage est stocké dans `scrapingConfig` : aucune migration ni nouvelle
 variable d'environnement n'est nécessaire. Il ne résout pas une vérification CAPTCHA

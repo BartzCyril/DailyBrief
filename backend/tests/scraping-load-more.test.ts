@@ -367,3 +367,38 @@ test("reports a loading lock that never clears instead of sending ignored clicks
   expect(error).toMatchObject({ code: "LOAD_MORE_TIMEOUT", status: 504 });
   expect(error.message).toContain("bouton");
 }, 10000);
+
+test("a cookie wall covering load-more is reported before any article click", async () => {
+  const calls: string[] = [];
+  const service = new ScrapingService(async (url) => {
+    calls.push(url);
+    return page(
+      `document.querySelector('#more').onclick=()=>fetch('/must-not-click');`,
+      '<button id="more">Plus</button><div class="gdpr-lmd-wall" style="position:fixed;inset:0;z-index:100">Cookies</div>',
+    );
+  });
+  await expect(service.collect("https://fixture.example/news", config)).rejects.toMatchObject({
+    code: "LOAD_MORE_CONSENT_REQUIRED",
+  });
+  expect(calls).toEqual(["https://fixture.example/news"]);
+}, 10000);
+
+test("waits for a temporary overlay and allows clicking a button's child", async () => {
+  const service = new ScrapingService(async () =>
+    page(
+      `
+    setTimeout(()=>document.querySelector('#overlay').remove(),900);
+    document.querySelector('#more').onclick=()=>{
+      document.querySelector('#more').insertAdjacentHTML('beforebegin',${JSON.stringify(card("after-overlay"))});
+      document.querySelector('#more').remove();
+    };`,
+      '<button id="more" style="margin-top:1500px"><span>Plus</span></button><div id="overlay" style="position:fixed;inset:0;z-index:100">Chargement</div>',
+    ),
+  );
+  const result = await service.collect("https://fixture.example/news", config);
+  expect(result.articles.map((item) => item.title)).toEqual([
+    "Article first",
+    "Article after-overlay",
+  ]);
+  expect(result.warnings).toBeUndefined();
+}, 10000);

@@ -1,7 +1,14 @@
 import puppeteer from "puppeteer";
 import { addExtra } from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import type { Browser, BrowserContext, HTTPRequest, LaunchOptions, Page } from "puppeteer";
+import type {
+  Browser,
+  BrowserContext,
+  ElementHandle,
+  HTTPRequest,
+  LaunchOptions,
+  Page,
+} from "puppeteer";
 
 // Register once: every production browser uses the same Puppeteer/stealth setup.
 export const scrapingBrowser = addExtra(puppeteer);
@@ -98,6 +105,29 @@ export async function navigateScrapingPage(page: Page, url: string): Promise<voi
     page.goto(url, { waitUntil: "load" }),
     page.waitForNetworkIdle({ idleTime: 500, timeout: page.getDefaultNavigationTimeout() }),
   ]);
+}
+
+export async function waitForClickTarget(
+  button: ElementHandle<Element>,
+  timeout: number,
+): Promise<void> {
+  await button.scrollIntoView();
+  const ready = await button.frame.waitForFunction(
+    (element) => {
+      if (!element.isConnected) return false;
+      const rect = element.getBoundingClientRect();
+      const left = Math.max(0, rect.left);
+      const right = Math.min(innerWidth, rect.right);
+      const top = Math.max(0, rect.top);
+      const bottom = Math.min(innerHeight, rect.bottom);
+      if (right <= left || bottom <= top) return false;
+      const target = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+      return Boolean(target && (target === element || element.contains(target)));
+    },
+    { timeout, polling: 100 },
+    button,
+  );
+  await ready.dispose();
 }
 
 export async function isVisible(page: Page, selector: string): Promise<boolean> {
