@@ -95,6 +95,14 @@ export async function validateRemoteUrl(
   return { url, ...addresses[0]! };
 }
 export type FetchText = (url: string, options?: RemotePageOptions) => Promise<string>;
+const corsHeaderNames = [
+  "access-control-allow-origin",
+  "access-control-allow-credentials",
+  "access-control-allow-methods",
+  "access-control-allow-headers",
+  "access-control-expose-headers",
+  "access-control-max-age",
+] as const;
 export type RemotePage = {
   url?: string;
   text: string;
@@ -102,9 +110,10 @@ export type RemotePage = {
   contentType?: string;
   location?: string;
   cookies: string[];
+  corsHeaders?: Partial<Record<(typeof corsHeaderNames)[number], string>>;
 };
 export type RemotePageOptions = {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "OPTIONS";
   body?: string;
   contentType?: string;
   requestedWith?: string;
@@ -115,12 +124,25 @@ export type RemotePageOptions = {
   followRedirects?: boolean;
   allowedHostname?: string;
   browserHeaders?: Record<string, string>;
+  origin?: string;
+  corsRequestMethod?: string;
+  corsRequestHeaders?: string;
 };
 export type FetchPage = (url: string, options?: RemotePageOptions) => Promise<RemotePage>;
 export const fetchRemotePage: FetchPage = async (value, options = {}) => {
   const deadline = Date.now() + 15000;
   let originalOrigin: string | undefined;
   let method = options.method ?? "GET";
+  if (options.origin) {
+    let origin: URL;
+    try {
+      origin = new URL(options.origin);
+    } catch {
+      throw new AppError(400, "Origine de requête invalide.", "UNSAFE_URL");
+    }
+    if (origin.origin !== options.origin || !["http:", "https:"].includes(origin.protocol))
+      throw new AppError(400, "Origine de requête invalide.", "UNSAFE_URL");
+  }
   for (let redirect = 0; redirect <= 4; redirect++) {
     const target = await validateRemoteUrl(value);
     if (
@@ -156,7 +178,17 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
             ...(options.referer && new URL(options.referer).origin === target.url.origin
               ? { Referer: options.referer }
               : {}),
-            ...(method === "POST" ? { Origin: originalOrigin } : {}),
+            ...(options.origin && target.url.origin === originalOrigin
+              ? { Origin: options.origin }
+              : method === "POST"
+                ? { Origin: originalOrigin }
+                : {}),
+            ...(method === "OPTIONS" && options.corsRequestMethod
+              ? { "Access-Control-Request-Method": options.corsRequestMethod }
+              : {}),
+            ...(method === "OPTIONS" && options.corsRequestHeaders
+              ? { "Access-Control-Request-Headers": options.corsRequestHeaders }
+              : {}),
             ...(method === "POST" && options.contentType
               ? { "Content-Type": options.contentType }
               : {}),
@@ -178,6 +210,12 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
             status: res.statusCode ?? 500,
             contentType: res.headers["content-type"],
             cookies: res.headers["set-cookie"] ?? [],
+            corsHeaders: Object.fromEntries(
+              corsHeaderNames.flatMap((name) => {
+                const header = res.headers[name];
+                return typeof header === "string" ? [[name, header]] : [];
+              }),
+            ),
           };
           if ([301, 302, 303, 307, 308].includes(res.statusCode ?? 0) && res.headers.location) {
             res.resume();

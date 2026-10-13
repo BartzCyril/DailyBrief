@@ -4,11 +4,13 @@ import {
   interceptRequests,
   delay,
   isVisible,
+  navigateScrapingPage,
 } from "./browser";
+import { TimeoutError } from "puppeteer";
 import type { Page, ElementHandle, HTTPRequest } from "puppeteer";
 import type { JournalLoginConfig } from "@dailybrief/shared";
 import { AppError } from "./errors";
-import { fetchRemotePage, type FetchPage } from "./network";
+import { fetchRemotePage, RemoteConnectionError, type FetchPage } from "./network";
 import { articleBrowserLimiter } from "./article-browser";
 import { MAX_REMOTE_BYTES } from "./remote-response";
 
@@ -39,6 +41,25 @@ function articleTarget(domain: string, url: string) {
 
 function loginError(code = "JOURNAL_LOGIN_FAILED") {
   const messages: Record<string, string> = {
+    JOURNAL_LOGIN_PAGE_FAILED:
+      "Le navigateur n'a pas pu charger le formulaire de connexion. L'échec intervient avant la saisie des identifiants.",
+    JOURNAL_LOGIN_PAGE_TIMEOUT:
+      "Le document principal du formulaire n'a pas fini de charger dans le délai prévu. Aucun identifiant n'a été saisi.",
+    JOURNAL_LOGIN_PAGE_HTTP_ERROR:
+      "Le site a refusé le chargement du formulaire de connexion (erreur HTTP). Aucun identifiant n'a été saisi.",
+    JOURNAL_LOGIN_NETWORK_DNS:
+      "Le backend ne peut pas résoudre le nom du serveur du journal (DNS).",
+    JOURNAL_LOGIN_NETWORK_TLS:
+      "Le backend ne peut pas vérifier la connexion HTTPS du journal (certificat ou négociation TLS).",
+    JOURNAL_LOGIN_NETWORK_CONNECT:
+      "Le backend ne peut pas établir une connexion réseau avec le serveur du journal.",
+    JOURNAL_LOGIN_NETWORK_RESET:
+      "Le serveur du journal ou un intermédiaire a interrompu la connexion réseau du backend.",
+    JOURNAL_LOGIN_NETWORK_UNKNOWN: "Le backend ne peut pas joindre le serveur du journal.",
+    JOURNAL_LOGIN_SUBMIT_FAILED:
+      "Les champs sont remplis, mais le navigateur n'a pas pu envoyer le formulaire. Vérifiez que le contrôle d'envoi est actif et accessible.",
+    JOURNAL_LOGIN_FAILED:
+      "La connexion au journal n'a pas pu être confirmée après l'envoi du formulaire. Vérifiez la réponse du journal et vos identifiants.",
     JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID:
       "L'ancien réglage de vérification est déjà visible avant connexion. Supprimez puis reconfigurez le formulaire de connexion du journal.",
     JOURNAL_LOGIN_UNVERIFIED:
@@ -58,7 +79,7 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
     JOURNAL_LOGIN_REDIRECT_BLOCKED:
       "La connexion redirige vers une origine non autorisée. Vérifiez l'URL du formulaire et le domaine du journal.",
     JOURNAL_LOGIN_REQUEST_BLOCKED:
-      "Le formulaire tente d'envoyer une requête non autorisée. La connexion doit utiliser l'origine HTTPS configurée.",
+      "Le formulaire tente d'envoyer une requête non autorisée. La connexion doit utiliser les origines HTTPS configurées du formulaire et du journal.",
     JOURNAL_ARTICLE_UNAVAILABLE:
       "Le journal n'a pas permis de charger cet article avec la session authentifiée.",
     JOURNAL_SESSION_EXPIRED:
@@ -66,10 +87,27 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
   };
   return new AppError(
     422,
-    messages[code] ??
-      "Connexion au journal impossible. Vérifiez le formulaire, les sélecteurs et les identifiants. Une validation à deux étapes ou un CAPTCHA nécessite une intervention sur le site.",
+    messages[code] ?? "La connexion au journal a échoué pendant le traitement du formulaire.",
     code,
   );
+}
+
+function safeTransportError(error: unknown, fallbackCode: string) {
+  if (error instanceof AppError && error.code.startsWith("JOURNAL_")) return loginError(error.code);
+  if (error instanceof RemoteConnectionError)
+    return loginError(`JOURNAL_LOGIN_NETWORK_${error.reason}`);
+  if (error instanceof AppError && error.code === "UNSAFE_URL")
+    return loginError("JOURNAL_LOGIN_REQUEST_BLOCKED");
+  if (error instanceof AppError && error.code === "UPSTREAM_ERROR")
+    return loginError(
+      fallbackCode === "JOURNAL_LOGIN_PAGE_FAILED" ? "JOURNAL_LOGIN_PAGE_HTTP_ERROR" : fallbackCode,
+    );
+  if (
+    fallbackCode === "JOURNAL_LOGIN_PAGE_FAILED" &&
+    (error instanceof TimeoutError || (error instanceof AppError && error.code === "TIMEOUT"))
+  )
+    return loginError("JOURNAL_LOGIN_PAGE_TIMEOUT");
+  return loginError(fallbackCode);
 }
 
 // One ephemeral context per batch: cookies are never persisted or shared with another user/run.
@@ -115,7 +153,7 @@ export class JournalLoginBrowser {
       }
       const context = await browser.createBrowserContext().catch(async () => {
         await browser.close().catch(() => {});
-        throw loginError();
+        throw loginError("JOURNAL_LOGIN_PAGE_FAILED");
       });
       let timer: ReturnType<typeof setTimeout> | undefined;
       let expired = false;
@@ -124,6 +162,7 @@ export class JournalLoginBrowser {
       let secretsEntered = false;
       let navigations = 0;
       let operationId = 0;
+      let loginFailureCode = "JOURNAL_LOGIN_PAGE_FAILED";
       let networkError: AppError | undefined;
       let rejectNetwork = (_error: unknown) => {};
       let networkFailure = new Promise<never>((_resolve, reject) => {
@@ -160,9 +199,10 @@ export class JournalLoginBrowser {
               return;
             }
             if (
-              !["GET", "POST"].includes(method) ||
+              !["GET", "POST", "OPTIONS"].includes(method) ||
               (method === "POST" &&
-                (!authenticating || url.origin !== loginOrigin || !secretsEntered))
+                (!authenticating || !origins.has(url.origin) || !secretsEntered)) ||
+              (method === "OPTIONS" && (!authenticating || !origins.has(url.origin)))
             ) {
               if (navigation || (authenticating && method === "POST" && secretsEntered))
                 throw loginError("JOURNAL_LOGIN_REQUEST_BLOCKED");
@@ -183,7 +223,7 @@ export class JournalLoginBrowser {
               throw loginError("JOURNAL_LOGIN_REQUEST_TOO_LARGE");
             const headers = request.headers();
             const response = await this.fetchPage(request.url(), {
-              method: method as "GET" | "POST",
+              method: method as "GET" | "POST" | "OPTIONS",
               body,
               contentType: headers["content-type"],
               requestedWith: headers["x-requested-with"],
@@ -191,12 +231,22 @@ export class JournalLoginBrowser {
               cookie: headers.cookie,
               userAgent: headers["user-agent"],
               accept: headers.accept,
+              // Preserve the actual browser origin, including SSO calls from
+              // the login host to the declared journal host. Chromium still
+              // enforces the server's own CORS response headers below.
+              origin: headers.origin && origins.has(headers.origin) ? headers.origin : undefined,
+              corsRequestMethod: headers["access-control-request-method"],
+              corsRequestHeaders: headers["access-control-request-headers"],
               // Every redirect returns to interception before a new request is made.
               followRedirects: false,
             });
             if (response.status >= 400)
               throw loginError(
-                authenticating ? "JOURNAL_LOGIN_FAILED" : "JOURNAL_ARTICLE_UNAVAILABLE",
+                authenticating
+                  ? secretsEntered
+                    ? "JOURNAL_LOGIN_FAILED"
+                    : "JOURNAL_LOGIN_PAGE_HTTP_ERROR"
+                  : "JOURNAL_ARTICLE_UNAVAILABLE",
               );
             let html = response.text;
             let status = response.status;
@@ -222,6 +272,7 @@ export class JournalLoginBrowser {
               body: html,
               headers: {
                 "content-type": `${contentType.replace(/;\s*charset\s*=\s*[^;]+/i, "")}; charset=utf-8`,
+                ...response.corsHeaders,
                 ...(response.cookies.length &&
                 (!response.url || new URL(response.url).origin === url.origin)
                   ? { "set-cookie": response.cookies }
@@ -236,10 +287,9 @@ export class JournalLoginBrowser {
               return;
             }
             if (mainNavigation || (authenticating && method === "POST" && secretsEntered))
-              networkError = loginError(
-                error instanceof AppError && error.code.startsWith("JOURNAL_")
-                  ? error.code
-                  : undefined,
+              networkError = safeTransportError(
+                error,
+                authenticating ? loginFailureCode : "JOURNAL_ARTICLE_UNAVAILABLE",
               );
             await request.abort().catch(() => {});
             if (networkError) rejectNetwork(networkError);
@@ -273,7 +323,10 @@ export class JournalLoginBrowser {
               networkError ??
               (error instanceof AppError && error.code.startsWith("JOURNAL_")
                 ? error
-                : loginError());
+                : safeTransportError(
+                    error,
+                    authenticating ? loginFailureCode : "JOURNAL_ARTICLE_UNAVAILABLE",
+                  ));
             await abort();
             throw safeError;
           } finally {
@@ -285,7 +338,10 @@ export class JournalLoginBrowser {
         };
         await execute(async () => {
           observer?.("Ouverture du formulaire de connexion du journal.");
-          await page.goto(login.config.loginUrl, { waitUntil: "domcontentloaded" });
+          // A visible main document can be ready while an iframe is still loading.
+          await navigateScrapingPage(page, login.config.loginUrl, { waitForAllResources: false });
+          observer?.("Document principal du formulaire chargé.");
+          loginFailureCode = "JOURNAL_LOGIN_FIELDS_UNFILLED";
           await assertLoginField(page, login.config.emailSelector, false);
           await assertLoginField(page, login.config.passwordSelector, true);
           const previousSignals = login.config.successSelector
@@ -301,7 +357,9 @@ export class JournalLoginBrowser {
             await uniqueVisible(page, login.config.submitSelector, "JOURNAL_LOGIN_SUBMIT_NOT_FOUND")
           ).dispose();
           observer?.("Envoi du formulaire et vérification de la connexion.");
+          loginFailureCode = "JOURNAL_LOGIN_SUBMIT_FAILED";
           await page.locator(login.config.submitSelector).click();
+          loginFailureCode = "JOURNAL_LOGIN_FAILED";
           if (login.config.successSelector) await uniqueVisible(page, login.config.successSelector);
           else await confirmConnection(page, previousSignals, this.timeoutMs);
           authenticating = false;
@@ -402,7 +460,7 @@ export class JournalLoginBrowser {
         if (callbackStarted) throw error;
         if (networkError) throw networkError;
         if (error instanceof AppError && error.code.startsWith("JOURNAL_")) throw error;
-        throw loginError();
+        throw safeTransportError(error, loginFailureCode);
       } finally {
         clearTimeout(timer);
         await browser.close().catch(() => {});

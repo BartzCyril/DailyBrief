@@ -934,6 +934,13 @@ rendent visible qu'une fois les champs remplis. Les champs ou contrôles absents
 sont distingués par `JOURNAL_LOGIN_EMAIL_NOT_FOUND`,
 `JOURNAL_LOGIN_PASSWORD_NOT_FOUND` et `JOURNAL_LOGIN_SUBMIT_NOT_FOUND`.
 Un contrôle d'envoi peut être un `input[type='submit']` ou un `button[type='submit']`.
+Le chargement attend le document principal et un délai borné d'inactivité réseau,
+sans attendre indéfiniment les iframes. Les erreurs avant la saisie distinguent
+le délai du document (`JOURNAL_LOGIN_PAGE_TIMEOUT`), le refus HTTP de la page
+(`JOURNAL_LOGIN_PAGE_HTTP_ERROR`) et les problèmes DNS, TLS ou de connexion réseau
+(`JOURNAL_LOGIN_NETWORK_*`). Un échec de chargement ne constitue pas une détection
+de CAPTCHA ni un refus des identifiants. Une impossibilité de cliquer après
+remplissage renvoie `JOURNAL_LOGIN_SUBMIT_FAILED`.
 
 Sans ancien sélecteur de réussite enregistré, le serveur confirme la session seulement
 si un nouveau contrôle visible de déconnexion apparaît après soumission
@@ -983,9 +990,13 @@ une nouvelle session pour les articles restants ; les cookies ne sont pas persis
 Les logs `journal.batch_started` et `journal.batch_finished` indiquent le domaine
 et le nombre d'articles du lot sans exposer d'identifiants.
 
-Les identifiants sont envoyés uniquement par POST à l'origine HTTPS de l'URL de
-connexion configurée. Les navigations sont limitées à cette origine et à l'origine
-HTTPS du journal ; les autres redirections sont refusées. Un formulaire hébergé sur
+Les identifiants sont envoyés uniquement par POST aux origines HTTPS déclarées
+du formulaire de connexion et du journal, pendant l'authentification. Les appels
+de vérification de session sur le domaine du journal après la redirection sont
+donc pris en charge. Les prévols CORS `OPTIONS` sont autorisés sur ces deux origines
+durant cette phase ; l'origine réelle et les autorisations CORS reçues du serveur
+sont conservées pour que Chromium applique les contrôles habituels. Les navigations
+sont limitées à ces deux origines ; les autres redirections sont refusées. Un formulaire hébergé sur
 un sous-domaine ou un fournisseur externe peut donc être déclaré explicitement.
 Les iframes externes sont bloquées sans interrompre la connexion du document
 principal ; leurs navigations ne sont pas des redirections du formulaire.

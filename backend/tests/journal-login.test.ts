@@ -3,6 +3,7 @@ import { test, expect, spyOn } from "bun:test";
 import type { Browser } from "puppeteer";
 import { scrapingBrowser } from "../src/browser";
 import { JournalLoginBrowser } from "../src/journal-login";
+import { RemoteConnectionError } from "../src/network";
 import { journalFixture, loginConfig, fullText } from "./fixtures/journal-login";
 
 const credentials = {
@@ -219,6 +220,86 @@ test("a third-party iframe on the public login page does not stop credential ent
   ).toBe(false);
 }, 45000);
 
+test("fills the visible login form while a same-origin child frame is still loading", async () => {
+  const fixture = journalFixture();
+  const messages: string[] = [];
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    if (url.endsWith("/pending-frame")) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      return { status: 200, cookies: [], text: "<p>Chargé</p>", contentType: "text/html" };
+    }
+    const response = await fixture.fetch(url, options);
+    return url.endsWith("/login")
+      ? { ...response, text: response.text + '<iframe src="/pending-frame"></iframe>' }
+      : response;
+  }, 700);
+  await browser.run("publisher.example", credentials, undefined, (message) =>
+    messages.push(message),
+  );
+  const posts = fixture.requests.filter((request) => request.options?.method === "POST");
+  expect(posts).toHaveLength(1);
+  expect(new URLSearchParams(posts[0]!.options?.body).get("email")).toBe(credentials.email);
+  expect(new URLSearchParams(posts[0]!.options?.body).get("password")).toBe(credentials.password);
+  expect(messages).toContain("Connexion au journal vérifiée dans cette session.");
+}, 45000);
+
+test("a document that never finishes loading reports a page timeout before credential entry", async () => {
+  const messages: string[] = [];
+  const browser = new JournalLoginBrowser(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return {
+      status: 200,
+      cookies: [],
+      text: "<main>Chargé trop tard</main>",
+      contentType: "text/html",
+    };
+  }, 700);
+  await assert.rejects(
+    browser.run("publisher.example", credentials, undefined, (message) => messages.push(message)),
+    { code: "JOURNAL_LOGIN_PAGE_TIMEOUT" },
+  );
+  expect(messages).not.toContain("Saisie des identifiants dans le formulaire de connexion.");
+}, 45000);
+
+test.each(["DNS", "TLS", "CONNECT", "RESET", "UNKNOWN"] as const)(
+  "reports the network failure before credential entry without guessing a CAPTCHA: %s",
+  async (reason) => {
+    const messages: string[] = [];
+    const browser = new JournalLoginBrowser(async () => {
+      throw new RemoteConnectionError(reason);
+    }, 700);
+    await assert.rejects(
+      browser.run("publisher.example", credentials, undefined, (message) => messages.push(message)),
+      (error: unknown) => {
+        expect(error).toMatchObject({ code: `JOURNAL_LOGIN_NETWORK_${reason}` });
+        expect((error as Error).message).not.toContain("CAPTCHA");
+        expect((error as Error).message).not.toContain(credentials.password);
+        return true;
+      },
+    );
+    expect(messages).not.toContain("Saisie des identifiants dans le formulaire de connexion.");
+  },
+  45000,
+);
+
+test("reports an HTTP refusal of the login page before any credential entry", async () => {
+  const messages: string[] = [];
+  const browser = new JournalLoginBrowser(
+    async () => ({
+      status: 403,
+      cookies: [],
+      text: "HTTP refusal without CAPTCHA",
+      contentType: "text/html",
+    }),
+    700,
+  );
+  await assert.rejects(
+    browser.run("publisher.example", credentials, undefined, (message) => messages.push(message)),
+    { code: "JOURNAL_LOGIN_PAGE_HTTP_ERROR" },
+  );
+  expect(messages).not.toContain("Saisie des identifiants dans le formulaire de connexion.");
+}, 45000);
+
 test("fills the fields before waiting for a submit control revealed by input validation", async () => {
   const fixture = journalFixture();
   const browser = new JournalLoginBrowser(async (url, options) => {
@@ -389,6 +470,148 @@ test("uses an explicitly configured separate login origin without forwarding its
   ).toBe("sid=own-session");
 }, 45000);
 
+test("the configured login form can POST to the journal origin in the same authenticated session", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    const response = await fixture.fetch(url, options);
+    return url.endsWith("/login")
+      ? {
+          ...response,
+          text: response.text.replace(
+            'action="/authenticate"',
+            'action="https://publisher.example/authenticate"',
+          ),
+        }
+      : response;
+  });
+  const result = await browser.run(
+    "publisher.example",
+    {
+      ...credentials,
+      config: { ...loginConfig, loginUrl: "https://accounts.publisher.example/login" },
+    },
+    "https://publisher.example/article",
+  );
+  expect(result.contentHtml).toContain(fullText);
+  const posts = fixture.requests.filter((request) => request.options?.method === "POST");
+  expect(posts).toHaveLength(1);
+  expect(posts[0]!.url).toBe("https://publisher.example/authenticate");
+  expect(new URLSearchParams(posts[0]!.options?.body).get("password")).toBe(credentials.password);
+}, 45000);
+
+test("verifies login when the journal page checks its session by POST after the login redirect", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    if (url.endsWith("/session-state")) {
+      fixture.requests.push({ url, options });
+      expect(options?.method).toBe("POST");
+      expect(options?.cookie).toContain("sid=own-session");
+      return {
+        status: 200,
+        cookies: [],
+        text: '{"authenticated":true}',
+        contentType: "application/json",
+      };
+    }
+    const response = await fixture.fetch(url, options);
+    if (url.endsWith("/authenticate"))
+      return {
+        ...response,
+        location: "https://publisher.example/account",
+        cookies: ["sid=own-session; Domain=publisher.example; Path=/; HttpOnly; Secure"],
+      };
+    if (url.endsWith("/account"))
+      return {
+        ...response,
+        text: '<main></main><script>fetch("/session-state", {method:"POST", body:"check"}).then(r => r.json()).then(data => { if (data.authenticated) document.querySelector("main").innerHTML = "<button>Se déconnecter</button>"; });</script>',
+      };
+    return response;
+  });
+  const result = await browser.run(
+    "publisher.example",
+    {
+      ...credentials,
+      config: {
+        ...loginConfig,
+        loginUrl: "https://accounts.publisher.example/login",
+        successSelector: null,
+      },
+    },
+    "https://publisher.example/article",
+  );
+  expect(result.contentHtml).toContain(fullText);
+  expect(fixture.requests.filter((request) => request.url.endsWith("/session-state"))).toHaveLength(
+    1,
+  );
+}, 45000);
+
+test.each([true, false])(
+  "honors the server's CORS authorization for AJAX login between the configured origins: %s",
+  async (corsAllowed) => {
+    const fixture = journalFixture();
+    const loginOrigin = "https://accounts.publisher.example";
+    const browser = new JournalLoginBrowser(
+      async (url, options) => {
+        if (url.endsWith("/authenticate")) {
+          fixture.requests.push({ url, options });
+          const corsHeaders = {
+            "access-control-allow-origin": corsAllowed ? loginOrigin : "https://attacker.example",
+            "access-control-allow-credentials": "true",
+            "access-control-allow-methods": "POST",
+            "access-control-allow-headers": "content-type",
+          };
+          if (options?.method === "OPTIONS")
+            return {
+              status: 204,
+              cookies: [],
+              text: "",
+              contentType: "application/json",
+              corsHeaders,
+            };
+          expect(options?.origin).toBe(loginOrigin);
+          expect(JSON.parse(options?.body ?? "{}")).toEqual({
+            email: credentials.email,
+            password: credentials.password,
+          });
+          return {
+            status: 200,
+            cookies: ["sid=own-session; Path=/; HttpOnly; Secure"],
+            text: '{"authenticated":true}',
+            contentType: "application/json",
+            corsHeaders,
+          };
+        }
+        const response = await fixture.fetch(url, options);
+        if (url.endsWith("/login"))
+          return {
+            ...response,
+            text:
+              response.text +
+              '<script>document.querySelector("form").addEventListener("submit", async event => { event.preventDefault(); const body = JSON.stringify(Object.fromEntries(new FormData(event.target))); const response = await fetch("https://publisher.example/authenticate", {method:"POST", credentials:"include", headers:{"Content-Type":"application/json"}, body}); if ((await response.json()).authenticated) location.href = "https://publisher.example/account"; });</script>',
+          };
+        return response;
+      },
+      corsAllowed ? 15000 : 700,
+    );
+    const login = browser.run(
+      "publisher.example",
+      { ...credentials, config: { ...loginConfig, loginUrl: `${loginOrigin}/login` } },
+      "https://publisher.example/article",
+    );
+    if (corsAllowed) expect((await login).contentHtml).toContain(fullText);
+    else await assert.rejects(login, { code: "JOURNAL_LOGIN_FAILED" });
+    const preflights = fixture.requests.filter((request) => request.options?.method === "OPTIONS");
+    expect(preflights).toHaveLength(1);
+    expect(preflights[0]!.options?.origin).toBe(loginOrigin);
+    expect(preflights[0]!.options?.corsRequestMethod).toBe("POST");
+    expect(preflights[0]!.options?.corsRequestHeaders).toContain("content-type");
+    expect(fixture.requests.filter((request) => request.options?.method === "POST")).toHaveLength(
+      corsAllowed ? 1 : 0,
+    );
+  },
+  45000,
+);
+
 test("blocks third-party traffic and mutations once the article uses the authenticated session", async () => {
   const fixture = journalFixture();
   fixture.state.malicious = true;
@@ -428,7 +651,11 @@ test("wrong credentials and selector errors cannot expose passwords or transport
     new JournalLoginBrowser(async () => {
       throw new Error(`password=${credentials.password}`);
     }, 700).run("publisher.example", credentials),
-    { code: "JOURNAL_LOGIN_FAILED" },
+    (error: unknown) => {
+      expect(error).toMatchObject({ code: "JOURNAL_LOGIN_PAGE_FAILED" });
+      expect((error as Error).message).not.toContain(credentials.password);
+      return true;
+    },
   );
 }, 45000);
 
@@ -496,6 +723,6 @@ test("refuses another journal target and private destinations through the protec
       ...credentials,
       config: { ...loginConfig, loginUrl: "https://127.0.0.1/private" },
     }),
-    { code: "JOURNAL_LOGIN_FAILED" },
+    { code: "JOURNAL_LOGIN_REQUEST_BLOCKED" },
   );
 }, 45000);
