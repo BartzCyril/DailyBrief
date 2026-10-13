@@ -133,7 +133,8 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
   const deadline = Date.now() + 15000;
   let originalOrigin: string | undefined;
   let method = options.method ?? "GET";
-  if (options.origin) {
+  // Chromium uses an opaque Origin: null on some cross-origin redirects.
+  if (options.origin && options.origin !== "null") {
     let origin: URL;
     try {
       origin = new URL(options.origin);

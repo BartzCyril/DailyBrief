@@ -998,6 +998,12 @@ durant cette phase ; l'origine réelle et les autorisations CORS reçues du serv
 sont conservées pour que Chromium applique les contrôles habituels. Les navigations
 sont limitées à ces deux origines ; les autres redirections sont refusées. Un formulaire hébergé sur
 un sous-domaine ou un fournisseur externe peut donc être déclaré explicitement.
+Les redirections HTTP des formulaires et des appels AJAX sont suivies par Chromium,
+avec sa gestion des cookies : 302/303 transforment un POST en GET, tandis que
+307/308 conservent la méthode et le corps. Chaque destination est vérifiée avant
+la poursuite ; les boucles sont limitées à douze étapes. L'origine CORS opaque
+`null`, produite par Chromium sur certaines chaînes entre les deux origines,
+est conservée. Une redirection ne suffit toujours pas à confirmer la connexion.
 Les iframes externes sont bloquées sans interrompre la connexion du document
 principal ; leurs navigations ne sont pas des redirections du formulaire.
 Les requêtes gardent la validation des adresses publiques, l'épinglage DNS, les

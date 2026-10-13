@@ -78,6 +78,7 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
       "Le formulaire doit envoyer le mot de passe par POST et utiliser un champ de type password.",
     JOURNAL_LOGIN_REDIRECT_BLOCKED:
       "La connexion redirige vers une origine non autorisée. Vérifiez l'URL du formulaire et le domaine du journal.",
+    JOURNAL_LOGIN_REDIRECT_LIMIT: "La connexion au journal boucle sur trop de redirections.",
     JOURNAL_LOGIN_REQUEST_BLOCKED:
       "Le formulaire tente d'envoyer une requête non autorisée. La connexion doit utiliser les origines HTTPS configurées du formulaire et du journal.",
     JOURNAL_ARTICLE_UNAVAILABLE:
@@ -108,6 +109,12 @@ function safeTransportError(error: unknown, fallbackCode: string) {
   )
     return loginError("JOURNAL_LOGIN_PAGE_TIMEOUT");
   return loginError(fallbackCode);
+}
+
+function hasPasswordInUrl(url: URL, password: string) {
+  return [...url.searchParams.values()].some(
+    (value) => value === password || (password.length >= 4 && value.includes(password)),
+  );
 }
 
 // One ephemeral context per batch: cookies are never persisted or shared with another user/run.
@@ -179,6 +186,8 @@ export class JournalLoginBrowser {
           try {
             if (!["http:", "https:"].includes(url.protocol))
               throw loginError("JOURNAL_UNSAFE_REQUEST");
+            if (request.redirectChain().length >= 12)
+              throw loginError("JOURNAL_LOGIN_REDIRECT_LIMIT");
             // Public pages embed analytics frames. Block them without treating
             // their navigation as a redirect of the actual login document.
             if (navigation && !mainNavigation && !origins.has(url.origin)) {
@@ -209,14 +218,7 @@ export class JournalLoginBrowser {
               await request.abort();
               return;
             }
-            if (
-              secretsEntered &&
-              [...url.searchParams.values()].some(
-                (value) =>
-                  value === login.password ||
-                  (login.password.length >= 4 && value.includes(login.password)),
-              )
-            )
+            if (secretsEntered && hasPasswordInUrl(url, login.password))
               throw loginError("JOURNAL_LOGIN_INSECURE_FORM");
             const body = method === "POST" ? (request.postData() ?? "") : undefined;
             if (body && Buffer.byteLength(body) > 256 * 1024)
@@ -234,10 +236,14 @@ export class JournalLoginBrowser {
               // Preserve the actual browser origin, including SSO calls from
               // the login host to the declared journal host. Chromium still
               // enforces the server's own CORS response headers below.
-              origin: headers.origin && origins.has(headers.origin) ? headers.origin : undefined,
+              origin:
+                headers.origin && (origins.has(headers.origin) || headers.origin === "null")
+                  ? headers.origin
+                  : undefined,
               corsRequestMethod: headers["access-control-request-method"],
               corsRequestHeaders: headers["access-control-request-headers"],
-              // Every redirect returns to interception before a new request is made.
+              // Chromium follows each checked redirect through interception,
+              // keeping its own cookies, CORS rules and HTTP method semantics.
               followRedirects: false,
             });
             if (response.status >= 400)
@@ -248,12 +254,11 @@ export class JournalLoginBrowser {
                     : "JOURNAL_LOGIN_PAGE_HTTP_ERROR"
                   : "JOURNAL_ARTICLE_UNAVAILABLE",
               );
-            let html = response.text;
-            let status = response.status;
-            let contentType =
+            const contentType =
               response.contentType ?? (navigation ? "text/html" : "application/javascript");
+            let destination: URL | undefined;
             if (response.location) {
-              const destination = new URL(response.location, request.url());
+              destination = new URL(response.location, request.url());
               if (
                 !origins.has(destination.origin) ||
                 destination.protocol !== "https:" ||
@@ -261,17 +266,15 @@ export class JournalLoginBrowser {
                 destination.password
               )
                 throw loginError("JOURNAL_LOGIN_REDIRECT_BLOCKED");
-              if (!navigation || (method === "POST" && [307, 308].includes(status)))
-                throw loginError("JOURNAL_LOGIN_REDIRECT_UNSUPPORTED");
-              html = `<script>window.location.replace(${JSON.stringify(destination.href).replace(/</g, "\\u003c")})</script>`;
-              status = 200;
-              contentType = "text/html";
+              if (secretsEntered && hasPasswordInUrl(destination, login.password))
+                throw loginError("JOURNAL_LOGIN_INSECURE_FORM");
             }
             await request.respond({
-              status,
-              body: html,
+              status: response.status,
+              body: response.text,
               headers: {
                 "content-type": `${contentType.replace(/;\s*charset\s*=\s*[^;]+/i, "")}; charset=utf-8`,
+                ...(destination ? { location: destination.href } : {}),
                 ...response.corsHeaders,
                 ...(response.cookies.length &&
                 (!response.url || new URL(response.url).origin === url.origin)

@@ -545,6 +545,119 @@ test("verifies login when the journal page checks its session by POST after the 
   );
 }, 45000);
 
+test.each([302, 303, 307, 308])(
+  "follows an AJAX authentication redirect without losing session cookies: HTTP %d",
+  async (status) => {
+    const fixture = journalFixture();
+    const browser = new JournalLoginBrowser(async (url, options) => {
+      if (url.endsWith("/ajax-authenticate")) {
+        fixture.requests.push({ url, options });
+        return {
+          status,
+          cookies: ["sid=own-session; Path=/; HttpOnly; Secure"],
+          location: "/ajax-confirm",
+          text: "",
+        };
+      }
+      if (url.endsWith("/ajax-confirm")) {
+        fixture.requests.push({ url, options });
+        expect(options?.cookie).toContain("sid=own-session");
+        return {
+          status: 200,
+          cookies: [],
+          text: '{"authenticated":true}',
+          contentType: "application/json",
+        };
+      }
+      const response = await fixture.fetch(url, options);
+      return url.endsWith("/login")
+        ? {
+            ...response,
+            text:
+              response.text +
+              '<script>document.querySelector("form").addEventListener("submit", async event => { event.preventDefault(); const body = new URLSearchParams(new FormData(event.target)).toString(); const response = await fetch("/ajax-authenticate", {method:"POST", body}); if ((await response.json()).authenticated) location.href = "/account"; });</script>',
+          }
+        : response;
+    });
+    const result = await browser.run(
+      "publisher.example",
+      credentials,
+      "https://publisher.example/article",
+    );
+    expect(result.contentHtml).toContain(fullText);
+    const first = fixture.requests.find((request) => request.url.endsWith("/ajax-authenticate"));
+    const redirected = fixture.requests.find((request) => request.url.endsWith("/ajax-confirm"));
+    expect(redirected?.options?.method).toBe(status === 307 || status === 308 ? "POST" : "GET");
+    expect(redirected?.options?.body).toBe(
+      status === 307 || status === 308 ? first?.options?.body : undefined,
+    );
+  },
+  45000,
+);
+
+test.each([
+  ["302 login to journal", 302, false],
+  ["307 login to journal", 307, false],
+  ["302 journal to login", 302, true],
+  ["307 journal to login", 307, true],
+] as const)(
+  "preserves Chromium's CORS origin and cookies across the configured origins: %s",
+  async (_scenario, status, firstCrossOrigin) => {
+    const fixture = journalFixture();
+    const loginOrigin = "https://accounts.publisher.example";
+    const browser = new JournalLoginBrowser(async (url, options) => {
+      if (url.endsWith("/ajax-authenticate")) {
+        fixture.requests.push({ url, options });
+        return {
+          status,
+          cookies: ["sid=own-session; Domain=publisher.example; Path=/; HttpOnly; Secure"],
+          location: firstCrossOrigin
+            ? `${loginOrigin}/ajax-confirm`
+            : "https://publisher.example/ajax-confirm",
+          text: "",
+          corsHeaders: {
+            "access-control-allow-origin": loginOrigin,
+            "access-control-allow-credentials": "true",
+          },
+        };
+      }
+      if (url.endsWith("/ajax-confirm")) {
+        fixture.requests.push({ url, options });
+        return {
+          status: 200,
+          cookies: [],
+          text: '{"authenticated":true}',
+          contentType: "application/json",
+          corsHeaders: {
+            "access-control-allow-origin": options?.origin ?? loginOrigin,
+            "access-control-allow-credentials": "true",
+          },
+        };
+      }
+      const response = await fixture.fetch(url, options);
+      return url.endsWith("/login")
+        ? {
+            ...response,
+            text:
+              response.text +
+              `<script>document.querySelector("form").addEventListener("submit", async event => { event.preventDefault(); const body = new URLSearchParams(new FormData(event.target)).toString(); const response = await fetch(${JSON.stringify(firstCrossOrigin ? "https://publisher.example/ajax-authenticate" : "/ajax-authenticate")}, {method:"POST", credentials:"include", body}); if ((await response.json()).authenticated) location.href = "https://publisher.example/account"; });</script>`,
+          }
+        : response;
+    }, 1000);
+    const result = await browser.run(
+      "publisher.example",
+      { ...credentials, config: { ...loginConfig, loginUrl: `${loginOrigin}/login` } },
+      "https://publisher.example/article",
+    );
+    expect(result.contentHtml).toContain(fullText);
+    const redirected = fixture.requests.find((request) => request.url.endsWith("/ajax-confirm"));
+    expect(redirected?.options?.origin).toBe(firstCrossOrigin ? "null" : loginOrigin);
+    expect(redirected?.options?.cookie).toContain("sid=own-session");
+    expect(redirected?.options?.method).toBe(status === 307 ? "POST" : "GET");
+  },
+  45000,
+);
+
 test.each([true, false])(
   "honors the server's CORS authorization for AJAX login between the configured origins: %s",
   async (corsAllowed) => {
@@ -611,6 +724,69 @@ test.each([true, false])(
   },
   45000,
 );
+
+test.each([
+  ["https://attacker.example/collect", "JOURNAL_LOGIN_REDIRECT_BLOCKED"],
+  ["http://publisher.example/collect", "JOURNAL_LOGIN_REDIRECT_BLOCKED"],
+  ["https://127.0.0.1/private", "JOURNAL_LOGIN_REDIRECT_BLOCKED"],
+  [
+    `https://publisher.example/collect?password=${credentials.password}`,
+    "JOURNAL_LOGIN_INSECURE_FORM",
+  ],
+] as const)(
+  "blocks an unsafe AJAX redirect before replaying credentials: %s",
+  async (destination, code) => {
+    const fixture = journalFixture();
+    const browser = new JournalLoginBrowser(async (url, options) => {
+      if (url.endsWith("/ajax-authenticate")) {
+        fixture.requests.push({ url, options });
+        return { status: 307, cookies: [], location: "/ajax-gate", text: "" };
+      }
+      if (url.endsWith("/ajax-gate")) {
+        fixture.requests.push({ url, options });
+        return { status: 307, cookies: [], location: destination, text: "" };
+      }
+      const response = await fixture.fetch(url, options);
+      return url.endsWith("/login")
+        ? {
+            ...response,
+            text:
+              response.text +
+              '<script>document.querySelector("form").addEventListener("submit", event => { event.preventDefault(); fetch("/ajax-authenticate", {method:"POST", body:new URLSearchParams(new FormData(event.target)).toString()}).catch(() => {}); });</script>',
+          }
+        : response;
+    }, 1000);
+    await assert.rejects(browser.run("publisher.example", credentials), { code });
+    expect(fixture.requests.some((request) => request.url === destination)).toBe(false);
+    expect(fixture.requests.filter((request) => request.options?.method === "POST")).toHaveLength(
+      2,
+    );
+  },
+  45000,
+);
+
+test("limits AJAX redirect loops without repeatedly resubmitting credentials", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    if (url.endsWith("/ajax-loop")) {
+      fixture.requests.push({ url, options });
+      return { status: 307, cookies: [], location: "/ajax-loop", text: "" };
+    }
+    const response = await fixture.fetch(url, options);
+    return url.endsWith("/login")
+      ? {
+          ...response,
+          text:
+            response.text +
+            '<script>document.querySelector("form").addEventListener("submit", event => { event.preventDefault(); fetch("/ajax-loop", {method:"POST", body:new URLSearchParams(new FormData(event.target)).toString()}).catch(() => {}); });</script>',
+        }
+      : response;
+  }, 1000);
+  await assert.rejects(browser.run("publisher.example", credentials), {
+    code: "JOURNAL_LOGIN_REDIRECT_LIMIT",
+  });
+  expect(fixture.requests.filter((request) => request.url.endsWith("/ajax-loop"))).toHaveLength(12);
+}, 45000);
 
 test("blocks third-party traffic and mutations once the article uses the authenticated session", async () => {
   const fixture = journalFixture();
