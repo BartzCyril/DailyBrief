@@ -400,3 +400,14 @@ test("validates document-link selector syntax before making a request", async ()
   ).rejects.toMatchObject({ code: "INVALID_ARTICLE_LINK_SELECTOR" });
   expect(requests).toBe(0);
 });
+
+test("public article fetching rejects a 209-character subscription teaser without journal scoping", async () => {
+  const teaser = "Extrait public réservé aux lecteurs non connectés. ".repeat(5).slice(0, 209);
+  const service = new ArticleContentService(
+    async () =>
+      `<script type="application/ld+json">{"@type":"NewsArticle","isAccessibleForFree":false}</script><article><p>${teaser}</p></article>`,
+  );
+  await expect(service.fetchWithUrl("https://publisher.example/article")).rejects.toMatchObject({
+    code: "JOURNAL_SUBSCRIPTION_REQUIRED",
+  });
+});

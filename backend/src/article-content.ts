@@ -360,7 +360,7 @@ export class ArticleContentService {
       page = await this.download(target, undefined, undefined, observer);
     }
     try {
-      if (allowedHostname) assertPublicArticle(page.html);
+      assertPublicArticle(page.html);
       return { content: extractArticleContent(page.html, page.url, observer), url: page.url };
     } catch (error) {
       if (
@@ -378,7 +378,7 @@ export class ArticleContentService {
       observer?.("Attente du chargement et de la stabilisation des sections de l'article.");
       const rendered = await this.browser.render(page.url, undefined, allowedHostname);
       try {
-        if (allowedHostname) assertPublicArticle(rendered.html);
+        assertPublicArticle(rendered.html);
         return {
           content: extractArticleContent(rendered.html, rendered.url, observer),
           url: rendered.url,

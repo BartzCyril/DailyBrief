@@ -13,7 +13,7 @@ import { AppError } from "./errors";
 import { scrapingSchema } from "../../shared/src/scraping";
 import { startEventStream } from "./event-stream";
 import { reportProgress } from "./progress";
-import { JournalAccessService, journalAccessVersion } from "./journal-access";
+import { JournalAccessService, journalAccessVersion, journalDomain } from "./journal-access";
 import { recordJournalInventory } from "./journal-inventory";
 import { getSettings } from "./collection";
 
@@ -97,6 +97,7 @@ export function sourceWorkflowRouter(
       });
     let stage: "content" | "ai" = "content";
     try {
+      let journalUrl: string | undefined;
       if (preview.journals) {
         if (!article.externalUrl)
           throw new AppError(
@@ -104,11 +105,27 @@ export function sourceWorkflowRouter(
             article.resolutionError ?? "Lien non résolu.",
             "ARTICLE_LINK_UNRESOLVED",
           );
-        await journals.assertAccessible(userId, article.externalUrl);
+        journalUrl = article.externalUrl;
+      } else if (article.url) {
+        // Read current access settings, including credentials saved after this
+        // preview was created. Direct RSS and scraping URLs also need login.
+        const access = await db.journalAccess.findUnique({
+          where: { userId_domain: { userId, domain: journalDomain(article.url) } },
+          select: { encryptedPassword: true },
+        });
+        if (access?.encryptedPassword) journalUrl = article.url;
+      }
+      if (journalUrl) {
+        await journals.assertAccessible(userId, journalUrl);
+        report(
+          stage,
+          "running",
+          `Utilisation de l'accès configuré pour ${journalDomain(journalUrl)}.`,
+        );
       }
       report(stage, "running", `Téléchargement de la page complète : ${article.title}`);
-      const fetched = preview.journals
-        ? await journals.fetchArticle(userId, article.externalUrl!, (message) =>
+      const fetched = journalUrl
+        ? await journals.fetchArticle(userId, journalUrl, (message) =>
             report("content", "running", message),
           )
         : await articleContent.fetchWithUrl(
@@ -118,8 +135,8 @@ export function sourceWorkflowRouter(
           );
       const { content, url } = fetched;
       report(stage, "completed", `Texte de l'article extrait (${content.length} caractères).`);
-      if (preview.journals) {
-        const access = await journals.assertAccessible(userId, article.externalUrl!);
+      if (journalUrl) {
+        const access = await journals.assertAccessible(userId, journalUrl);
         if ("accessVersion" in fetched && journalAccessVersion(access) !== fetched.accessVersion)
           throw new AppError(
             409,

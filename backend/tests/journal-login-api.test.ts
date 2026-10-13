@@ -1,5 +1,14 @@
 import { strict as assert } from "node:assert";
-import { test, expect, describe, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
+import {
+  test,
+  expect,
+  describe,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+  spyOn,
+} from "bun:test";
 import { randomUUID, randomBytes } from "node:crypto";
 import request from "supertest";
 import { createApp } from "../src/app";
@@ -24,8 +33,27 @@ describe("configured journal login API and pipeline", () => {
   const key = randomBytes(32).toString("hex");
   const fixture = journalFixture();
   const browser = new JournalLoginBrowser(fixture.fetch);
-  const content = new ArticleContentService(
-    async () => '<a class="primarydoc" href="https://publisher.example/article">Lire</a>',
+  const publicTeaser = "Extrait public réservé aux lecteurs non connectés. "
+    .repeat(5)
+    .slice(0, 209);
+  const publicRequests: string[] = [];
+  const content = new ArticleContentService(async (url) => {
+    publicRequests.push(url);
+    return new URL(url).hostname === "publisher.example"
+      ? `<script type="application/ld+json">{"@type":"NewsArticle","isAccessibleForFree":false}</script><article><p>${publicTeaser}</p></article>`
+      : '<a class="primarydoc" href="https://publisher.example/article">Lire</a>';
+  });
+  const scrapingConfig = {
+    articleSelector: "article",
+    titleSelector: "h2",
+    linkSelector: "a",
+    dateSelector: "time",
+    mode: "SCROLL" as const,
+    scroll: { maxScrolls: 0, waitAfterScrollMs: 100 },
+  };
+  const scraping = new ScrapingService(
+    async () =>
+      `<article><h2>Article abonné</h2><a href="https://publisher.example/article">Lire</a><p>${publicTeaser}</p><time datetime="2026-10-13">13 octobre 2026</time></article>`,
   );
   const cipher = new JournalSecretCipher(key);
   const journals = new JournalAccessService(db, content, cipher, browser);
@@ -73,7 +101,7 @@ describe("configured journal login API and pipeline", () => {
     db,
     redis,
     { ...config, JOURNAL_ENCRYPTION_KEY: key },
-    { rss, articleContent: content, summary, email, runner, journalAccess: journals },
+    { rss, scraping, articleContent: content, summary, email, runner, journalAccess: journals },
   );
   const agent = request.agent(app);
   beforeAll(connect);
@@ -105,6 +133,7 @@ describe("configured journal login API and pipeline", () => {
       .send({ email: address, password: "Password123456" })
       .expect(200);
     fixture.requests.length = 0;
+    publicRequests.length = 0;
     Object.assign(fixture.state, {
       failed: false,
       expired: false,
@@ -188,6 +217,128 @@ describe("configured journal login API and pipeline", () => {
     expect(await db.article.count({ where: { userId } })).toBe(0);
     expect(await db.newsletter.count({ where: { userId } })).toBe(0);
   }, 60000);
+  async function directPreview(type: "SCRAPING" | "RSS" = "SCRAPING") {
+    await db.source.update({
+      where: { id: sourceId },
+      data: {
+        type,
+        url: "https://publisher.example/culture/",
+        articleLinkSelector: null,
+        ...(type === "SCRAPING" ? { scrapingConfig } : {}),
+      },
+    });
+    const result = await agent.post(`/sources/${sourceId}/workflow`).send({}).expect(200);
+    expect(result.body.journals).toBeUndefined();
+    return result.body;
+  }
+  async function summarizeDirect(preview: { id: string }) {
+    return agent
+      .post(`/sources/${sourceId}/workflow/${preview.id}/articles/0/summarize`)
+      .send({})
+      .expect(200);
+  }
+  test("scraping workflow uses credentials added after preview and reads the authenticated body", async () => {
+    const preview = await directPreview();
+    expect(preview.articles[0].description.length).toBe(209);
+    await configure();
+    const response = await summarizeDirect(preview);
+    expect(response.text).toContain('"type":"result"');
+    expect(response.text).toContain(fullText.trim());
+    expect(response.text).toContain("Connexion au journal vérifiée dans cette session");
+    expect(fixture.requests.some((item) => new URL(item.url).pathname === "/authenticate")).toBe(
+      true,
+    );
+    expect(
+      fixture.requests.find((item) => new URL(item.url).pathname === "/article")?.options?.cookie,
+    ).toContain("sid=own-session");
+    expect(publicRequests.some((url) => new URL(url).hostname === "publisher.example")).toBe(false);
+    expect(response.text).not.toContain("journal-test-password");
+    expect(response.text).not.toContain("own-session");
+    expect(summaries).toBe(1);
+    expect(sends).toBe(0);
+    expect(await db.article.count({ where: { userId } })).toBe(0);
+    expect(await db.newsletter.count({ where: { userId } })).toBe(0);
+  }, 30000);
+  test("direct RSS articles use the saved journal login without a notice selector", async () => {
+    await configure();
+    const mocked = spyOn(rss, "collect").mockImplementation(async () => ({
+      format: "RSS",
+      articles: [
+        {
+          title: "Article abonné",
+          url: "https://publisher.example/article",
+          description: publicTeaser,
+          publishedAt: null,
+        },
+      ],
+    }));
+    try {
+      const preview = await directPreview("RSS");
+      const response = await summarizeDirect(preview);
+      expect(response.text).toContain(fullText.trim());
+      expect(summaries).toBe(1);
+      expect(fixture.requests.some((item) => new URL(item.url).pathname === "/authenticate")).toBe(
+        true,
+      );
+    } finally {
+      mocked.mockRestore();
+    }
+  }, 30000);
+  test.each([
+    ["failed", "JOURNAL_LOGIN_FAILED"],
+    ["expired", "JOURNAL_SESSION_EXPIRED"],
+    ["paywall", "JOURNAL_ARTICLE_ACCESS_DENIED"],
+  ] as const)(
+    "scraping workflow reports %s instead of falling back to an anonymous teaser",
+    async (state, code) => {
+      await configure();
+      const preview = await directPreview();
+      fixture.state[state] = true;
+      const response = await summarizeDirect(preview);
+      expect(response.text).toContain('"code":"' + code + '"');
+      expect(response.text).not.toContain('"type":"result"');
+      expect(response.text).not.toContain("journal-test-password");
+      expect(summaries).toBe(0);
+      expect(publicRequests.some((url) => new URL(url).hostname === "publisher.example")).toBe(
+        false,
+      );
+    },
+    30000,
+  );
+  test("disabling a saved login after direct preview prevents authentication and AI", async () => {
+    await configure();
+    const preview = await directPreview();
+    await agent.patch("/journals/publisher.example").send({ enabled: false }).expect(200);
+    const response = await summarizeDirect(preview);
+    expect(response.text).toContain('"code":"JOURNAL_DISABLED"');
+    expect(fixture.requests).toHaveLength(0);
+    expect(publicRequests).toHaveLength(0);
+    expect(summaries).toBe(0);
+  });
+  test("a scraping preview cannot use another account's journal credentials", async () => {
+    const other = await db.user.create({
+      data: { email: `other-${randomUUID()}@example.com`, passwordHash: "unused" },
+    });
+    try {
+      await db.journalAccess.create({
+        data: {
+          userId: other.id,
+          domain: "publisher.example",
+          enabled: true,
+          email: "other@example.com",
+          encryptedPassword: cipher.encrypt("other-password", other.id, "publisher.example"),
+          ...loginConfig,
+        },
+      });
+      const response = await summarizeDirect(await directPreview());
+      expect(response.text).toContain('"code":"JOURNAL_SUBSCRIPTION_REQUIRED"');
+      expect(fixture.requests).toHaveLength(0);
+      expect(summaries).toBe(0);
+    } finally {
+      await db.user.delete({ where: { id: other.id } });
+    }
+  }, 15000);
+
   test("rejects invalid login URLs, incomplete configurations and invalid CSS without changing saved access", async () => {
     await configure();
     const where = { userId_domain: { userId, domain: "publisher.example" } };
@@ -317,6 +468,7 @@ describe("configured journal login API and pipeline", () => {
       .send({ email: "other@example.com", password: "new-journal-password" })
       .expect(200);
     fixture.requests.length = 0;
+    publicRequests.length = 0;
     failEmail = false;
     expect((await runner.run(userId)).status).toBe("SENT");
     const after = await db.article.findFirstOrThrow({ where: { userId } });

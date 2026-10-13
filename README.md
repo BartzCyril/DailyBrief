@@ -748,6 +748,12 @@ et source. Il ne modifie pas les articles, les résumés ou l'historique du pipe
 et n'envoie aucun email. Les erreurs restent visibles sur l'article concerné.
 L'IA et le téléchargement ont les mêmes protections et limites que le pipeline.
 Le recours navigateur prend en charge JavaScript et les cookies de visite.
+Les liens directs provenant du scraping ou d'un flux RSS utilisent aussi les
+identifiants du journal lorsqu'ils sont enregistrés pour le compte et le domaine exact.
+Les accès sont relus au moment du résumé : une connexion ajoutée après la création
+de l'aperçu est prise en compte. La progression confirme la connexion et la lecture
+authentifiée ; un échec ne revient pas silencieusement à l'extrait public. Les métadonnées
+d'abonnement empêchent également de présenter un extrait public comme le texte intégral.
 Les pages imposant une connexion, un abonnement ou une protection interactive
 ne sont pas garanties lisibles et peuvent nécessiter une autre source.
 
