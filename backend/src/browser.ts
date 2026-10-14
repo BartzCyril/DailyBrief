@@ -1,6 +1,7 @@
 import puppeteer, { TimeoutError } from "puppeteer";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { PageReadyPuppeteerExtra } from "./browser-page-lifecycle";
+import { readBrowserRuntime } from "./config";
 import type {
   Browser,
   BrowserContext,
@@ -19,14 +20,18 @@ export function browserExecutablePath(): string {
 }
 
 export function launchScrapingBrowser(options: LaunchOptions = {}): Promise<Browser> {
+  const runtime = readBrowserRuntime();
   return scrapingBrowser.launch({
-    headless: false,
+    headless: runtime.CHROMIUM_HEADLESS,
     executablePath: browserExecutablePath(),
     defaultViewport: { width: 1280, height: 720 },
     // Injected HTTP transports fail closed for unintercepted traffic.
     // Native public navigation supplies the DNS-pinned relay via options.args.
-    args: ["--proxy-server=http://127.0.0.1:9", "--proxy-bypass-list=<-loopback>"],
     ...options,
+    args: [
+      ...(options.args ?? ["--proxy-server=http://127.0.0.1:9", "--proxy-bypass-list=<-loopback>"]),
+      ...(runtime.CHROMIUM_NO_SANDBOX ? ["--no-sandbox", "--disable-setuid-sandbox"] : []),
+    ],
   });
 }
 

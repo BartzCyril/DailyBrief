@@ -1,0 +1,15 @@
+.git
+node_modules
+**/node_modules
+.env
+.env.*
+!.env.example
+!.env.production.example
+**/dist
+**/.vite
+**/coverage
+work
+diagnostics
+logs
+.error*
+*.log

@@ -5,6 +5,14 @@ const scrapingVerificationWait = z.coerce.number().int().min(0).max(120000).defa
 export function readScrapingVerificationWait(env: NodeJS.ProcessEnv = process.env): number {
   return scrapingVerificationWait.parse(env.SCRAPING_VERIFICATION_WAIT_MS);
 }
+export function readBrowserRuntime(env: NodeJS.ProcessEnv = process.env) {
+  return z
+    .object({
+      CHROMIUM_HEADLESS: boolean.default(false),
+      CHROMIUM_NO_SANDBOX: boolean.default(false),
+    })
+    .parse(env);
+}
 const loggingSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   LOG_LEVEL: z.enum(["debug", "info", "error"]).default("info"),

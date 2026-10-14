@@ -3,6 +3,17 @@
 Veille quotidienne personnelle, en TypeScript strict. Bun 1.4.2, Express 5,
 React 19.3, Vite 8, Prisma 6 et PostgreSQL 17. Docker avec Compose est requis.
 
+Pour déployer l’ensemble sur un VPS avec HTTPS, sans installer Bun sur l’hôte,
+suivez le [guide de déploiement Docker](docs/deployment.md) :
+
+```sh
+./deploy.sh init https://brief.example.com
+# Configurer notamment le SMTP dans .env.production
+./deploy.sh up
+```
+
+Les commandes ci-dessous concernent le développement local.
+
 ```sh
 git clone -b main https://github.com/BartzCyril/DailyBrief.git
 cd DailyBrief

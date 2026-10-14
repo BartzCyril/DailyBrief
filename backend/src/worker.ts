@@ -15,6 +15,7 @@ import { startConsumers } from "./queue/consumers";
 import { ScrapingSummaryProcessor } from "./queue/scraping-summary";
 import { logger } from "./logger";
 import { runService } from "./service-runtime";
+import { startWorkerHeartbeat } from "./worker-health";
 
 await runService("consumers", async (defer) => {
   const config = readConfig();
@@ -57,6 +58,8 @@ await runService("consumers", async (defer) => {
     new ScrapingSummaryProcessor(db, summary, content, journals),
   );
   defer(() => consumers.close());
+  if (process.env.WORKER_HEALTH_FILE)
+    defer(await startWorkerHeartbeat(process.env.WORKER_HEALTH_FILE));
   logger.info("consumers.ready", "Consommateurs prêts.", {
     model: config.OLLAMA_MODEL,
     aiConcurrency: config.AI_CONCURRENCY,

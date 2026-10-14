@@ -1,0 +1,219 @@
+name: dailybrief-production
+
+x-application-environment: &application-environment
+  NODE_ENV: production
+  PORT: "3000"
+  POSTGRES_USER: ${POSTGRES_USER:-dailybrief}
+  POSTGRES_DB: ${POSTGRES_DB:-dailybrief}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./deploy.sh init first}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?Run ./deploy.sh init first}
+  NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1},api,postgres,redis,ollama,mailpit"
+  no_proxy: "${NO_PROXY:-localhost,127.0.0.1},api,postgres,redis,ollama,mailpit"
+  SESSION_SECRET: ${SESSION_SECRET:?Run ./deploy.sh init first}
+  JOURNAL_ENCRYPTION_KEY: ${JOURNAL_ENCRYPTION_KEY:?Run ./deploy.sh init first}
+  FRONTEND_ORIGIN: ${APP_ORIGIN:?Set the public HTTPS origin}
+  OLLAMA_BASE_URL: http://ollama:11434
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+  OLLAMA_TIMEOUT_MS: ${OLLAMA_TIMEOUT_MS:-1800000}
+  AI_MAX_INPUT_CHARS: ${AI_MAX_INPUT_CHARS:-16000}
+  AI_CONCURRENCY: ${AI_CONCURRENCY:-1}
+  COLLECTION_CONCURRENCY: ${COLLECTION_CONCURRENCY:-2}
+  QUEUE_PREFIX: ${QUEUE_PREFIX:-dailybrief}
+  AI_LANGUAGE: ${AI_LANGUAGE:-français}
+  SCRAPING_VERIFICATION_WAIT_MS: ${SCRAPING_VERIFICATION_WAIT_MS:-30000}
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-dailybrief@example.com}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  LOG_FORMAT: json
+  ERROR_EMAIL_ENABLED: ${ERROR_EMAIL_ENABLED:-false}
+  ERROR_EMAIL_TO: ${ERROR_EMAIL_TO:-}
+  ERROR_EMAIL_COOLDOWN_MS: ${ERROR_EMAIL_COOLDOWN_MS:-300000}
+
+x-application: &application
+  image: dailybrief-backend:local
+  build:
+    context: .
+    target: backend
+  init: true
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  shm_size: 1gb
+  tmpfs:
+    - /tmp:rw,nosuid,size=1073741824,mode=1777
+  volumes:
+    - application_logs:/var/log/dailybrief
+  stop_grace_period: 45s
+  networks: [backend, outbound]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dailybrief}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./deploy.sh init first}
+      POSTGRES_DB: ${POSTGRES_DB:-dailybrief}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      [
+        redis-server,
+        --appendonly,
+        "yes",
+        --requirepass,
+        "${REDIS_PASSWORD:?Run ./deploy.sh init first}",
+      ]
+    environment:
+      REDIS_CLI_AUTH: ${REDIS_PASSWORD:?Run ./deploy.sh init first}
+    volumes: [redis_data:/data]
+    networks: [backend]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  ollama:
+    image: ollama/ollama:0.12.6
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes: [ollama_data:/root/.ollama]
+    networks: [backend, outbound]
+    healthcheck:
+      test: [CMD-SHELL, "OLLAMA_HOST=http://127.0.0.1:11434 ollama list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  ollama-init:
+    image: ollama/ollama:0.12.6
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1},ollama"
+      no_proxy: "${NO_PROXY:-localhost,127.0.0.1},ollama"
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - 'ollama show "$${OLLAMA_MODEL}" >/dev/null 2>&1 || ollama pull "$${OLLAMA_MODEL}"'
+    depends_on:
+      ollama: { condition: service_healthy }
+    networks: [backend]
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports: ["127.0.0.1:${MAILPIT_WEB_PORT:-8025}:8025"]
+    networks: [backend, outbound]
+
+  migrate:
+    <<: *application
+    restart: "no"
+    command: [bun, backend/scripts/container-start.ts, migrate]
+    environment:
+      <<: *application-environment
+      LOG_ERROR_FILE: /var/log/dailybrief/migrate.error
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: *application
+    command: [bun, backend/scripts/container-start.ts, api]
+    networks: [backend, edge]
+    environment:
+      <<: *application-environment
+      LOG_ERROR_FILE: /var/log/dailybrief/api.error
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      ollama-init: { condition: service_completed_successfully }
+    healthcheck:
+      test:
+        [
+          CMD,
+          bun,
+          -e,
+          "const r = await fetch('http://127.0.0.1:3000/health'); if (!r.ok) process.exit(1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 10
+
+  worker:
+    <<: *application
+    command: [bun, backend/scripts/container-start.ts, worker]
+    environment:
+      <<: *application-environment
+      LOG_ERROR_FILE: /var/log/dailybrief/worker.error
+      WORKER_HEALTH_FILE: /tmp/dailybrief-worker-health
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      ollama-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: [CMD, bun, backend/scripts/worker-health.ts]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+
+  web:
+    image: dailybrief-web:local
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1},api"
+      no_proxy: "${NO_PROXY:-localhost,127.0.0.1},api"
+    networks: [edge]
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      worker: { condition: service_healthy }
+    healthcheck:
+      test: [CMD, wget, -Y, "off", -q, --spider, http://127.0.0.1:2019/config/]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  application_logs:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge:
+  backend:
+    internal: true
+  outbound:
