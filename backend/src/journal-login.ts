@@ -14,11 +14,20 @@ import {
   fetchRemotePage,
   RemoteConnectionError,
   browserApplicationHeaders,
+  validateRemoteUrl,
   type FetchPage,
 } from "./network";
 import { articleBrowserLimiter } from "./article-browser";
 import { MAX_REMOTE_BYTES } from "./remote-response";
 import { visibleJournalSelector } from "./journal-login-selectors";
+import {
+  BrowserNetwork,
+  publicBrowserOptions,
+  watchBrowserResponseSize,
+  type BrowserNetworkFactory,
+} from "./browser-network";
+import { prepareJournalNativePage, blockJournalAuxiliaryTargets } from "./journal-native-guard";
+import { JournalHttpError, journalHttpError } from "./journal-http-error";
 
 export type JournalLogin = { config: JournalLoginConfig; email: string; password: string };
 export type JournalPage = { html: string; url: string; contentHtml?: string };
@@ -120,16 +129,13 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
 }
 
 function safeTransportError(error: unknown, fallbackCode: string) {
+  if (error instanceof JournalHttpError) return error;
   if (error instanceof AppError && error.code.startsWith("JOURNAL_")) return loginError(error.code);
   const article = fallbackCode.startsWith("JOURNAL_ARTICLE_");
   if (article && error instanceof AppError && error.code === "UPSTREAM_ERROR") {
     const status = error instanceof UpstreamHttpError ? error.upstreamStatus : undefined;
     return status !== undefined && Number.isInteger(status) && status >= 400 && status <= 599
-      ? new AppError(
-          422,
-          `Le journal a refusé le chargement de l'article avec la session authentifiée (HTTP ${status}).`,
-          "JOURNAL_ARTICLE_HTTP_ERROR",
-        )
+      ? journalHttpError(status)
       : loginError("JOURNAL_ARTICLE_HTTP_ERROR");
   }
   if (error instanceof RemoteConnectionError)
@@ -168,8 +174,9 @@ function hasPasswordInUrl(url: URL, password: string) {
 // One ephemeral context per batch: cookies are never persisted or shared with another user/run.
 export class JournalLoginBrowser {
   constructor(
-    private fetchPage: FetchPage = fetchRemotePage,
+    private fetchPage?: FetchPage,
     private timeoutMs = 15000,
+    private createNetwork?: BrowserNetworkFactory,
   ) {}
   async run(
     domain: string,
@@ -197,9 +204,30 @@ export class JournalLoginBrowser {
       const journalOrigin = `https://${domain}`;
       const origins = new Set([loginOrigin, journalOrigin]);
       let browser;
+      let network: BrowserNetwork | undefined;
+      let closeTargetGuard: (() => Promise<void>) | undefined;
       try {
-        browser = await launchScrapingBrowser();
+        if (!this.fetchPage) {
+          const destinations = new Set(
+            [...origins].map((origin) => {
+              const target = new URL(origin);
+              return `${target.hostname}:${target.port || "443"}`;
+            }),
+          );
+          network = await (this.createNetwork?.() ??
+            BrowserNetwork.create(async (value) => {
+              const target = new URL(value);
+              const destination = `${target.hostname}:${target.port || (target.protocol === "https:" ? "443" : "80")}`;
+              // Restrict the relay itself, including channels that don't belong
+              // to the controlled page. Third-party public assets before login
+              // use the existing guarded text transport below.
+              if (!destinations.has(destination)) throw loginError("JOURNAL_LOGIN_REQUEST_BLOCKED");
+              return validateRemoteUrl(value);
+            }));
+        }
+        browser = await launchScrapingBrowser(network?.launchOptions);
       } catch {
+        await network?.close().catch(() => {});
         throw new AppError(
           503,
           "Chromium est nécessaire pour la connexion aux journaux. Installez-le avec bun run browser:install.",
@@ -208,6 +236,7 @@ export class JournalLoginBrowser {
       }
       const context = await browser.createBrowserContext().catch(async () => {
         await browser.close().catch(() => {});
+        await network?.close().catch(() => {});
         throw loginError("JOURNAL_LOGIN_PAGE_FAILED");
       });
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -228,9 +257,12 @@ export class JournalLoginBrowser {
         rejectNetwork = reject;
       });
       void networkFailure.catch(() => {});
+      const requestOperations = new WeakMap<HTTPRequest, number>();
+      const nativeRequests = new WeakSet<HTTPRequest>();
       try {
         const handleRequest = async (request: HTTPRequest) => {
           const requestOperationId = operationId;
+          requestOperations.set(request, requestOperationId);
           const url = new URL(request.url());
           const navigation = request.isNavigationRequest();
           const mainNavigation = navigation && !request.frame()?.parentFrame();
@@ -263,7 +295,10 @@ export class JournalLoginBrowser {
               !["GET", "POST", "OPTIONS"].includes(method) ||
               (method === "POST" &&
                 (!authenticating || !origins.has(url.origin) || !secretsEntered)) ||
-              (method === "OPTIONS" && (!authenticating || !origins.has(url.origin)))
+              (method === "OPTIONS" &&
+                (!origins.has(url.origin) ||
+                  (!authenticating &&
+                    request.headers()["access-control-request-method"] !== "GET")))
             ) {
               if (navigation || (authenticating && method === "POST" && secretsEntered))
                 throw loginError("JOURNAL_LOGIN_REQUEST_BLOCKED");
@@ -275,8 +310,18 @@ export class JournalLoginBrowser {
             const body = method === "POST" ? (request.postData() ?? "") : undefined;
             if (body && Buffer.byteLength(body) > 256 * 1024)
               throw loginError("JOURNAL_LOGIN_REQUEST_TOO_LARGE");
+            if (network && origins.has(url.origin)) {
+              await network.guard(request.url());
+              if (requestOperationId !== operationId) {
+                await request.abort();
+                return;
+              }
+              nativeRequests.add(request);
+              await request.continue();
+              return;
+            }
             const headers = request.headers();
-            const response = await this.fetchPage(request.url(), {
+            const response = await (this.fetchPage ?? fetchRemotePage)(request.url(), {
               method: method as "GET" | "POST" | "OPTIONS",
               body,
               contentType: headers["content-type"],
@@ -303,9 +348,13 @@ export class JournalLoginBrowser {
               // Chromium follows each checked redirect through interception,
               // keeping its own cookies, CORS rules and HTTP method semantics.
               followRedirects: false,
+              allowHttpErrorResponses:
+                !authenticating && mainNavigation && url.origin === journalOrigin
+                  ? [402]
+                  : undefined,
             });
             if (response.status >= 400) {
-              if (!authenticating) throw new UpstreamHttpError(response.status, request.url());
+              if (!authenticating) throw journalHttpError(response.status, response.text);
               throw loginError(
                 secretsEntered ? "JOURNAL_LOGIN_FAILED" : "JOURNAL_LOGIN_PAGE_HTTP_ERROR",
               );
@@ -364,7 +413,79 @@ export class JournalLoginBrowser {
             if (networkError) rejectNetwork(networkError);
           }
         };
-        const page = await createScrapingPage(browser, {}, context);
+        const page = await createScrapingPage(
+          browser,
+          network ? publicBrowserOptions(await browser.version()) : {},
+          context,
+        );
+        if (network) {
+          const nativeNetwork = network;
+          await prepareJournalNativePage(page);
+          closeTargetGuard = await blockJournalAuxiliaryTargets(browser, context, page);
+          const fail = (error: unknown) => {
+            if (networkError) return;
+            networkError = safeTransportError(
+              error,
+              authenticating ? loginFailureCode : articleFailureCode,
+            );
+            rejectNetwork(networkError);
+          };
+          await watchBrowserResponseSize(page, fail, nativeNetwork);
+          page.on("response", (response) => {
+            const request = response.request();
+            if (
+              !nativeRequests.has(request) ||
+              requestOperations.get(request) !== operationId ||
+              response.status() < 400
+            )
+              return;
+            if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) {
+              if (
+                authenticating &&
+                submissionStarted &&
+                (["POST", "OPTIONS"].includes(request.method()) ||
+                  request.redirectChain().some((previous) => previous.method() === "POST"))
+              )
+                submissionError ??= loginError();
+              return;
+            }
+            const responseOperationId = operationId;
+            void (async () => {
+              let html: string | undefined;
+              if (
+                !authenticating &&
+                response.status() === 402 &&
+                /(?:text\/html|application\/xhtml\+xml)/i.test(
+                  response.headers()["content-type"] ?? "",
+                )
+              ) {
+                html = await response.text().catch(() => undefined);
+              }
+              if (responseOperationId !== operationId) return;
+              fail(
+                authenticating
+                  ? loginError(
+                      secretsEntered ? "JOURNAL_LOGIN_FAILED" : "JOURNAL_LOGIN_PAGE_HTTP_ERROR",
+                    )
+                  : journalHttpError(response.status(), html),
+              );
+            })().catch(() => {
+              if (responseOperationId !== operationId) return;
+              fail(
+                authenticating ? loginError(loginFailureCode) : journalHttpError(response.status()),
+              );
+            });
+          });
+          page.on("requestfailed", (request) => {
+            if (
+              nativeRequests.has(request) &&
+              requestOperations.get(request) === operationId &&
+              request.isNavigationRequest() &&
+              request.frame() === page.mainFrame()
+            )
+              fail(nativeNetwork.failure(request.url(), request.failure()?.errorText));
+          });
+        }
         const loginLifecycle = await page.createCDPSession();
         await loginLifecycle.send("Page.enable");
         const { frameTree } = await loginLifecycle.send("Page.getFrameTree");
@@ -381,6 +502,7 @@ export class JournalLoginBrowser {
           abort: () => Promise<void> = () => context.close().catch(() => {}),
         ): Promise<R> => {
           operationId++;
+          network?.beginLoad();
           navigations = 0;
           networkError = undefined;
           networkFailure = new Promise<never>((_resolve, reject) => {
@@ -480,6 +602,7 @@ export class JournalLoginBrowser {
                 observer?.("Chargement de l'article avec la session authentifiée.");
                 await navigateScrapingPage(page, target.href, { waitForAllResources: false });
                 if (networkError) throw networkError;
+                network?.assertWithinBudget();
                 articleFailureCode = "JOURNAL_ARTICLE_CONTENT_FAILED";
                 observer?.("Document principal de l'article chargé dans l'onglet authentifié.");
                 await assertArticleAccess(page, login, journalOrigin);
@@ -517,6 +640,7 @@ export class JournalLoginBrowser {
                 });
                 await assertArticleAccess(page, login, journalOrigin);
                 const html = await page.content();
+                network?.assertWithinBudget();
                 if (Buffer.byteLength(html) > MAX_REMOTE_BYTES)
                   throw loginError("JOURNAL_ARTICLE_TOO_LARGE");
                 let contentHtml: string | undefined;
@@ -570,6 +694,8 @@ export class JournalLoginBrowser {
       } finally {
         clearTimeout(timer);
         await browser.close().catch(() => {});
+        await closeTargetGuard?.().catch(() => {});
+        await network?.close().catch(() => {});
       }
     });
   }

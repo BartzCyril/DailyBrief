@@ -958,9 +958,11 @@ Sans confirmation, le serveur renvoie `JOURNAL_LOGIN_UNVERIFIED` ou l'erreur de
 soumission observée. La redirection vers l'accueil reste un indice de connexion ;
 l'accès au contenu de chaque article est vérifié séparément.
 
-La modal n'affiche plus le sélecteur facultatif du contenu intégral. Les valeurs
-déjà enregistrées restent conservées lors d'une modification de l'accès. Ce réglage
-serveur reste nécessaire pour les pages dont les métadonnées indiquent un accès réservé : la
+Le formulaire affiche le sélecteur facultatif du contenu complet de l'article.
+Il doit viser le corps complet visible après connexion, sans la navigation ou
+les recommandations. Les valeurs déjà enregistrées restent conservées lors d'une
+modification de l'accès ; effacer le champ supprime ce sélecteur. Ce réglage
+reste nécessaire pour les pages dont les métadonnées indiquent un accès réservé : la
 connexion au compte ne garantit pas que l'abonnement autorise la lecture. Un paywall
 visible, une session expirée ou une zone absente empêche l'extraction et l'IA.
 La détection générique ne garantit pas la reconnaissance de toutes les protections
@@ -1004,9 +1006,19 @@ du formulaire de connexion et du journal, pendant l'authentification. Les appels
 de vérification de session sur le domaine du journal après la redirection sont
 donc pris en charge. Les prévols CORS `OPTIONS` sont autorisés sur ces deux origines
 durant cette phase ; l'origine réelle et les autorisations CORS reçues du serveur
-sont conservées pour que Chromium applique les contrôles habituels. Les navigations
+sont conservées pour que Chromium applique les contrôles habituels. Durant la
+lecture, seuls les prévols déclarant une requête GET sont autorisés sur ces deux
+origines ; les prévols de mutations restent bloqués. Les navigations
 sont limitées à ces deux origines ; les autres redirections sont refusées. Un formulaire hébergé sur
 un sous-domaine ou un fournisseur externe peut donc être déclaré explicitement.
+Le parcours de connexion et la lecture des articles utilisent les requêtes HTTPS
+natives de Chromium : HTTP/2, TLS, en-têtes, cookies et CORS ne sont plus reconstruits
+par un client Node pour ces deux origines. Le relais TCP temporaire valide et
+épingle les adresses publiques et limite ses destinations aux hôtes et ports HTTPS
+déclarés. Avant la saisie, les ressources publiques de tiers peuvent encore être
+chargées par le transport texte contrôlé ; après la saisie, ces origines sont bloquées.
+Les tests peuvent injecter un transport HTTP factice sans changer la voie native
+de production. Les deux voies conservent les mêmes contrôles d'origine et de méthode.
 Les redirections HTTP des formulaires et des appels AJAX sont suivies par Chromium,
 avec sa gestion des cookies : 302/303 transforment un POST en GET, tandis que
 307/308 conservent la méthode et le corps. Chaque destination est vérifiée avant
@@ -1031,12 +1043,22 @@ paramètre, corps de réponse ou identifiant. Les délais de chargement de la pa
 (`JOURNAL_ARTICLE_PAGE_TIMEOUT`) et d'apparition du contenu
 (`JOURNAL_ARTICLE_CONTENT_TIMEOUT`) sont distingués des refus HTTP et des erreurs
 réseau (`JOURNAL_ARTICLE_NETWORK_*`).
+Pour HTTP 402, le HTML reçu est analysé dans la limite de taille, sans exécuter
+son contenu dans ce diagnostic : un refus explicite d'accès automatisé renvoie
+`JOURNAL_ARTICLE_AUTOMATION_BLOCKED`, une demande explicite d'accès abonné renvoie
+`JOURNAL_ARTICLE_SUBSCRIPTION_REQUIRED`. Un corps ambigu conserve l'erreur HTTP
+générique. Ces messages ne divulguent ni le corps, ni les cookies, les tokens ou
+les identifiants ; aucune réponse 402 n'est considérée comme un article complet.
 Les iframes externes sont bloquées sans interrompre la connexion du document
 principal ; leurs navigations ne sont pas des redirections du formulaire.
 Les requêtes gardent la validation des adresses publiques, l'épinglage DNS, les
 limites de taille et la vérification TLS. Les destinations supplémentaires, les
 CAPTCHA, la double authentification et les formulaires à plusieurs étapes ne sont
-pas automatisés. Aucun contournement de protection n'est tenté.
+pas automatisés. Les workers et service workers sont désactivés dans les pages
+et leurs frames ; les ouvertures d'onglets auxiliaires sont bloquées afin que les
+requêtes restent dans l'onglet intercepté. Les connexions qui nécessitent un worker
+ou une fenêtre SSO séparée ne sont pas prises en charge. Aucun contournement de
+protection n'est tenté.
 
 Un accès ayant des identifiants mais aucun formulaire configuré reste refusé avec
 `JOURNAL_AUTH_UNSUPPORTED`. Un journal public activé sans identifiants conserve la

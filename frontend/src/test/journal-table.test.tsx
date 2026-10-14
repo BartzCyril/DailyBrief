@@ -93,6 +93,9 @@ test("saves form selectors, tests the saved login and distinguishes configuratio
     await user.type(field, value!);
   }
   await user.keyboard("{Tab}");
+  expect(screen.getByLabelText("Sélecteur du contenu complet de l’article")).toHaveFocus();
+  expect(screen.getByLabelText("Sélecteur du contenu complet de l’article")).not.toBeRequired();
+  await user.keyboard("{Tab}");
   expect(screen.getByLabelText("Email pour www.lemonde.fr")).toHaveFocus();
   await user.type(screen.getByLabelText("Email pour www.lemonde.fr"), "reader@example.com");
   await user.type(screen.getByLabelText("Mot de passe", { exact: true }), "secret-for-test");
@@ -204,4 +207,53 @@ test("clears an unsaved password when closing the access modal with Escape", asy
   expect(bodies).toEqual([{ enabled: true }]);
   await user.click(trigger);
   expect(screen.getByLabelText("Mot de passe", { exact: true })).toHaveValue("");
+});
+
+test("edits and clears the full article selector while retaining saved credentials", async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  await user.click(screen.getByRole("switch", { name: "Activer www.lemonde.fr" }));
+  const configure = () => screen.getAllByRole("button", { name: "Configurer l'accès" })[0]!;
+  const contentSelector = () => screen.getByLabelText("Sélecteur du contenu complet de l’article");
+  await user.click(configure());
+  await user.type(
+    screen.getByLabelText("URL du formulaire de connexion"),
+    "https://secure.lemonde.fr/login",
+  );
+  await user.type(contentSelector(), "  .article__body  ");
+  await user.type(screen.getByLabelText("Email pour www.lemonde.fr"), "reader@example.com");
+  await user.type(screen.getByLabelText("Mot de passe", { exact: true }), "secret-for-test");
+  await user.click(screen.getByRole("button", { name: "Enregistrer les identifiants" }));
+  await screen.findByText(/Formulaire configuré · connexion à vérifier/);
+  expect(bodies.at(-1)?.loginConfig).toMatchObject({ articleContentSelector: ".article__body" });
+
+  await user.click(configure());
+  expect(contentSelector()).toHaveValue(".article__body");
+  expect(screen.getByLabelText(/Nouveau mot de passe/)).toHaveValue("");
+  await user.clear(contentSelector());
+  await user.type(contentSelector(), ".article__content");
+  await user.click(screen.getByRole("button", { name: "Enregistrer les identifiants" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(bodies.at(-1)).toMatchObject({
+    email: "reader@example.com",
+    password: "",
+    loginConfig: { articleContentSelector: ".article__content" },
+  });
+  expect(bodies.at(-1)).not.toHaveProperty("clearCredentials");
+  expect(screen.getByRole("button", { name: "Tester la connexion" })).toBeEnabled();
+
+  await user.click(configure());
+  expect(contentSelector()).toHaveValue(".article__content");
+  await user.clear(contentSelector());
+  await user.click(screen.getByRole("button", { name: "Enregistrer les identifiants" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  expect(bodies.at(-1)).toMatchObject({
+    email: "reader@example.com",
+    password: "",
+    loginConfig: { articleContentSelector: null },
+  });
+  expect(bodies.at(-1)).not.toHaveProperty("clearCredentials");
+  await user.click(configure());
+  expect(contentSelector()).toHaveValue("");
+  expect(screen.getByLabelText(/Nouveau mot de passe/)).toHaveValue("");
 });

@@ -178,6 +178,7 @@ export type RemotePageOptions = {
   origin?: string;
   corsRequestMethod?: string;
   corsRequestHeaders?: string;
+  allowHttpErrorResponses?: readonly number[];
 };
 export type FetchPage = (url: string, options?: RemotePageOptions) => Promise<RemotePage>;
 export const fetchRemotePage: FetchPage = async (value, options = {}) => {
@@ -277,7 +278,10 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
             resolve({ ...metadata, text: "", location: res.headers.location });
             return;
           }
-          if ((res.statusCode ?? 500) >= 400) {
+          if (
+            (res.statusCode ?? 500) >= 400 &&
+            !options.allowHttpErrorResponses?.includes(metadata.status)
+          ) {
             res.resume();
             reject(new UpstreamHttpError(metadata.status, target.url.href));
             return;

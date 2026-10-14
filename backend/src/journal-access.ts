@@ -215,7 +215,7 @@ export class JournalAccessService {
     if (hasSubscriptionMetadata(rendered.html) && !login.config.articleContentSelector)
       throw new AppError(
         422,
-        "Le contenu intégral de cet article réservé aux abonnés n'a pas pu être confirmé après connexion.",
+        "Le contenu intégral de cet article réservé aux abonnés n'a pas pu être confirmé après connexion. Renseignez le champ « Sélecteur du contenu complet de l’article » dans la configuration du journal.",
         "JOURNAL_FULL_CONTENT_UNVERIFIED",
       );
     const content = extractArticleContent(rendered.contentHtml ?? rendered.html, rendered.url);

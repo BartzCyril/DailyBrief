@@ -296,6 +296,17 @@ function JournalRow({
                 }}
               />
             ))}
+            <Field
+              label="Sélecteur du contenu complet de l’article"
+              hint="Facultatif pour les articles publics. Sélecteur CSS du bloc contenant tout le corps de l’article après connexion."
+              placeholder=".article__body"
+              value={form.articleContentSelector ?? ""}
+              autoComplete="off"
+              onChange={(event) => {
+                const value = event.target.value;
+                setForm((previous) => ({ ...previous, articleContentSelector: value }));
+              }}
+            />
             <p className="text-sm text-muted-foreground">
               CAPTCHA et double authentification ne sont pas automatisés.
             </p>
