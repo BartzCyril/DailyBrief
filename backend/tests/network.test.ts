@@ -6,7 +6,11 @@ import { readFileSync } from "node:fs";
 import { gzipSync, deflateSync, brotliCompressSync, zstdCompressSync } from "node:zlib";
 import { readRemoteResponse, MAX_REMOTE_BYTES } from "../src/remote-response";
 import { parseRss } from "../src/rss";
-import { browserRequestHeaders, remoteConnectionError } from "../src/network";
+import {
+  browserRequestHeaders,
+  browserApplicationHeaders,
+  remoteConnectionError,
+} from "../src/network";
 import { OllamaClient } from "../src/ai";
 import { readConfig } from "../src/config";
 import { OllamaSelectorAnalysisProvider } from "../src/selector-analysis";
@@ -295,6 +299,30 @@ test("browser metadata forwarding excludes credentials and transport headers", (
     "sec-fetch-mode": "navigate",
     "sec-fetch-site": "none",
     "upgrade-insecure-requests": "1",
+  });
+});
+
+test("application authentication headers cannot override transport routing or inject extra headers", () => {
+  expect(
+    browserApplicationHeaders({
+      "X-CSRF-Token": "synthetic-csrf",
+      Authorization: "Bearer synthetic-token",
+      Host: "127.0.0.1",
+      Cookie: "session=reserved",
+      Origin: "https://other.example",
+      "Content-Length": "9999",
+      Connection: "X-Private-Hop, close",
+      "X-Private-Hop": "hop-data",
+      "Proxy-Authorization": "proxy-secret",
+      Forwarded: "for=127.0.0.1",
+      "X-Forwarded-For": "127.0.0.1",
+      "X-Real-IP": "127.0.0.1",
+      "Sec-Fetch-Site": "same-origin",
+      "X-Injected": "token\r\nHost: 127.0.0.1",
+    }),
+  ).toEqual({
+    "x-csrf-token": "synthetic-csrf",
+    authorization: "Bearer synthetic-token",
   });
 });
 

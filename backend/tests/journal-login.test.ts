@@ -129,6 +129,257 @@ test("confirms a new logout control when a public account link was already visib
 }, 45000);
 
 test.each([
+  ["HTTP 302 without a logout control", 302, "<main>Actualités</main>", null, "publisher.example"],
+  [
+    "HTTP 303 with a hidden logout control",
+    303,
+    '<button hidden>Se déconnecter</button><section style="opacity:0"><input type="password"></section>',
+    null,
+    "another-journal.test",
+  ],
+  [
+    "JavaScript with a public account link",
+    200,
+    '<a href="/account">Mon compte</a>',
+    null,
+    "publisher.example",
+  ],
+  [
+    "HTTP 303 despite an obsolete success selector",
+    303,
+    "<main>Actualités</main>",
+    "#missing-account",
+    "gazette.example",
+  ],
+] as const)(
+  "confirms a main-document redirect to the journal homepage and retains its session: %s",
+  async (_scenario, status, homepage, successSelector, domain) => {
+    const fixture = journalFixture();
+    const homeUrl = `https://${domain}/?from=login#latest`;
+    const browser = new JournalLoginBrowser(async (url, options) => {
+      const response = await fixture.fetch(url, options);
+      if (new URL(url).pathname === "/login")
+        return { ...response, text: response.text + '<a href="/account">Mon compte</a>' };
+      if (new URL(url).pathname === "/authenticate")
+        return {
+          ...response,
+          status,
+          cookies: [`sid=own-session; Domain=${domain}; Path=/; HttpOnly; Secure`],
+          location: status === 200 ? undefined : homeUrl,
+          text:
+            status === 200 ? `<script>location.replace(${JSON.stringify(homeUrl)})</script>` : "",
+          contentType: "text/html",
+        };
+      if (new URL(url).pathname === "/")
+        return { ...response, text: homepage, contentType: "text/html" };
+      return response;
+    });
+    const result = await browser.run(
+      domain,
+      {
+        ...credentials,
+        config: {
+          ...loginConfig,
+          loginUrl: `https://accounts.${domain}/login`,
+          successSelector,
+        },
+      },
+      `https://${domain}/article`,
+    );
+    expect(result.contentHtml).toContain(fullText);
+    const post = fixture.requests.find((request) => request.options?.method === "POST");
+    expect(post?.url).toBe(`https://accounts.${domain}/authenticate`);
+    expect(new URLSearchParams(post?.options?.body).get("password")).toBe(credentials.password);
+    const home = fixture.requests.find((request) => new URL(request.url).pathname === "/");
+    expect(home?.url).toBe(homeUrl);
+    expect(home?.options?.cookie).toContain("sid=own-session");
+    expect(
+      fixture.requests.find((request) => request.url.endsWith("/article"))?.options?.cookie,
+    ).toContain("sid=own-session");
+  },
+  45000,
+);
+
+test("does not confirm a homepage redirect when a password field remains visible", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    const response = await fixture.fetch(url, options);
+    if (url.endsWith("/authenticate")) return { ...response, location: "/" };
+    if (new URL(url).pathname === "/")
+      return {
+        ...response,
+        text: '<main>Connexion requise</main><input type="password">',
+        contentType: "text/html",
+      };
+    return response;
+  }, 700);
+  await assert.rejects(
+    browser.run("publisher.example", {
+      ...credentials,
+      config: { ...loginConfig, successSelector: null },
+    }),
+    { code: "JOURNAL_LOGIN_UNVERIFIED" },
+  );
+  expect(fixture.requests.some((request) => request.url.endsWith("/article"))).toBe(false);
+}, 45000);
+
+test.each(["fetch", "iframe", "history.replaceState"] as const)(
+  "a %s operation reaching the homepage without a new main document does not confirm login",
+  async (scenario) => {
+    const fixture = journalFixture();
+    const browser = new JournalLoginBrowser(async (url, options) => {
+      const response = await fixture.fetch(url, options);
+      if (url.endsWith("/login"))
+        return {
+          ...response,
+          text:
+            response.text +
+            `<script>document.querySelector("form").addEventListener("submit", async event => {
+              event.preventDefault();
+              await fetch("/authenticate", {method:"POST", body:new URLSearchParams(new FormData(event.target)).toString()});
+              event.target.remove();
+              ${
+                scenario === "fetch"
+                  ? 'await fetch("/");'
+                  : scenario === "iframe"
+                    ? 'document.body.insertAdjacentHTML("beforeend", \'<iframe src="/"></iframe>\');'
+                    : 'history.replaceState({}, "", "/");'
+              }
+            });</script>`,
+        };
+      if (url.endsWith("/authenticate"))
+        return {
+          ...response,
+          status: 200,
+          location: undefined,
+          text: '{"authenticated":true}',
+          contentType: "application/json",
+        };
+      if (new URL(url).pathname === "/")
+        return { ...response, text: "<main>Actualités</main>", contentType: "text/html" };
+      return response;
+    }, 700);
+    await assert.rejects(
+      browser.run("publisher.example", {
+        ...credentials,
+        config: { ...loginConfig, successSelector: null },
+      }),
+      { code: "JOURNAL_LOGIN_UNVERIFIED" },
+    );
+    expect(
+      fixture.requests.filter((request) => new URL(request.url).pathname === "/"),
+    ).toHaveLength(scenario === "history.replaceState" ? 0 : 1);
+  },
+  45000,
+);
+
+test("a homepage used as the initial login URL requires a new main-document navigation after submission", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    if (new URL(url).pathname === "/") {
+      const response = await fixture.fetch("https://publisher.example/login", options);
+      return {
+        ...response,
+        text:
+          response.text +
+          '<script>document.querySelector("form").addEventListener("submit", async event => { event.preventDefault(); await fetch("/authenticate", {method:"POST", body:new URLSearchParams(new FormData(event.target)).toString()}); event.target.remove(); });</script>',
+      };
+    }
+    const response = await fixture.fetch(url, options);
+    return url.endsWith("/authenticate")
+      ? {
+          ...response,
+          status: 200,
+          location: undefined,
+          text: "{}",
+          contentType: "application/json",
+        }
+      : response;
+  }, 700);
+  await assert.rejects(
+    browser.run("publisher.example", {
+      ...credentials,
+      config: { ...loginConfig, loginUrl: "https://publisher.example/", successSelector: null },
+    }),
+    { code: "JOURNAL_LOGIN_UNVERIFIED" },
+  );
+  expect(fixture.requests.filter((request) => request.options?.method === "POST")).toHaveLength(1);
+}, 45000);
+
+test("an unrelated analytics POST failure does not invalidate a homepage login or its article session", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    if (url.endsWith("/analytics")) {
+      fixture.requests.push({ url, options });
+      return { status: 403, cookies: [], text: "Refused", contentType: "text/plain" };
+    }
+    const response = await fixture.fetch(url, options);
+    if (url.endsWith("/authenticate")) return { ...response, location: "/" };
+    if (new URL(url).pathname === "/")
+      return {
+        ...response,
+        text: '<main>Actualités</main><script>document.addEventListener("DOMContentLoaded", () => { fetch("/analytics", {method:"POST", body:"pageview"}).catch(() => {}); });</script>',
+        contentType: "text/html",
+      };
+    return response;
+  });
+  const result = await browser.run(
+    "publisher.example",
+    { ...credentials, config: { ...loginConfig, successSelector: null } },
+    "https://publisher.example/article",
+  );
+  expect(result.contentHtml).toContain(fullText);
+  expect(fixture.requests.filter((request) => request.url.endsWith("/analytics"))).toHaveLength(1);
+  expect(
+    fixture.requests.find((request) => request.url.endsWith("/article"))?.options?.cookie,
+  ).toContain("sid=own-session");
+}, 45000);
+
+test("waits for the homepage's AJAX session cookie before closing the login tab and reading an article", async () => {
+  const fixture = journalFixture();
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    if (url.endsWith("/session-bootstrap")) {
+      fixture.requests.push({ url, options });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return {
+        status: 200,
+        cookies: ["session-ready=1; Path=/; HttpOnly; Secure"],
+        text: '{"authenticated":true}',
+        contentType: "application/json",
+      };
+    }
+    if (url.endsWith("/article") && !options?.cookie?.includes("session-ready=1"))
+      return {
+        status: 200,
+        cookies: [],
+        text: '<form><input id="email" type="email"><input id="password" type="password"></form>',
+        contentType: "text/html",
+      };
+    const response = await fixture.fetch(url, options);
+    if (url.endsWith("/authenticate")) return { ...response, location: "/" };
+    if (new URL(url).pathname === "/")
+      return {
+        ...response,
+        text: '<main>Actualités</main><script>document.addEventListener("DOMContentLoaded", () => { fetch("/session-bootstrap", {method:"POST", body:"check"}).catch(() => {}); });</script>',
+        contentType: "text/html",
+      };
+    return response;
+  });
+  const result = await browser.run(
+    "publisher.example",
+    { ...credentials, config: { ...loginConfig, successSelector: null } },
+    "https://publisher.example/article",
+  );
+  expect(result.contentHtml).toContain(fullText);
+  expect(
+    fixture.requests.filter((request) => request.url.endsWith("/session-bootstrap")),
+  ).toHaveLength(1);
+  expect(
+    fixture.requests.find((request) => request.url.endsWith("/article"))?.options?.cookie,
+  ).toContain("session-ready=1");
+}, 45000);
+
+test.each([
   "wrong-password",
   "public-account",
   "public-logout",
@@ -837,7 +1088,7 @@ test("wrong credentials and selector errors cannot expose passwords or transport
 
 test("rejects a success marker already visible before login and forms that submit secrets through GET", async () => {
   const fixture = journalFixture();
-  const browser = new JournalLoginBrowser(fixture.fetch);
+  const browser = new JournalLoginBrowser(fixture.fetch, 700);
   await assert.rejects(
     browser.run("publisher.example", {
       ...credentials,
@@ -845,6 +1096,7 @@ test("rejects a success marker already visible before login and forms that submi
     }),
     { code: "JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID" },
   );
+  fixture.requests.length = 0;
   fixture.state.getForm = true;
   await assert.rejects(browser.run("publisher.example", credentials), {
     code: "JOURNAL_LOGIN_INSECURE_FORM",

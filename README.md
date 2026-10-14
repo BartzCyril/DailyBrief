@@ -922,8 +922,10 @@ Les mots de passe ne sont placés ni dans les logs, ni dans Redis, ni dans les p
 Le formulaire « Configurer l'accès » accepte une **URL HTTPS** de connexion et les
 sélecteurs CSS des champs email et mot de passe et du bouton de connexion.
 Les sélecteurs doivent désigner un seul
-élément visible. Le champ de mot de passe doit être de type `password` ; les
-formulaires GET sont refusés afin de ne pas mettre le secret dans une URL.
+élément visible ; les copies cachées d'un formulaire sont ignorées. Le champ de
+mot de passe doit être de type `password`. Un formulaire JavaScript peut omettre
+`method="post"` s'il intercepte l'envoi et transmet les identifiants par POST.
+Toute requête qui placerait le mot de passe dans l'URL est bloquée avant l'envoi.
 Le navigateur retrouve les champs et le bouton après les mises à jour JavaScript
 du formulaire, déclenche les événements de saisie et de sortie du champ, puis
 vérifie les valeurs avant l'envoi. Si la page les efface, il reprend la saisie
@@ -942,12 +944,19 @@ le délai du document (`JOURNAL_LOGIN_PAGE_TIMEOUT`), le refus HTTP de la page
 de CAPTCHA ni un refus des identifiants. Une impossibilité de cliquer après
 remplissage renvoie `JOURNAL_LOGIN_SUBMIT_FAILED`.
 
-Sans ancien sélecteur de réussite enregistré, le serveur confirme la session seulement
-si un nouveau contrôle visible de déconnexion apparaît après soumission
-et qu'aucun champ de mot de passe n'est visible. Une redirection, un cookie ou la
-disparition du formulaire ne suffisent pas. Sans preuve, il renvoie
-`JOURNAL_LOGIN_UNVERIFIED`, sans présenter l'utilisateur comme connecté. Un lien
-« Mon compte », souvent public, ne suffit pas non plus.
+Après l'envoi du formulaire, le serveur accepte une nouvelle navigation du
+document principal vers l'accueil HTTPS du journal (`https://domaine/`, avec ou
+sans paramètres et fragment), dès que le document est prêt et qu'aucun champ de
+mot de passe n'est visible. Cette règle s'applique à tous les domaines configurés,
+y compris si le menu de déconnexion est caché ou si un ancien sélecteur de réussite
+ne correspond plus au site. Les redirections HTTP et JavaScript sont prises en compte.
+Une requête AJAX, un iframe, un simple changement d'URL via History API ou la
+disparition du formulaire sans cette navigation ne suffisent pas.
+Pour les sites qui restent sur une autre page, un nouveau contrôle visible de
+déconnexion ou le sélecteur de réussite enregistré peuvent confirmer la session.
+Sans confirmation, le serveur renvoie `JOURNAL_LOGIN_UNVERIFIED` ou l'erreur de
+soumission observée. La redirection vers l'accueil reste un indice de connexion ;
+l'accès au contenu de chaque article est vérifié séparément.
 
 La modal n'affiche plus le sélecteur facultatif du contenu intégral. Les valeurs
 déjà enregistrées restent conservées lors d'une modification de l'accès. Ce réglage
@@ -1003,7 +1012,16 @@ avec sa gestion des cookies : 302/303 transforment un POST en GET, tandis que
 307/308 conservent la méthode et le corps. Chaque destination est vérifiée avant
 la poursuite ; les boucles sont limitées à douze étapes. L'origine CORS opaque
 `null`, produite par Chromium sur certaines chaînes entre les deux origines,
-est conservée. Une redirection ne suffit toujours pas à confirmer la connexion.
+est conservée. Les en-têtes applicatifs du navigateur (jetons CSRF, XSRF ou
+Authorization) sont transmis aux origines déclarées, avec filtrage des en-têtes
+réservés au transport ; ils ne sont pas réutilisés par le transport HTTP sur une
+autre destination de redirection.
+Une erreur sur une requête AJAX secondaire n'annule pas une connexion confirmée.
+Les erreurs de navigation principale restent bloquantes. Après confirmation,
+le navigateur attend brièvement la fin des appels réseau (au plus 2,5 secondes)
+pour terminer l'initialisation des cookies de session, puis ferme l'onglet de
+connexion ; les cookies restent dans le contexte utilisé
+pour lire les articles, sans les appels d'arrière-plan de l'accueil.
 Les iframes externes sont bloquées sans interrompre la connexion du document
 principal ; leurs navigations ne sont pas des redirections du formulaire.
 Les requêtes gardent la validation des adresses publiques, l'épinglage DNS, les

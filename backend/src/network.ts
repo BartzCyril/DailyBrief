@@ -57,6 +57,56 @@ export function browserRequestHeaders(
   );
 }
 
+const reservedBrowserHeaders = new Set([
+  "host",
+  "connection",
+  "keep-alive",
+  "content-length",
+  "transfer-encoding",
+  "te",
+  "trailer",
+  "upgrade",
+  "expect",
+  "cookie",
+  "set-cookie",
+  "origin",
+  "referer",
+  "user-agent",
+  "accept",
+  "accept-encoding",
+  "content-type",
+  "x-requested-with",
+  "access-control-request-method",
+  "access-control-request-headers",
+]);
+
+/** Headers set by page scripts, scoped separately from browser/transport metadata. */
+export function browserApplicationHeaders(headers: Record<string, string> = {}) {
+  const connectionHeaders = new Set(
+    Object.entries(headers)
+      .filter(([name]) => name.toLowerCase() === "connection")
+      .flatMap(([, value]) =>
+        value
+          .toLowerCase()
+          .split(",")
+          .map((name) => name.trim()),
+      ),
+  );
+  return Object.fromEntries(
+    Object.entries(headers)
+      .map(([name, value]) => [name.toLowerCase(), value] as const)
+      .filter(
+        ([name, value]) =>
+          /^[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name) &&
+          !reservedBrowserHeaders.has(name) &&
+          !connectionHeaders.has(name) &&
+          !browserHeaderNames.has(name) &&
+          !/^(?:sec-|proxy-|forwarded$|x-forwarded-|x-real-ip$)/.test(name) &&
+          !/[\r\n]/.test(value),
+      ),
+  );
+}
+
 export function isPublicAddress(address: string): boolean {
   try {
     return ipaddr.process(address).range() === "unicast";
@@ -124,6 +174,7 @@ export type RemotePageOptions = {
   followRedirects?: boolean;
   allowedHostname?: string;
   browserHeaders?: Record<string, string>;
+  applicationHeaders?: Record<string, string>;
   origin?: string;
   corsRequestMethod?: string;
   corsRequestHeaders?: string;
@@ -173,6 +224,9 @@ export const fetchRemotePage: FetchPage = async (value, options = {}) => {
           method,
           headers: {
             ...browserRequestHeaders(options.browserHeaders),
+            ...(redirect === 0 && target.url.origin === originalOrigin
+              ? browserApplicationHeaders(options.applicationHeaders)
+              : {}),
             "User-Agent": options.userAgent ?? "DailyBrief/1.0",
             "Accept-Encoding": "identity",
             ...(options.accept ? { Accept: options.accept } : {}),

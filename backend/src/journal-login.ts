@@ -10,9 +10,15 @@ import { TimeoutError } from "puppeteer";
 import type { Page, ElementHandle, HTTPRequest } from "puppeteer";
 import type { JournalLoginConfig } from "@dailybrief/shared";
 import { AppError } from "./errors";
-import { fetchRemotePage, RemoteConnectionError, type FetchPage } from "./network";
+import {
+  fetchRemotePage,
+  RemoteConnectionError,
+  browserApplicationHeaders,
+  type FetchPage,
+} from "./network";
 import { articleBrowserLimiter } from "./article-browser";
 import { MAX_REMOTE_BYTES } from "./remote-response";
+import { visibleJournalSelector } from "./journal-login-selectors";
 
 export type JournalLogin = { config: JournalLoginConfig; email: string; password: string };
 export type JournalPage = { html: string; url: string; contentHtml?: string };
@@ -167,6 +173,9 @@ export class JournalLoginBrowser {
       let callbackStarted = false;
       let authenticating = true;
       let secretsEntered = false;
+      let submissionStarted = false;
+      let submittedMainNavigation = false;
+      let submissionError: AppError | undefined;
       let navigations = 0;
       let operationId = 0;
       let loginFailureCode = "JOURNAL_LOGIN_PAGE_FAILED";
@@ -233,6 +242,12 @@ export class JournalLoginBrowser {
               cookie: headers.cookie,
               userAgent: headers["user-agent"],
               accept: headers.accept,
+              browserHeaders: headers,
+              // CSRF tokens and other application headers belong to this
+              // checked destination, never to an automatically followed host.
+              applicationHeaders: origins.has(url.origin)
+                ? browserApplicationHeaders(headers)
+                : undefined,
               // Preserve the actual browser origin, including SSO calls from
               // the login host to the declared journal host. Chromium still
               // enforces the server's own CORS response headers below.
@@ -289,16 +304,35 @@ export class JournalLoginBrowser {
               await request.abort().catch(() => {});
               return;
             }
-            if (mainNavigation || (authenticating && method === "POST" && secretsEntered))
+            if (mainNavigation)
               networkError = safeTransportError(
                 error,
                 authenticating ? loginFailureCode : "JOURNAL_ARTICLE_UNAVAILABLE",
               );
+            else if (
+              authenticating &&
+              submissionStarted &&
+              (["POST", "OPTIONS"].includes(method) ||
+                request.redirectChain().some((previous) => previous.method() === "POST"))
+            )
+              // Background analytics/session calls can fail after a successful
+              // login. Keep their error for an unconfirmed submission only;
+              // they must not win the race against the main document.
+              submissionError ??= safeTransportError(error, "JOURNAL_LOGIN_FAILED");
             await request.abort().catch(() => {});
             if (networkError) rejectNetwork(networkError);
           }
         };
         const page = await createScrapingPage(browser, {}, context);
+        const loginLifecycle = await page.createCDPSession();
+        await loginLifecycle.send("Page.enable");
+        const { frameTree } = await loginLifecycle.send("Page.getFrameTree");
+        loginLifecycle.on("Page.frameNavigated", ({ frame }) => {
+          // Unlike Puppeteer's framenavigated event, this excludes pushState
+          // and replaceState: accepting the homepage requires a new document.
+          if (authenticating && submissionStarted && frame.id === frameTree.frame.id)
+            submittedMainNavigation = true;
+        });
         await interceptRequests(page, handleRequest);
         page.setDefaultTimeout(this.timeoutMs);
         const execute = async <R>(
@@ -347,11 +381,10 @@ export class JournalLoginBrowser {
           loginFailureCode = "JOURNAL_LOGIN_FIELDS_UNFILLED";
           await assertLoginField(page, login.config.emailSelector, false);
           await assertLoginField(page, login.config.passwordSelector, true);
-          const previousSignals = login.config.successSelector
-            ? []
-            : (await page.evaluate(connectionStateInPage)).signals;
-          if (login.config.successSelector && (await isVisible(page, login.config.successSelector)))
-            throw loginError("JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID");
+          const previousSignals = (await page.evaluate(connectionStateInPage)).signals;
+          const successAlreadyVisible = login.config.successSelector
+            ? await isVisible(page, visibleJournalSelector(login.config.successSelector))
+            : false;
           secretsEntered = true;
           observer?.("Saisie des identifiants dans le formulaire de connexion.");
           await fillLoginForm(page, login);
@@ -361,16 +394,41 @@ export class JournalLoginBrowser {
           ).dispose();
           observer?.("Envoi du formulaire et vérification de la connexion.");
           loginFailureCode = "JOURNAL_LOGIN_SUBMIT_FAILED";
-          await page.locator(login.config.submitSelector).click();
+          submissionStarted = true;
+          await page.locator(visibleJournalSelector(login.config.submitSelector)).click();
           loginFailureCode = "JOURNAL_LOGIN_FAILED";
-          if (login.config.successSelector) await uniqueVisible(page, login.config.successSelector);
-          else await confirmConnection(page, previousSignals, this.timeoutMs);
+          const confirmation = await confirmConnection(page, previousSignals, this.timeoutMs, {
+            journalOrigin,
+            mainNavigation: () => submittedMainNavigation,
+            successSelector: successAlreadyVisible ? null : login.config.successSelector,
+            invalidSuccessSelector: successAlreadyVisible,
+            failure: () =>
+              submissionError ??
+              (successAlreadyVisible
+                ? loginError("JOURNAL_LOGIN_SUCCESS_SELECTOR_INVALID")
+                : login.config.successSelector
+                  ? loginError()
+                  : undefined),
+          });
+          // Some publishers finish their SSO cookies in an AJAX request from
+          // the homepage. Let those requests settle before closing this tab,
+          // without waiting indefinitely for polling or analytics.
+          try {
+            await page.waitForNetworkIdle({ idleTime: 300, timeout: 2500 });
+          } catch (error) {
+            if (!(error instanceof TimeoutError)) throw error;
+          }
           authenticating = false;
+          if (confirmation === "homepage")
+            observer?.("Connexion acceptée après redirection vers l'accueil du journal.");
           observer?.("Connexion au journal vérifiée dans cette session.");
         });
+        // Cookies live in the context. Retaining the homepage would let its
+        // later redirects and background traffic interrupt article operations.
+        await page.close();
         const readPage: JournalPageReader = async (url, notify) => {
           const target = articleTarget(domain, url);
-          if (expired || page.isClosed()) throw loginError("JOURNAL_SESSION_EXPIRED");
+          if (expired || !browser.connected) throw loginError("JOURNAL_SESSION_EXPIRED");
           // Keep the authenticated context and cookies, but isolate failed
           // navigations in a temporary tab so Chromium's error page cannot
           // interrupt the following article.
@@ -472,17 +530,26 @@ export class JournalLoginBrowser {
   }
 }
 
-// A redirect, cookie, or disappearance of the form alone never confirms authentication.
+// A newly visible logout control can confirm sites that keep the current URL.
+// A post-submission main-document redirect to the journal homepage is also
+// accepted, without depending on a publisher's account-menu implementation.
 function connectionStateInPage() {
   const visible = (element: Element) => {
-    const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
-    return (
-      style.display !== "none" &&
-      style.visibility === "visible" &&
-      rect.width > 0 &&
-      rect.height > 0
-    );
+    if (!rect.width || !rect.height) return false;
+    for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+      const style = getComputedStyle(ancestor);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        style.opacity === "0" ||
+        ancestor.hasAttribute("hidden") ||
+        ancestor.hasAttribute("inert")
+      )
+        return false;
+    }
+    return true;
   };
   const normalize = (text: string) =>
     text
@@ -515,23 +582,54 @@ function connectionStateInPage() {
   return {
     signals,
     passwordVisible: [...document.querySelectorAll("input[type='password']")].some(visible),
+    ready: document.readyState !== "loading" && !!document.body,
   };
 }
 
-async function confirmConnection(page: Page, previousSignals: string[], timeoutMs: number) {
+async function confirmConnection(
+  page: Page,
+  previousSignals: string[],
+  timeoutMs: number,
+  options: {
+    journalOrigin: string;
+    mainNavigation: () => boolean;
+    successSelector?: string | null;
+    invalidSuccessSelector: boolean;
+    failure: () => AppError | undefined;
+  },
+) {
   const before = new Set(previousSignals);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const state = await page.evaluate(connectionStateInPage);
-      if (!state.passwordVisible && state.signals.some((signal) => !before.has(signal))) return;
-    } catch {
+      if (state.ready && !state.passwordVisible) {
+        const current = new URL(page.url());
+        if (
+          options.mainNavigation() &&
+          current.origin === options.journalOrigin &&
+          current.pathname === "/"
+        )
+          return "homepage";
+        if (!options.invalidSuccessSelector && state.signals.some((signal) => !before.has(signal)))
+          return "logout";
+        if (options.successSelector) {
+          const matches = await page.$$eval(
+            visibleJournalSelector(options.successSelector),
+            (elements) => elements.length,
+          );
+          if (matches > 1) throw loginError("JOURNAL_LOGIN_SELECTOR_AMBIGUOUS");
+          if (matches === 1) return "selector";
+        }
+      }
+    } catch (error) {
+      if (error instanceof AppError) throw error;
       // A form submission can replace the document during this check.
       if (page.isClosed()) throw loginError();
     }
     await delay(100);
   }
-  throw loginError("JOURNAL_LOGIN_UNVERIFIED");
+  throw options.failure() ?? loginError("JOURNAL_LOGIN_UNVERIFIED");
 }
 
 async function uniqueVisible(
@@ -539,11 +637,12 @@ async function uniqueVisible(
   selector: string,
   missingCode?: string,
 ): Promise<ElementHandle<Element>> {
-  const element = await page.waitForSelector(selector, { visible: true }).catch((error) => {
+  const visibleSelector = visibleJournalSelector(selector);
+  const element = await page.waitForSelector(visibleSelector, { visible: true }).catch((error) => {
     if (missingCode) throw loginError(missingCode);
     throw error;
   });
-  if (!element || (await page.$$eval(selector, (elements) => elements.length)) !== 1) {
+  if (!element || (await page.$$eval(visibleSelector, (elements) => elements.length)) !== 1) {
     await element?.dispose();
     throw loginError("JOURNAL_LOGIN_SELECTOR_AMBIGUOUS");
   }
@@ -557,12 +656,12 @@ async function assertLoginField(page: Page, selector: string, password: boolean)
     password ? "JOURNAL_LOGIN_PASSWORD_NOT_FOUND" : "JOURNAL_LOGIN_EMAIL_NOT_FOUND",
   );
   try {
+    // JavaScript forms often omit method=post and prevent native submit.
+    // The network guard rejects an actual password-bearing GET instead.
     const valid = await field.evaluate(
       (node, password) =>
         node instanceof HTMLInputElement &&
-        (password
-          ? node.type === "password" && node.form?.method.toLowerCase() !== "get"
-          : ["email", "text"].includes(node.type)),
+        (password ? node.type === "password" : ["email", "text"].includes(node.type)),
       password,
     );
     if (!valid)
@@ -583,7 +682,7 @@ async function fillLoginForm(page: Page, login: JournalLogin) {
       await assertLoginField(page, selector, password);
       try {
         await page
-          .locator(selector)
+          .locator(visibleJournalSelector(selector))
           .filter((node) => node instanceof HTMLInputElement && !node.readOnly)
           .fill(value);
         // Commit native change/blur handlers before inspecting the current DOM.
@@ -594,15 +693,16 @@ async function fillLoginForm(page: Page, login: JournalLogin) {
     }
     await delay(100);
     await assertLoginField(page, login.config.passwordSelector, true);
-    const filled = await page.evaluate(({ config, email, password }) => {
-      const matches = (selector: string, value: string) => {
-        const fields = document.querySelectorAll(selector);
-        return (
-          fields.length === 1 && fields[0] instanceof HTMLInputElement && fields[0].value === value
-        );
-      };
-      return matches(config.emailSelector, email) && matches(config.passwordSelector, password);
-    }, login);
+    const matches = (selector: string, value: string) =>
+      page.$$eval(
+        visibleJournalSelector(selector),
+        (fields, value) =>
+          fields.length === 1 && fields[0] instanceof HTMLInputElement && fields[0].value === value,
+        value,
+      );
+    const filled =
+      (await matches(login.config.emailSelector, login.email)) &&
+      (await matches(login.config.passwordSelector, login.password));
     if (filled) return;
   }
   throw loginError("JOURNAL_LOGIN_FIELDS_UNFILLED");
@@ -611,14 +711,16 @@ async function fillLoginForm(page: Page, login: JournalLogin) {
 async function assertArticleAccess(page: Page, login: JournalLogin, journalOrigin: string) {
   if (new URL(page.url()).origin !== journalOrigin) throw loginError("JOURNAL_SESSION_EXPIRED");
   if (
-    (await isVisible(page, login.config.passwordSelector)) &&
-    (await isVisible(page, login.config.emailSelector))
+    (await isVisible(page, visibleJournalSelector(login.config.passwordSelector))) &&
+    (await isVisible(page, visibleJournalSelector(login.config.emailSelector)))
   )
     throw loginError("JOURNAL_SESSION_EXPIRED");
   if (
     await isVisible(
       page,
-      ".paywall, #paywall, [data-paywall], #challenge-form, #cf-challenge-running, #captcha",
+      visibleJournalSelector(
+        ".paywall, #paywall, [data-paywall], #challenge-form, #cf-challenge-running, #captcha",
+      ),
     )
   )
     throw new AppError(
