@@ -1019,9 +1019,18 @@ autre destination de redirection.
 Une erreur sur une requête AJAX secondaire n'annule pas une connexion confirmée.
 Les erreurs de navigation principale restent bloquantes. Après confirmation,
 le navigateur attend brièvement la fin des appels réseau (au plus 2,5 secondes)
-pour terminer l'initialisation des cookies de session, puis ferme l'onglet de
-connexion ; les cookies restent dans le contexte utilisé
-pour lire les articles, sans les appels d'arrière-plan de l'accueil.
+pour terminer l'initialisation des cookies de session, puis navigue vers l'article
+dans le même onglet authentifié. Les cookies et le stockage de session de cet
+onglet (`sessionStorage`) restent disponibles. Les lectures du lot sont séquentielles ;
+un échec de navigation arrête le chargement sans fermer l'onglet, afin de pouvoir
+lire l'article suivant dans cette session. Le navigateur est fermé après la fin
+du test ou du lot, et non juste après la connexion.
+Un refus de page conserve le statut HTTP du document principal dans un message
+expurgé (`JOURNAL_ARTICLE_HTTP_ERROR`, par exemple HTTP 403 ou 429), sans URL,
+paramètre, corps de réponse ou identifiant. Les délais de chargement de la page
+(`JOURNAL_ARTICLE_PAGE_TIMEOUT`) et d'apparition du contenu
+(`JOURNAL_ARTICLE_CONTENT_TIMEOUT`) sont distingués des refus HTTP et des erreurs
+réseau (`JOURNAL_ARTICLE_NETWORK_*`).
 Les iframes externes sont bloquées sans interrompre la connexion du document
 principal ; leurs navigations ne sont pas des redirections du formulaire.
 Les requêtes gardent la validation des adresses publiques, l'épinglage DNS, les

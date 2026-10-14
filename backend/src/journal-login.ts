@@ -9,7 +9,7 @@ import {
 import { TimeoutError } from "puppeteer";
 import type { Page, ElementHandle, HTTPRequest } from "puppeteer";
 import type { JournalLoginConfig } from "@dailybrief/shared";
-import { AppError } from "./errors";
+import { AppError, UpstreamHttpError } from "./errors";
 import {
   fetchRemotePage,
   RemoteConnectionError,
@@ -89,6 +89,26 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
       "Le formulaire tente d'envoyer une requête non autorisée. La connexion doit utiliser les origines HTTPS configurées du formulaire et du journal.",
     JOURNAL_ARTICLE_UNAVAILABLE:
       "Le journal n'a pas permis de charger cet article avec la session authentifiée.",
+    JOURNAL_ARTICLE_HTTP_ERROR:
+      "Le journal a retourné une erreur HTTP lors du chargement de l'article avec la session authentifiée.",
+    JOURNAL_ARTICLE_PAGE_FAILED:
+      "Le navigateur n'a pas pu ouvrir la page de l'article avec la session authentifiée.",
+    JOURNAL_ARTICLE_PAGE_TIMEOUT:
+      "Le document principal de l'article n'a pas fini de charger dans le délai prévu avec la session authentifiée.",
+    JOURNAL_ARTICLE_CONTENT_FAILED:
+      "La page de l'article est chargée, mais son contenu n'a pas pu être extrait avec la session authentifiée.",
+    JOURNAL_ARTICLE_CONTENT_TIMEOUT:
+      "La page de l'article est chargée, mais le contenu attendu n'est pas apparu dans le délai prévu.",
+    JOURNAL_ARTICLE_TOO_LARGE: "La page de l'article dépasse la taille de contenu autorisée.",
+    JOURNAL_ARTICLE_NETWORK_DNS:
+      "Le backend ne peut pas résoudre le nom du serveur de l'article (DNS).",
+    JOURNAL_ARTICLE_NETWORK_TLS:
+      "Le backend ne peut pas vérifier la connexion HTTPS de l'article (certificat ou négociation TLS).",
+    JOURNAL_ARTICLE_NETWORK_CONNECT:
+      "Le backend ne peut pas établir une connexion réseau avec le serveur de l'article.",
+    JOURNAL_ARTICLE_NETWORK_RESET:
+      "Le serveur de l'article ou un intermédiaire a interrompu la connexion réseau du backend.",
+    JOURNAL_ARTICLE_NETWORK_UNKNOWN: "Le backend ne peut pas joindre le serveur de l'article.",
     JOURNAL_SESSION_EXPIRED:
       "La session du journal a expiré ou l'article renvoie au formulaire de connexion. Vérifiez les identifiants et l'accès de votre compte.",
   };
@@ -101,8 +121,30 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
 
 function safeTransportError(error: unknown, fallbackCode: string) {
   if (error instanceof AppError && error.code.startsWith("JOURNAL_")) return loginError(error.code);
+  const article = fallbackCode.startsWith("JOURNAL_ARTICLE_");
+  if (article && error instanceof AppError && error.code === "UPSTREAM_ERROR") {
+    const status = error instanceof UpstreamHttpError ? error.upstreamStatus : undefined;
+    return status !== undefined && Number.isInteger(status) && status >= 400 && status <= 599
+      ? new AppError(
+          422,
+          `Le journal a refusé le chargement de l'article avec la session authentifiée (HTTP ${status}).`,
+          "JOURNAL_ARTICLE_HTTP_ERROR",
+        )
+      : loginError("JOURNAL_ARTICLE_HTTP_ERROR");
+  }
   if (error instanceof RemoteConnectionError)
-    return loginError(`JOURNAL_LOGIN_NETWORK_${error.reason}`);
+    return loginError(`JOURNAL_${article ? "ARTICLE" : "LOGIN"}_NETWORK_${error.reason}`);
+  if (article && error instanceof AppError && error.code === "RESPONSE_TOO_LARGE")
+    return loginError("JOURNAL_ARTICLE_TOO_LARGE");
+  if (
+    article &&
+    (error instanceof TimeoutError || (error instanceof AppError && error.code === "TIMEOUT"))
+  )
+    return loginError(
+      fallbackCode === "JOURNAL_ARTICLE_CONTENT_FAILED"
+        ? "JOURNAL_ARTICLE_CONTENT_TIMEOUT"
+        : "JOURNAL_ARTICLE_PAGE_TIMEOUT",
+    );
   if (error instanceof AppError && error.code === "UNSAFE_URL")
     return loginError("JOURNAL_LOGIN_REQUEST_BLOCKED");
   if (error instanceof AppError && error.code === "UPSTREAM_ERROR")
@@ -179,6 +221,7 @@ export class JournalLoginBrowser {
       let navigations = 0;
       let operationId = 0;
       let loginFailureCode = "JOURNAL_LOGIN_PAGE_FAILED";
+      let articleFailureCode = "JOURNAL_ARTICLE_PAGE_FAILED";
       let networkError: AppError | undefined;
       let rejectNetwork = (_error: unknown) => {};
       let networkFailure = new Promise<never>((_resolve, reject) => {
@@ -261,14 +304,12 @@ export class JournalLoginBrowser {
               // keeping its own cookies, CORS rules and HTTP method semantics.
               followRedirects: false,
             });
-            if (response.status >= 400)
+            if (response.status >= 400) {
+              if (!authenticating) throw new UpstreamHttpError(response.status, request.url());
               throw loginError(
-                authenticating
-                  ? secretsEntered
-                    ? "JOURNAL_LOGIN_FAILED"
-                    : "JOURNAL_LOGIN_PAGE_HTTP_ERROR"
-                  : "JOURNAL_ARTICLE_UNAVAILABLE",
+                secretsEntered ? "JOURNAL_LOGIN_FAILED" : "JOURNAL_LOGIN_PAGE_HTTP_ERROR",
               );
+            }
             const contentType =
               response.contentType ?? (navigation ? "text/html" : "application/javascript");
             let destination: URL | undefined;
@@ -307,7 +348,7 @@ export class JournalLoginBrowser {
             if (mainNavigation)
               networkError = safeTransportError(
                 error,
-                authenticating ? loginFailureCode : "JOURNAL_ARTICLE_UNAVAILABLE",
+                authenticating ? loginFailureCode : articleFailureCode,
               );
             else if (
               authenticating &&
@@ -362,7 +403,7 @@ export class JournalLoginBrowser {
                 ? error
                 : safeTransportError(
                     error,
-                    authenticating ? loginFailureCode : "JOURNAL_ARTICLE_UNAVAILABLE",
+                    authenticating ? loginFailureCode : articleFailureCode,
                   ));
             await abort();
             throw safeError;
@@ -411,7 +452,7 @@ export class JournalLoginBrowser {
                   : undefined),
           });
           // Some publishers finish their SSO cookies in an AJAX request from
-          // the homepage. Let those requests settle before closing this tab,
+          // the homepage. Let those requests settle before reading an article,
           // without waiting indefinitely for polling or analytics.
           try {
             await page.waitForNetworkIdle({ idleTime: 300, timeout: 2500 });
@@ -423,28 +464,24 @@ export class JournalLoginBrowser {
             observer?.("Connexion acceptée après redirection vers l'accueil du journal.");
           observer?.("Connexion au journal vérifiée dans cette session.");
         });
-        // Cookies live in the context. Retaining the homepage would let its
-        // later redirects and background traffic interrupt article operations.
-        await page.close();
+        // A session can also live in sessionStorage or window.name. Navigate
+        // the authenticated tab itself, retaining those values as a normal
+        // browser visit does instead of transferring only cookies to a new tab.
         const readPage: JournalPageReader = async (url, notify) => {
           const target = articleTarget(domain, url);
-          if (expired || !browser.connected) throw loginError("JOURNAL_SESSION_EXPIRED");
-          // Keep the authenticated context and cookies, but isolate failed
-          // navigations in a temporary tab so Chromium's error page cannot
-          // interrupt the following article.
-          const articlePage = await createScrapingPage(browser, {}, context).catch(() => {
+          if (expired || !browser.connected || page.isClosed())
             throw loginError("JOURNAL_SESSION_EXPIRED");
-          });
-          await interceptRequests(articlePage, handleRequest);
-          articlePage.setDefaultTimeout(this.timeoutMs);
+          articleFailureCode = "JOURNAL_ARTICLE_PAGE_FAILED";
           try {
             return await execute(
               async () => {
-                const page = articlePage;
                 const observer = notify;
 
                 observer?.("Chargement de l'article avec la session authentifiée.");
-                await page.goto(target.href, { waitUntil: "domcontentloaded" });
+                await navigateScrapingPage(page, target.href, { waitForAllResources: false });
+                if (networkError) throw networkError;
+                articleFailureCode = "JOURNAL_ARTICLE_CONTENT_FAILED";
+                observer?.("Document principal de l'article chargé dans l'onglet authentifié.");
                 await assertArticleAccess(page, login, journalOrigin);
                 await page.waitForFunction(
                   () => (document.body?.innerText.trim().length ?? 0) >= 200,
@@ -492,14 +529,22 @@ export class JournalLoginBrowser {
                 }
                 return { html, url: page.url(), contentHtml };
               },
-              () => articlePage.close().catch(() => {}),
+              async () => {
+                // Stop a rejected navigation before the next serial read,
+                // preserving the tab's session storage for that next article.
+                const session = await page.createCDPSession().catch(() => undefined);
+                if (!session) return;
+                try {
+                  await session.send("Page.stopLoading").catch(() => {});
+                } finally {
+                  await session.detach().catch(() => {});
+                }
+              },
             );
           } catch (error) {
             if (error instanceof AppError && error.code === "JOURNAL_SESSION_EXPIRED")
               expired = true;
             throw error;
-          } finally {
-            await articlePage.close().catch(() => {});
           }
         };
         let reads = Promise.resolve();

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test, expect, spyOn } from "bun:test";
-import type { Browser } from "puppeteer";
+import type { Browser, Frame } from "puppeteer";
 import { scrapingBrowser } from "../src/browser";
 import { JournalLoginBrowser } from "../src/journal-login";
 import { RemoteConnectionError } from "../src/network";
@@ -49,11 +49,66 @@ test("a missing article does not discard the authenticated session or prevent th
   );
   await browser.withSession("publisher.example", credentials, async (read) => {
     await assert.rejects(read("https://publisher.example/missing"), {
-      code: "JOURNAL_ARTICLE_UNAVAILABLE",
+      code: "JOURNAL_ARTICLE_HTTP_ERROR",
     });
     expect((await read("https://publisher.example/article")).contentHtml).toContain(fullText);
   });
   expect(fixture.requests.filter((request) => request.options?.method === "POST")).toHaveLength(1);
+}, 45000);
+
+test("keeps the authenticated tab's session storage and window state through article reads and a failed navigation", async () => {
+  const fixture = journalFixture();
+  const launch = spyOn(scrapingBrowser, "launch");
+  const mainFrames: Frame[] = [];
+  const browser = new JournalLoginBrowser(async (url, options) => {
+    const path = new URL(url).pathname;
+    if (["/login", "/account", "/article-1", "/missing", "/article-2"].includes(path)) {
+      const activeBrowser = await (launch.mock.results[0]!.value as Promise<Browser>);
+      const authenticatedContext = activeBrowser
+        .browserContexts()
+        .find((context) => context !== activeBrowser.defaultBrowserContext())!;
+      const [page] = await authenticatedContext.pages();
+      mainFrames.push(page!.mainFrame());
+    }
+    if (path === "/missing")
+      return { status: 404, cookies: [], text: "Absent", contentType: "text/html" };
+    if (path === "/no-tab-session")
+      return { status: 403, cookies: [], text: "Session absente", contentType: "text/html" };
+    const response = await fixture.fetch(url, options);
+    if (path === "/account")
+      return {
+        ...response,
+        text:
+          response.text +
+          '<script>sessionStorage.setItem("subscriber-session", "ready"); window.name="authenticated-reader";</script>',
+      };
+    if (path.startsWith("/article-"))
+      return {
+        ...response,
+        text: `<article class="full-body"></article><script>
+          if (sessionStorage.getItem("subscriber-session") === "ready" && window.name === "authenticated-reader")
+            document.querySelector("article").innerText = ${JSON.stringify(fullText)};
+          else location.href = "/no-tab-session";
+        </script>`,
+      };
+    return response;
+  });
+  try {
+    await browser.withSession("publisher.example", credentials, async (read) => {
+      expect((await read("https://publisher.example/article-1")).contentHtml).toContain(fullText);
+      await assert.rejects(read("https://publisher.example/missing"), {
+        code: "JOURNAL_ARTICLE_HTTP_ERROR",
+      });
+      expect((await read("https://publisher.example/article-2")).contentHtml).toContain(fullText);
+    });
+    expect(mainFrames).toHaveLength(5);
+    expect(new Set(mainFrames).size).toBe(1);
+    expect(fixture.requests.filter((request) => request.options?.method === "POST")).toHaveLength(
+      1,
+    );
+  } finally {
+    launch.mockRestore();
+  }
 }, 45000);
 
 test("an expired batch session fails subsequent reads without attempting another login and closes on callback failure", async () => {
