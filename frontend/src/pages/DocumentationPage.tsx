@@ -696,10 +696,10 @@ export function DocumentationPage() {
               </p>
             </Tip>
           </Chapter>
-          <Chapter id="workflow" number="07" title="Tester le workflow de A à Z">
+          <Chapter id="workflow" number="07" title="Tester le résumé d'un article">
             <p>
               Dans <b>Sources</b>, utilisez l’icône de test portant l’infobulle{" "}
-              <b>Tester le workflow de A à Z</b>. Ce parcours permet d’examiner les articles
+              <b>Tester le résumé d'un article</b>. Ce parcours permet d’examiner les articles
               récupérés et de tester leur résumé à partir de la page complète.
             </p>
             <Steps>

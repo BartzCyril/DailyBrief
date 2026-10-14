@@ -293,7 +293,7 @@ export function HomePage() {
             ],
             [
               "Comment vérifier le résultat avant de recevoir un email ?",
-              "L’action « Tester le workflow de A à Z » affiche les articles et permet de tester un résumé. Ce test n’envoie aucun email et ne modifie pas les articles, résumés ou newsletters existants.",
+              "L’action « Tester le résumé d'un article » affiche les articles et permet de tester un résumé. Ce test n’envoie aucun email et ne modifie pas les articles, résumés ou newsletters existants.",
             ],
           ].map(([q, a]) => (
             <details key={q}>

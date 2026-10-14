@@ -155,8 +155,8 @@ export function SourceList({
                 <td className="px-3 py-4 align-middle">
                   <div className="flex items-center justify-end gap-3">
                     <IconButton
-                      tooltip="Tester le workflow de A à Z"
-                      aria-label="Tester le workflow de A à Z"
+                      tooltip="Tester le résumé d'un article"
+                      aria-label="Tester le résumé d'un article"
                       asChild
                     >
                       <Link to={`/sources/${source.id}/workflow`}>

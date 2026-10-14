@@ -105,7 +105,7 @@ export function SourceWorkflowPage() {
       <Card>
         <CardHeader>
           <h1 tabIndex={-1} className="app-page-title">
-            Tester le workflow de A à Z
+            Tester le résumé d'un article
           </h1>
           <CardDescription>
             Récupérez les articles et testez leur résumé à partir de leur page complète. Les
@@ -126,11 +126,6 @@ export function SourceWorkflowPage() {
           >
             {loading ? "Récupération des articles…" : "Récupérer à nouveau les articles"}
           </Button>
-          {loading && (
-            <p role="status" className="text-sm">
-              Récupération des articles de la source en cours…
-            </p>
-          )}
           <Feedback message={error} error />
           {preview?.warnings?.map((warning, index) => (
             <p key={index} className="text-sm text-muted-foreground">

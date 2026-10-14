@@ -357,7 +357,7 @@ Les articles Drupal composés de blocs de paragraphes (comme sur Vie publique)
 réunissent les titres, le chapeau, l'historique et tous les corps de texte dans
 l'ordre de la page ; les cartes de contenus associés sont exclues. Le journal
 indique le nombre de blocs réunis et la taille du texte envoyé à l'IA.
-Pour retester un article déjà enregistré, utilisez « Tester le workflow de A à Z » :
+Pour retester un article déjà enregistré, utilisez « Tester le résumé d'un article » :
 ce test recharge sa page au lieu de réutiliser le texte ou le résumé en base.
 Installez le navigateur avec `bun run browser:install` (ou préparez-le avec
 `bun run browser:prepare` et `CHROMIUM_EXECUTABLE_PATH` dans le cloud).
@@ -733,7 +733,7 @@ Les routes authentifiées sont `POST /ai/selectors/analyze` avec `{kind, url}`
 
 ### Tester une source de A à Z
 
-Dans la liste des sources, « Tester le workflow de A à Z » ouvre une liste
+Dans la liste des sources, « Tester le résumé d'un article » ouvre une liste
 fraîche des articles RSS ou scraping, y compris ceux déjà résumés ou livrés.
 Les sources désactivées peuvent aussi être testées. Tous les résultats du
 collecteur sont affichés : le RSS direct conserve sa limite de 500 entrées, tandis que
@@ -847,7 +847,7 @@ bun run dev:backend
 
 ### Journaux des RSS avec sélecteur
 
-« Tester le workflow de A à Z » résout les notices de tous les items du flux,
+« Tester le résumé d'un article » résout les notices de tous les items du flux,
 y compris ceux déjà enregistrés ou livrés, avant tout appel à l'IA. Les items
 répétés (GUID, sinon URL de notice) sont comptés une seule fois. Le tableau affiche
 les hôtes externes et leurs comptes pour cet aperçu, par nombre décroissant puis

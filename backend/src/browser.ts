@@ -20,7 +20,7 @@ export function browserExecutablePath(): string {
 
 export function launchScrapingBrowser(options: LaunchOptions = {}): Promise<Browser> {
   return scrapingBrowser.launch({
-    headless: true,
+    headless: false,
     executablePath: browserExecutablePath(),
     defaultViewport: { width: 1280, height: 720 },
     // Injected HTTP transports fail closed for unintercepted traffic.

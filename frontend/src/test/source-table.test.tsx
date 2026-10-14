@@ -138,11 +138,11 @@ test("paginates at five sources and combines case-insensitive URL search and sta
 test("keeps icon-only workflow actions accessible with a real hover tooltip", async () => {
   mount("/sources?type=scraping");
   const ui = userEvent.setup();
-  const workflow = await screen.findByRole("link", { name: "Tester le workflow de A à Z" });
+  const workflow = await screen.findByRole("link", { name: "Tester le résumé d'un article" });
   expect(workflow).toHaveAttribute("href", "/sources/scraping-1/workflow");
   expect(workflow.textContent).toBe("");
   await ui.hover(workflow);
-  expect(await screen.findByRole("tooltip")).toHaveTextContent("Tester le workflow de A à Z");
+  expect(await screen.findByRole("tooltip")).toHaveTextContent("Tester le résumé d'un article");
   await ui.unhover(workflow);
 });
 

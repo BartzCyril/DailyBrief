@@ -600,12 +600,12 @@ try {
     sourceTableFixture.length + storedSources.filter((source) => source.type === "RSS").length;
   await page.getByText(`1–5 sur ${rssTotal} sources`, { exact: true }).waitFor();
   const workflowAction = page
-    .getByRole("link", { name: "Tester le workflow de A à Z", exact: true })
+    .getByRole("link", { name: "Tester le résumé d'un article", exact: true })
     .first();
   assert.equal((await workflowAction.textContent())?.trim(), "");
   await workflowAction.focus();
   await page.getByRole("tooltip").waitFor();
-  assert((await page.getByRole("tooltip").innerText()).includes("Tester le workflow de A à Z"));
+  assert((await page.getByRole("tooltip").innerText()).includes("Tester le résumé d'un article"));
   await page.keyboard.press("Escape");
   await page.screenshot({ path: "/tmp/dailybrief-source-table-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -629,7 +629,7 @@ try {
   await page.goto(`${config.FRONTEND_ORIGIN}/sources`);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("link", { name: "Sources", exact: true }).click();
-  await page.getByRole("link", { name: "Tester le workflow de A à Z" }).last().click();
+  await page.getByRole("link", { name: "Tester le résumé d'un article" }).last().click();
   await page
     .getByRole("table")
     .waitFor()
@@ -986,7 +986,7 @@ try {
     orderBy: { id: "asc" },
   });
   await page.getByRole("link", { name: "Sources", exact: true }).click();
-  await page.getByRole("link", { name: "Tester le workflow de A à Z" }).last().click();
+  await page.getByRole("link", { name: "Tester le résumé d'un article" }).last().click();
   await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).waitFor();
   await page.getByRole("button", { name: "Faire le résumé avec l'IA" }).click();
   await page.getByRole("region", { name: "Résumé IA de Article RSS" }).waitFor();

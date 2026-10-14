@@ -107,7 +107,7 @@ beforeEach(() => {
 test("opens a fresh workflow from an inactive source and shows all returned articles", async () => {
   mount("/sources");
   await userEvent.click(
-    await screen.findByRole("link", { name: "Tester le workflow de A à Z" }, { timeout: 5000 }),
+    await screen.findByRole("link", { name: "Tester le résumé d'un article" }, { timeout: 5000 }),
   );
   expect(await screen.findByText("1. Article déjà livré")).toBeInTheDocument();
   expect(screen.getByText("2. Article sans lien")).toBeInTheDocument();
