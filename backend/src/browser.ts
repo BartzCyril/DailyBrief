@@ -1,6 +1,6 @@
 import puppeteer, { TimeoutError } from "puppeteer";
-import { addExtra } from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { PageReadyPuppeteerExtra } from "./browser-page-lifecycle";
 import type {
   Browser,
   BrowserContext,
@@ -11,7 +11,7 @@ import type {
 } from "puppeteer";
 
 // Register once: every production browser uses the same Puppeteer/stealth setup.
-export const scrapingBrowser = addExtra(puppeteer);
+export const scrapingBrowser = new PageReadyPuppeteerExtra(puppeteer);
 scrapingBrowser.use(StealthPlugin());
 
 export function browserExecutablePath(): string {
@@ -38,6 +38,7 @@ export async function createScrapingPage(
   const context = existingContext ?? (await browser.createBrowserContext());
   try {
     const page = await context.newPage();
+    await scrapingBrowser.waitForPagePlugins(page);
     if (options.userAgent) await page.setUserAgent(options.userAgent);
     if (options.locale) await page.setExtraHTTPHeaders({ "Accept-Language": options.locale });
     await page.setCacheEnabled(false);

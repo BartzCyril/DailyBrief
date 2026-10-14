@@ -151,6 +151,10 @@ Tous les parcours navigateur du backend (collecte, rendu des articles, analyse
 des sélecteurs et connexion aux journaux) utilisent `puppeteer`, `puppeteer-extra`
 et `puppeteer-extra-plugin-stealth`. Le plugin stealth est enregistré une seule
 fois dans `backend/src/browser.ts`. Chaque opération dispose d'un contexte isolé.
+Les hooks de création de page attendent l'initialisation du cadre principal,
+y compris pour les modules Stealth chargés comme dépendances. Le backend attend
+leur fin avant de configurer et naviguer la page ; une cible fermée pendant
+l'initialisation est ignorée par ces hooks.
 Les pages publiques conservent leur navigation native via le relais SOCKS avec
 validation et épinglage DNS. Puppeteer contrôle chaque requête et redirection ;
 les transports HTTP injectés restent réservés aux fixtures et aux sessions journal.
