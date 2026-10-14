@@ -124,6 +124,22 @@ Cette restauration suppose une base cible vide. Pour remplacer une base déjà
 utilisée, arrêtez le site et les workers et préparez une sauvegarde avant de
 restaurer. Les migrations manquantes sont appliquées au démarrage suivant.
 
+## Diagnostic de la construction
+
+Si une construction reste sur la ligne `bun install`, affichez les requêtes et
+les paquets en cours dans le terminal :
+
+```sh
+docker compose --progress plain --env-file .env.production -f compose.production.yml \
+  build --build-arg BUN_INSTALL_VERBOSE=true api web
+```
+
+Les téléchargements Bun sont conservés dans un cache de construction séparé des
+images et des données de l’application, y compris après une installation
+interrompue. Le nombre de requêtes simultanées est limité à 16 ; pour un réseau
+difficile, ajoutez `--build-arg BUN_INSTALL_NETWORK_CONCURRENCY=4` à la commande
+de construction. Les erreurs de certificat restent bloquantes.
+
 ## Développement local
 
 `docker-compose.yml` reste la composition de développement utilisée par

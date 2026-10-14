@@ -2,6 +2,8 @@
 ARG BUN_VERSION=1.4.2
 FROM oven/bun:${BUN_VERSION}-slim AS dependencies
 WORKDIR /app
+ARG BUN_INSTALL_NETWORK_CONCURRENCY=16
+ARG BUN_INSTALL_VERBOSE=false
 ENV PUPPETEER_SKIP_DOWNLOAD=true PRISMA_SKIP_POSTINSTALL_GENERATE=true
 COPY package.json bun.lock ./
 COPY backend/package.json backend/package.json
@@ -9,12 +11,16 @@ COPY frontend/package.json frontend/package.json
 COPY shared/package.json shared/package.json
 # Optional CA mounts support managed build environments without changing VPS trust.
 RUN --mount=type=secret,id=proxy_ca \
-    --mount=type=secret,id=system_ca \
+    --mount=type=cache,id=dailybrief-bun-build,target=/var/cache/bun,sharing=locked \
     if [ -s /run/secrets/proxy_ca ]; then \
       cat /etc/ssl/certs/ca-certificates.crt /run/secrets/proxy_ca > /tmp/build-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca SSL_CERT_FILE=/tmp/build-ca.pem; \
     fi; \
-    bun install --frozen-lockfile --ignore-scripts && rm -f /tmp/build-ca.pem
+    install_log_flag=; \
+    if [ "$BUN_INSTALL_VERBOSE" = true ]; then install_log_flag=--verbose; fi; \
+    bun install --frozen-lockfile --ignore-scripts $install_log_flag --no-progress \
+      --network-concurrency="$BUN_INSTALL_NETWORK_CONCURRENCY" --cache-dir=/var/cache/bun && \
+    rm -f /tmp/build-ca.pem
 
 FROM dependencies AS build
 COPY shared shared
@@ -31,17 +37,24 @@ RUN --mount=type=secret,id=proxy_ca \
 
 FROM oven/bun:${BUN_VERSION}-slim AS production-dependencies
 WORKDIR /app
+ARG BUN_INSTALL_NETWORK_CONCURRENCY=16
+ARG BUN_INSTALL_VERBOSE=false
 ENV PUPPETEER_SKIP_DOWNLOAD=true PRISMA_SKIP_POSTINSTALL_GENERATE=true
 COPY package.json bun.lock ./
 COPY backend/package.json backend/package.json
 COPY frontend/package.json frontend/package.json
 COPY shared/package.json shared/package.json
 RUN --mount=type=secret,id=proxy_ca \
+    --mount=type=cache,id=dailybrief-bun-production,target=/var/cache/bun,sharing=locked \
     if [ -s /run/secrets/proxy_ca ]; then \
       cat /etc/ssl/certs/ca-certificates.crt /run/secrets/proxy_ca > /tmp/build-ca.pem; \
       export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca SSL_CERT_FILE=/tmp/build-ca.pem; \
     fi; \
-    bun install --production --frozen-lockfile --ignore-scripts && rm -f /tmp/build-ca.pem
+    install_log_flag=; \
+    if [ "$BUN_INSTALL_VERBOSE" = true ]; then install_log_flag=--verbose; fi; \
+    bun install --production --frozen-lockfile --ignore-scripts $install_log_flag --no-progress \
+      --network-concurrency="$BUN_INSTALL_NETWORK_CONCURRENCY" --cache-dir=/var/cache/bun && \
+    rm -f /tmp/build-ca.pem
 
 FROM oven/bun:${BUN_VERSION}-slim AS backend
 USER root
