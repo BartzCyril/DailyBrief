@@ -1,6 +1,108 @@
 import { test, expect } from "bun:test";
 import { createServer } from "node:http";
-import { launchScrapingBrowser, createScrapingPage, interceptRequests } from "../src/browser";
+import type { Page } from "puppeteer";
+import {
+  launchScrapingBrowser,
+  createScrapingPage,
+  interceptRequests,
+  scrapingBrowser,
+} from "../src/browser";
+
+test("stealth page hooks wait for the main frame instead of accessing an uninitialized page", async () => {
+  const browser = await launchScrapingBrowser();
+  try {
+    let ready = false;
+    let injections = 0;
+    const page = {
+      isClosed: () => false,
+      browser: () => browser,
+      getDefaultTimeout: () => 1000,
+      mainFrame: () => {
+        if (!ready) throw new Error("Requesting main frame too early!");
+        return {};
+      },
+      evaluateOnNewDocument: async () => {
+        if (!ready) throw new Error("Requesting main frame too early!");
+        injections++;
+        return { identifier: String(injections) };
+      },
+    } as unknown as Page;
+    const plugin = scrapingBrowser.plugins.find(
+      (plugin) => plugin.name === "stealth/evasions/navigator.webdriver",
+    );
+    expect(plugin).toBeDefined();
+    const initialization = plugin!.onPageCreated(page);
+    const readyTimer = setTimeout(() => {
+      ready = true;
+    }, 30);
+    try {
+      await initialization;
+      expect(injections).toBe(1);
+    } finally {
+      clearTimeout(readyTimer);
+    }
+  } finally {
+    await browser.close();
+  }
+}, 15000);
+
+test("stealth skips a page closed before its main frame is initialized", async () => {
+  const browser = await launchScrapingBrowser();
+  try {
+    let closed = false;
+    let injections = 0;
+    const page = {
+      isClosed: () => closed,
+      browser: () => browser,
+      getDefaultTimeout: () => 1000,
+      mainFrame: () => {
+        throw new Error("Requesting main frame too early!");
+      },
+      evaluateOnNewDocument: async () => {
+        injections++;
+        return { identifier: "unused" };
+      },
+    } as unknown as Page;
+    const plugin = scrapingBrowser.plugins.find(
+      (plugin) => plugin.name === "stealth/evasions/navigator.webdriver",
+    )!;
+    const initialization = plugin.onPageCreated(page);
+    const closeTimer = setTimeout(() => {
+      closed = true;
+    }, 30);
+    try {
+      await initialization;
+      expect(injections).toBe(0);
+    } finally {
+      clearTimeout(closeTimer);
+    }
+  } finally {
+    await browser.close();
+  }
+}, 15000);
+
+test("stealth setup failures on a live page still reach the page creator", async () => {
+  const browser = await launchScrapingBrowser();
+  try {
+    const failure = new Error("Synthetic page setup failure");
+    const page = {
+      isClosed: () => false,
+      browser: () => browser,
+      getDefaultTimeout: () => 1000,
+      mainFrame: () => ({}),
+      evaluateOnNewDocument: async () => {
+        throw failure;
+      },
+    } as unknown as Page;
+    const plugin = scrapingBrowser.plugins.find(
+      (plugin) => plugin.name === "stealth/evasions/navigator.webdriver",
+    )!;
+    await expect(plugin.onPageCreated(page)).rejects.toBe(failure);
+    await expect(scrapingBrowser.waitForPagePlugins(page)).rejects.toBe(failure);
+  } finally {
+    await browser.close();
+  }
+}, 15000);
 
 test("production browsers apply stealth, isolate sessions and deny WebSockets and service workers", async () => {
   const browser = await launchScrapingBrowser();
