@@ -1015,8 +1015,12 @@ Le parcours de connexion et la lecture des articles utilisent les requêtes HTTP
 natives de Chromium : HTTP/2, TLS, en-têtes, cookies et CORS ne sont plus reconstruits
 par un client Node pour ces deux origines. Le relais TCP temporaire valide et
 épingle les adresses publiques et limite ses destinations aux hôtes et ports HTTPS
-déclarés. Avant la saisie, les ressources publiques de tiers peuvent encore être
-chargées par le transport texte contrôlé ; après la saisie, ces origines sont bloquées.
+déclarés. Les scripts et feuilles de style HTTPS publics de tiers restent chargés
+avant et après la connexion par un transport texte contrôlé, sans cookies,
+en-têtes applicatifs ni référent privé. Leurs cookies de réponse sont ignorés,
+et leurs URL et chaque redirection sont vérifiées ; les URL portant les
+identifiants ou des paramètres d'authentification sont refusées. Les autres
+requêtes vers ces origines sont bloquées après la saisie des identifiants.
 Les tests peuvent injecter un transport HTTP factice sans changer la voie native
 de production. Les deux voies conservent les mêmes contrôles d'origine et de méthode.
 Les redirections HTTP des formulaires et des appels AJAX sont suivies par Chromium,
@@ -1043,6 +1047,10 @@ paramètre, corps de réponse ou identifiant. Les délais de chargement de la pa
 (`JOURNAL_ARTICLE_PAGE_TIMEOUT`) et d'apparition du contenu
 (`JOURNAL_ARTICLE_CONTENT_TIMEOUT`) sont distingués des refus HTTP et des erreurs
 réseau (`JOURNAL_ARTICLE_NETWORK_*`).
+Un délai d'apparition du contenu fournit aussi un diagnostic limité au statut HTTP
+du document, au nombre de caractères visibles, aux scripts et feuilles de style
+en échec et au nombre d'erreurs JavaScript. Les messages JavaScript, le HTML et
+les adresses des requêtes ne sont pas exposés par ce diagnostic.
 Pour HTTP 402, le HTML reçu est analysé dans la limite de taille, sans exécuter
 son contenu dans ce diagnostic : un refus explicite d'accès automatisé renvoie
 `JOURNAL_ARTICLE_AUTOMATION_BLOCKED`, une demande explicite d'accès abonné renvoie

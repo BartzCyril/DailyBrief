@@ -7,7 +7,7 @@ import { request as httpsRequest } from "node:https";
 import type { Socket } from "node:net";
 import { BrowserNetwork, type BrowserNetworkFactory } from "../src/browser-network";
 import { JournalLoginBrowser } from "../src/journal-login";
-import { validateRemoteUrl } from "../src/network";
+import { validateRemoteUrl, type FetchPage, type RemotePageOptions } from "../src/network";
 import { nativeTlsFixture } from "./fixtures/native-tls";
 
 const journalOrigin = "https://publisher.test";
@@ -180,6 +180,13 @@ function respond(request: Http2ServerRequest, response: Http2ServerResponse, bod
   }
   if (path.startsWith("/mutate")) {
     response.end("Cette mutation ne doit jamais être atteinte");
+    return;
+  }
+  if (path === "/article-cdn") {
+    response.end(`<html><head><style>body{display:none}</style>
+      <link rel="stylesheet" href="https://static.publisher.test/native-article.css">
+      </head><body><article class="full-body"></article>
+      <script src="https://static.publisher.test/native-article.js"></script></body></html>`);
     return;
   }
   if (["/article-full", "/article-workers", "/article-mutations"].includes(path)) {
@@ -414,4 +421,67 @@ test("a rejected native AJAX login reports the authentication failure when no ho
     sent.filter((request) => request.method === "POST").map((request) => request.path),
   ).toEqual(["/authenticate-rejected"]);
   expect(sent.some((request) => request.path.startsWith("/article-"))).toBe(false);
+}, 45000);
+
+test("public CDN JavaScript and CSS hydrate the authenticated article without sharing or replacing session cookies", async () => {
+  const start = requests.length;
+  const assets: { url: string; options?: RemotePageOptions }[] = [];
+  const fetchAsset: FetchPage = async (url, options) => {
+    assets.push({ url, options });
+    const target = new URL(url);
+    assert.equal(target.origin, "https://static.publisher.test");
+    expect(options?.method ?? "GET").toBe("GET");
+    expect(options?.cookie).toBeUndefined();
+    expect(options?.applicationHeaders).toBeUndefined();
+    expect(options?.browserHeaders).toBeUndefined();
+    expect(options?.body).toBeUndefined();
+    expect(options?.requestedWith).toBeUndefined();
+    expect(options?.referer === undefined || options.referer === `${journalOrigin}/`).toBe(true);
+    const css = target.pathname === "/native-article.css";
+    assert(css || target.pathname === "/native-article.js");
+    return {
+      url,
+      status: 200,
+      contentType: css ? "text/css" : "application/javascript",
+      // A public asset response must not be able to replace the subscriber's
+      // parent-domain cookie, even when its CDN shares that parent domain.
+      cookies: [
+        "native-subscriber=cdn-forged-session; Domain=publisher.test; Path=/; HttpOnly; Secure; SameSite=Lax",
+      ],
+      text: css
+        ? "body{display:block !important}"
+        : `
+        fetch('${accountOrigin}/body',{
+          credentials:'include',
+          headers:{'X-Subscriber-Session':sessionStorage.getItem('subscriber-session')}
+        }).then(r=>r.json()).then(data=>document.querySelector('article').innerText=data.content);
+      `,
+    };
+  };
+  const browser = new JournalLoginBrowser(undefined, 5000, networkFactory(true), fetchAsset);
+  await browser.withSession("publisher.test", credentials, async (read) => {
+    expect(
+      (await read(`${journalOrigin}/article-cdn?private=fixture-article-token`)).contentHtml,
+    ).toContain(fullText);
+    expect((await read(`${journalOrigin}/article-full`)).contentHtml).toContain(fullText);
+  });
+  expect(assets.map((asset) => new URL(asset.url).pathname).sort()).toEqual([
+    "/native-article.css",
+    "/native-article.js",
+  ]);
+  const sent = requests.slice(start);
+  const contentRequests = sent.filter(
+    (request) => request.path === "/body" && request.method === "GET",
+  );
+  expect(contentRequests).toHaveLength(2);
+  expect(
+    contentRequests.every((request) => request.cookie === "native-subscriber=fixture-session"),
+  ).toBe(true);
+  expect(contentRequests.every((request) => request.subscriberHeader === "native-tab-ready")).toBe(
+    true,
+  );
+  expect(sent.every((request) => request.host !== "static.publisher.test")).toBe(true);
+  expect(
+    sent.filter((request) => request.method === "POST").map((request) => request.path),
+  ).toEqual(["/authenticate"]);
 }, 45000);

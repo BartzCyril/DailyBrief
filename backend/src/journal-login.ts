@@ -171,12 +171,44 @@ function hasPasswordInUrl(url: URL, password: string) {
   );
 }
 
+function safePublicAssetUrl(url: URL, login: JournalLogin): boolean {
+  if (url.protocol !== "https:" || url.username || url.password) return false;
+  let value = url.href;
+  for (let pass = 0; pass < 4; pass++) {
+    for (const key of new URL(value).searchParams.keys())
+      if (
+        /password|passwd|(?:^|[_-])pwd(?:$|[_-])|email|authorization|(?:^|[_-])auth(?:$|[_-])|token|session|jwt/i.test(
+          key,
+        )
+      )
+        return false;
+    if (
+      value.toLowerCase().includes(login.email.toLowerCase()) ||
+      (login.password.length >= 4 && value.includes(login.password)) ||
+      (login.password.length < 4 && value.split(/[/?&#=]/).some((part) => part === login.password))
+    )
+      return false;
+    try {
+      const decoded = decodeURIComponent(value);
+      if (decoded === value) return true;
+      // Every decoded level is checked. A deeper encoding cannot evade the
+      // bound by becoming plain text only after the final check.
+      if (pass === 3) return false;
+      value = decoded;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 // One ephemeral context per batch: cookies are never persisted or shared with another user/run.
 export class JournalLoginBrowser {
   constructor(
     private fetchPage?: FetchPage,
     private timeoutMs = 15000,
     private createNetwork?: BrowserNetworkFactory,
+    private fetchPublicAsset: FetchPage = fetchRemotePage,
   ) {}
   async run(
     domain: string,
@@ -259,6 +291,22 @@ export class JournalLoginBrowser {
       void networkFailure.catch(() => {});
       const requestOperations = new WeakMap<HTTPRequest, number>();
       const nativeRequests = new WeakSet<HTTPRequest>();
+      let documentStatus: number | undefined;
+      let failedScripts = 0;
+      let failedStyles = 0;
+      let javascriptErrors = 0;
+      const failedResources = new WeakSet<HTTPRequest>();
+      const recordFailedResource = (request: HTTPRequest) => {
+        if (
+          authenticating ||
+          requestOperations.get(request) !== operationId ||
+          failedResources.has(request)
+        )
+          return;
+        failedResources.add(request);
+        if (request.resourceType() === "script") failedScripts++;
+        if (request.resourceType() === "stylesheet") failedStyles++;
+      };
       try {
         const handleRequest = async (request: HTTPRequest) => {
           const requestOperationId = operationId;
@@ -267,6 +315,10 @@ export class JournalLoginBrowser {
           const navigation = request.isNavigationRequest();
           const mainNavigation = navigation && !request.frame()?.parentFrame();
           const method = request.method();
+          const publicAsset =
+            !origins.has(url.origin) &&
+            method === "GET" &&
+            ["script", "stylesheet"].includes(request.resourceType());
           try {
             if (!["http:", "https:"].includes(url.protocol))
               throw loginError("JOURNAL_UNSAFE_REQUEST");
@@ -283,9 +335,14 @@ export class JournalLoginBrowser {
               (!origins.has(url.origin) || url.protocol !== "https:" || ++navigations > 12)
             )
               throw loginError("JOURNAL_LOGIN_REDIRECT_BLOCKED");
-            // No credential/session traffic to undeclared origins after inputs are filled.
+            if (publicAsset && !safePublicAssetUrl(url, login)) {
+              await request.abort();
+              return;
+            }
+            // Public JS/CSS must still load after login. Fetch them separately
+            // without the tab's credentials; other third-party traffic stays blocked.
             if (
-              (secretsEntered && !origins.has(url.origin)) ||
+              (secretsEntered && !origins.has(url.origin) && !publicAsset) ||
               ["image", "media", "font"].includes(request.resourceType())
             ) {
               await request.abort();
@@ -321,38 +378,52 @@ export class JournalLoginBrowser {
               return;
             }
             const headers = request.headers();
-            const response = await (this.fetchPage ?? fetchRemotePage)(request.url(), {
-              method: method as "GET" | "POST" | "OPTIONS",
-              body,
-              contentType: headers["content-type"],
-              requestedWith: headers["x-requested-with"],
-              referer: headers.referer,
-              cookie: headers.cookie,
-              userAgent: headers["user-agent"],
-              accept: headers.accept,
-              browserHeaders: headers,
-              // CSRF tokens and other application headers belong to this
-              // checked destination, never to an automatically followed host.
-              applicationHeaders: origins.has(url.origin)
-                ? browserApplicationHeaders(headers)
-                : undefined,
-              // Preserve the actual browser origin, including SSO calls from
-              // the login host to the declared journal host. Chromium still
-              // enforces the server's own CORS response headers below.
-              origin:
-                headers.origin && (origins.has(headers.origin) || headers.origin === "null")
-                  ? headers.origin
-                  : undefined,
-              corsRequestMethod: headers["access-control-request-method"],
-              corsRequestHeaders: headers["access-control-request-headers"],
-              // Chromium follows each checked redirect through interception,
-              // keeping its own cookies, CORS rules and HTTP method semantics.
-              followRedirects: false,
-              allowHttpErrorResponses:
-                !authenticating && mainNavigation && url.origin === journalOrigin
-                  ? [402]
-                  : undefined,
-            });
+            const response = await (this.fetchPage ?? this.fetchPublicAsset)(
+              request.url(),
+              publicAsset
+                ? {
+                    method: "GET",
+                    userAgent: headers["user-agent"],
+                    accept: headers.accept,
+                    origin:
+                      headers.origin && (origins.has(headers.origin) || headers.origin === "null")
+                        ? headers.origin
+                        : undefined,
+                    followRedirects: false,
+                  }
+                : {
+                    method: method as "GET" | "POST" | "OPTIONS",
+                    body,
+                    contentType: headers["content-type"],
+                    requestedWith: headers["x-requested-with"],
+                    referer: headers.referer,
+                    cookie: headers.cookie,
+                    userAgent: headers["user-agent"],
+                    accept: headers.accept,
+                    browserHeaders: headers,
+                    // CSRF tokens and other application headers belong to this
+                    // checked destination, never to an automatically followed host.
+                    applicationHeaders: origins.has(url.origin)
+                      ? browserApplicationHeaders(headers)
+                      : undefined,
+                    // Preserve the actual browser origin, including SSO calls from
+                    // the login host to the declared journal host. Chromium still
+                    // enforces the server's own CORS response headers below.
+                    origin:
+                      headers.origin && (origins.has(headers.origin) || headers.origin === "null")
+                        ? headers.origin
+                        : undefined,
+                    corsRequestMethod: headers["access-control-request-method"],
+                    corsRequestHeaders: headers["access-control-request-headers"],
+                    // Chromium follows each checked redirect through interception,
+                    // keeping its own cookies, CORS rules and HTTP method semantics.
+                    followRedirects: false,
+                    allowHttpErrorResponses:
+                      !authenticating && mainNavigation && url.origin === journalOrigin
+                        ? [402]
+                        : undefined,
+                  },
+            );
             if (response.status >= 400) {
               if (!authenticating) throw journalHttpError(response.status, response.text);
               throw loginError(
@@ -365,10 +436,11 @@ export class JournalLoginBrowser {
             if (response.location) {
               destination = new URL(response.location, request.url());
               if (
-                !origins.has(destination.origin) ||
+                (!origins.has(destination.origin) && !publicAsset) ||
                 destination.protocol !== "https:" ||
                 destination.username ||
-                destination.password
+                destination.password ||
+                (publicAsset && !safePublicAssetUrl(destination, login))
               )
                 throw loginError("JOURNAL_LOGIN_REDIRECT_BLOCKED");
               if (secretsEntered && hasPasswordInUrl(destination, login.password))
@@ -381,7 +453,8 @@ export class JournalLoginBrowser {
                 "content-type": `${contentType.replace(/;\s*charset\s*=\s*[^;]+/i, "")}; charset=utf-8`,
                 ...(destination ? { location: destination.href } : {}),
                 ...response.corsHeaders,
-                ...(response.cookies.length &&
+                ...(!publicAsset &&
+                response.cookies.length &&
                 (!response.url || new URL(response.url).origin === url.origin)
                   ? { "set-cookie": response.cookies }
                   : {}),
@@ -418,6 +491,17 @@ export class JournalLoginBrowser {
           network ? publicBrowserOptions(await browser.version()) : {},
           context,
         );
+        page.on("requestfailed", recordFailedResource);
+        page.on("pageerror", () => {
+          if (!authenticating) javascriptErrors++;
+        });
+        page.on("response", (response) => {
+          const request = response.request();
+          if (authenticating || requestOperations.get(request) !== operationId) return;
+          if (request.isNavigationRequest() && request.frame() === page.mainFrame())
+            documentStatus = response.status();
+          if (response.status() >= 400) recordFailedResource(request);
+        });
         if (network) {
           const nativeNetwork = network;
           await prepareJournalNativePage(page);
@@ -503,6 +587,10 @@ export class JournalLoginBrowser {
         ): Promise<R> => {
           operationId++;
           network?.beginLoad();
+          documentStatus = undefined;
+          failedScripts = 0;
+          failedStyles = 0;
+          javascriptErrors = 0;
           navigations = 0;
           networkError = undefined;
           networkFailure = new Promise<never>((_resolve, reject) => {
@@ -668,6 +756,29 @@ export class JournalLoginBrowser {
           } catch (error) {
             if (error instanceof AppError && error.code === "JOURNAL_SESSION_EXPIRED")
               expired = true;
+            if (error instanceof AppError && error.code === "JOURNAL_ARTICLE_CONTENT_TIMEOUT") {
+              const visibleCharacters = await Promise.race([
+                page
+                  .evaluate(() => document.body?.innerText.trim().length ?? 0)
+                  .catch(() => undefined),
+                delay(300).then(() => undefined),
+              ]);
+              const status =
+                documentStatus !== undefined && documentStatus >= 100 && documentStatus <= 599
+                  ? `HTTP ${documentStatus}`
+                  : "indéterminé";
+              const text =
+                typeof visibleCharacters === "number" &&
+                Number.isSafeInteger(visibleCharacters) &&
+                visibleCharacters >= 0
+                  ? `${visibleCharacters} caractère(s)`
+                  : "indéterminé";
+              throw new AppError(
+                error.status,
+                `${error.message} Diagnostic : document ${status} ; texte visible : ${text} ; scripts en échec : ${failedScripts} ; feuilles de style en échec : ${failedStyles} ; erreurs JavaScript : ${javascriptErrors}.`,
+                error.code,
+              );
+            }
             throw error;
           }
         };
