@@ -1015,6 +1015,12 @@ lecture, seuls les prévols déclarant une requête GET sont autorisés sur ces 
 origines ; les prévols de mutations restent bloqués. Les navigations
 sont limitées à ces deux origines ; les autres redirections sont refusées. Un formulaire hébergé sur
 un sous-domaine ou un fournisseur externe peut donc être déclaré explicitement.
+Un écran « Client challenge » sur l'origine du journal peut lancer son propre
+POST de validation `/_fs-ch-…/pat?token=…` : seule cette requête AJAX, sans corps,
+sans cookies et sans en-têtes d'autorisation, est autorisée pendant cet écran.
+Les POST ordinaires restent bloqués, y compris après la disparition du contrôle.
+Les polices de ce contrôle, sous `/_fs-ch-…/assets/` sur le journal, peuvent aussi
+charger pendant la vérification. Aucun jeton fourni par l'utilisateur n'est rejoué.
 Le parcours de connexion et la lecture des articles utilisent les requêtes HTTPS
 natives de Chromium : HTTP/2, TLS, en-têtes, cookies et CORS ne sont plus reconstruits
 par un client Node pour ces deux origines. Le relais TCP temporaire valide et
@@ -1055,6 +1061,14 @@ Un délai d'apparition du contenu fournit aussi un diagnostic limité au statut 
 du document, au nombre de caractères visibles, aux scripts et feuilles de style
 en échec et au nombre d'erreurs JavaScript. Les messages JavaScript, le HTML et
 les adresses des requêtes ne sont pas exposés par ce diagnostic.
+Les échecs AJAX et les appels AJAX bloqués par les règles du projet sont comptés
+séparément. Un écran HTTP 200 intitulé « Client challenge » ne vaut pas contenu
+d'article : le navigateur attend sa disparition dans la même session, en
+conservant ses cookies et en supportant un rechargement naturel de la page.
+Le délai utilise `SCRAPING_VERIFICATION_WAIT_MS` (30 secondes par défaut, de 0 à
+120000 ms). Un contrôle persistant renvoie `JOURNAL_ARTICLE_BROWSER_CHALLENGE`,
+sans attribuer cet échec aux sélecteurs ou à l'abonnement. Une telle réponse n'est
+jamais envoyée à l'IA comme texte d'article.
 Pour HTTP 402, le HTML reçu est analysé dans la limite de taille, sans exécuter
 son contenu dans ce diagnostic : un refus explicite d'accès automatisé renvoie
 `JOURNAL_ARTICLE_AUTOMATION_BLOCKED`, une demande explicite d'accès abonné renvoie

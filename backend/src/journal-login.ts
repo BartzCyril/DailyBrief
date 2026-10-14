@@ -28,6 +28,12 @@ import {
 } from "./browser-network";
 import { prepareJournalNativePage, blockJournalAuxiliaryTargets } from "./journal-native-guard";
 import { JournalHttpError, journalHttpError } from "./journal-http-error";
+import { readScrapingVerificationWait } from "./config";
+import {
+  inspectJournalArticleInPage,
+  journalPatRequestAllowed,
+  journalChallengeFont,
+} from "./journal-verification";
 
 export type JournalLogin = { config: JournalLoginConfig; email: string; password: string };
 export type JournalPage = { html: string; url: string; contentHtml?: string };
@@ -108,6 +114,8 @@ function loginError(code = "JOURNAL_LOGIN_FAILED") {
       "La page de l'article est chargée, mais son contenu n'a pas pu être extrait avec la session authentifiée.",
     JOURNAL_ARTICLE_CONTENT_TIMEOUT:
       "La page de l'article est chargée, mais le contenu attendu n'est pas apparu dans le délai prévu.",
+    JOURNAL_ARTICLE_BROWSER_CHALLENGE:
+      "Le journal affiche toujours un contrôle du navigateur (« Client challenge ») au lieu de l’article. La connexion au compte ne suffit pas à terminer ce contrôle.",
     JOURNAL_ARTICLE_TOO_LARGE: "La page de l'article dépasse la taille de contenu autorisée.",
     JOURNAL_ARTICLE_NETWORK_DNS:
       "Le backend ne peut pas résoudre le nom du serveur de l'article (DNS).",
@@ -165,6 +173,14 @@ function safeTransportError(error: unknown, fallbackCode: string) {
   return loginError(fallbackCode);
 }
 
+function articleChallengeError(blockedAjax: number, failedAjax: number) {
+  return new AppError(
+    422,
+    `${loginError("JOURNAL_ARTICLE_BROWSER_CHALLENGE").message} AJAX bloquées par le projet : ${blockedAjax} ; AJAX en échec : ${failedAjax}.`,
+    "JOURNAL_ARTICLE_BROWSER_CHALLENGE",
+  );
+}
+
 function hasPasswordInUrl(url: URL, password: string) {
   return [...url.searchParams.values()].some(
     (value) => value === password || (password.length >= 4 && value.includes(password)),
@@ -209,6 +225,7 @@ export class JournalLoginBrowser {
     private timeoutMs = 15000,
     private createNetwork?: BrowserNetworkFactory,
     private fetchPublicAsset: FetchPage = fetchRemotePage,
+    private verificationWaitMs = readScrapingVerificationWait(),
   ) {}
   async run(
     domain: string,
@@ -295,6 +312,8 @@ export class JournalLoginBrowser {
       let failedScripts = 0;
       let failedStyles = 0;
       let javascriptErrors = 0;
+      let failedAjax = 0;
+      let blockedAjax = 0;
       const failedResources = new WeakSet<HTTPRequest>();
       const recordFailedResource = (request: HTTPRequest) => {
         if (
@@ -306,6 +325,7 @@ export class JournalLoginBrowser {
         failedResources.add(request);
         if (request.resourceType() === "script") failedScripts++;
         if (request.resourceType() === "stylesheet") failedStyles++;
+        if (["xhr", "fetch"].includes(request.resourceType())) failedAjax++;
       };
       try {
         const handleRequest = async (request: HTTPRequest) => {
@@ -315,6 +335,17 @@ export class JournalLoginBrowser {
           const navigation = request.isNavigationRequest();
           const mainNavigation = navigation && !request.frame()?.parentFrame();
           const method = request.method();
+          const body = method === "POST" ? (request.postData() ?? "") : undefined;
+          const headers = request.headers();
+          const abortPolicy = async () => {
+            if (
+              !authenticating &&
+              requestOperationId === operationId &&
+              ["xhr", "fetch"].includes(request.resourceType())
+            )
+              blockedAjax++;
+            await request.abort();
+          };
           const publicAsset =
             !origins.has(url.origin) &&
             method === "GET" &&
@@ -327,7 +358,7 @@ export class JournalLoginBrowser {
             // Public pages embed analytics frames. Block them without treating
             // their navigation as a redirect of the actual login document.
             if (navigation && !mainNavigation && !origins.has(url.origin)) {
-              await request.abort();
+              await abortPolicy();
               return;
             }
             if (
@@ -336,21 +367,46 @@ export class JournalLoginBrowser {
             )
               throw loginError("JOURNAL_LOGIN_REDIRECT_BLOCKED");
             if (publicAsset && !safePublicAssetUrl(url, login)) {
-              await request.abort();
+              await abortPolicy();
               return;
             }
+            const patCandidate =
+              !authenticating &&
+              journalPatRequestAllowed(
+                {
+                  url: request.url(),
+                  method,
+                  resourceType: request.resourceType(),
+                  body,
+                  hasPostData: request.hasPostData(),
+                  headers,
+                },
+                journalOrigin,
+              );
+            const fontCandidate =
+              !authenticating &&
+              method === "GET" &&
+              request.resourceType() === "font" &&
+              journalChallengeFont(request.url(), journalOrigin);
+            const onChallenge =
+              (patCandidate || fontCandidate) &&
+              request.frame() === page.mainFrame() &&
+              (await page.evaluate(inspectJournalArticleInPage)).challenge;
+            const verificationPat = patCandidate && onChallenge;
+            const verificationFont = fontCandidate && onChallenge;
             // Public JS/CSS must still load after login. Fetch them separately
             // without the tab's credentials; other third-party traffic stays blocked.
             if (
               (secretsEntered && !origins.has(url.origin) && !publicAsset) ||
-              ["image", "media", "font"].includes(request.resourceType())
+              (["image", "media", "font"].includes(request.resourceType()) && !verificationFont)
             ) {
-              await request.abort();
+              await abortPolicy();
               return;
             }
             if (
               !["GET", "POST", "OPTIONS"].includes(method) ||
               (method === "POST" &&
+                !verificationPat &&
                 (!authenticating || !origins.has(url.origin) || !secretsEntered)) ||
               (method === "OPTIONS" &&
                 (!origins.has(url.origin) ||
@@ -359,12 +415,11 @@ export class JournalLoginBrowser {
             ) {
               if (navigation || (authenticating && method === "POST" && secretsEntered))
                 throw loginError("JOURNAL_LOGIN_REQUEST_BLOCKED");
-              await request.abort();
+              await abortPolicy();
               return;
             }
             if (secretsEntered && hasPasswordInUrl(url, login.password))
               throw loginError("JOURNAL_LOGIN_INSECURE_FORM");
-            const body = method === "POST" ? (request.postData() ?? "") : undefined;
             if (body && Buffer.byteLength(body) > 256 * 1024)
               throw loginError("JOURNAL_LOGIN_REQUEST_TOO_LARGE");
             if (network && origins.has(url.origin)) {
@@ -374,10 +429,22 @@ export class JournalLoginBrowser {
                 return;
               }
               nativeRequests.add(request);
-              await request.continue();
+              await request.continue(
+                verificationPat
+                  ? {
+                      headers: Object.fromEntries(
+                        Object.entries(headers).filter(
+                          ([name]) =>
+                            !["cookie", "authorization", "proxy-authorization"].includes(
+                              name.toLowerCase(),
+                            ),
+                        ),
+                      ),
+                    }
+                  : undefined,
+              );
               return;
             }
-            const headers = request.headers();
             const response = await (this.fetchPage ?? this.fetchPublicAsset)(
               request.url(),
               publicAsset
@@ -591,6 +658,8 @@ export class JournalLoginBrowser {
           failedScripts = 0;
           failedStyles = 0;
           javascriptErrors = 0;
+          failedAjax = 0;
+          blockedAjax = 0;
           navigations = 0;
           networkError = undefined;
           networkFailure = new Promise<never>((_resolve, reject) => {
@@ -601,7 +670,9 @@ export class JournalLoginBrowser {
             () => {
               void context.close().catch(() => {});
             },
-            this.timeoutMs * 3 + 10000,
+            this.timeoutMs * (authenticating ? 3 : 4) +
+              10000 +
+              (authenticating ? 0 : this.verificationWaitMs),
           );
           const operation = action();
           try {
@@ -694,9 +765,51 @@ export class JournalLoginBrowser {
                 articleFailureCode = "JOURNAL_ARTICLE_CONTENT_FAILED";
                 observer?.("Document principal de l'article chargé dans l'onglet authentifié.");
                 await assertArticleAccess(page, login, journalOrigin);
-                await page.waitForFunction(
-                  () => (document.body?.innerText.trim().length ?? 0) >= 200,
-                );
+                let contentDeadline = Date.now() + this.timeoutMs;
+                let verificationDeadline: number | undefined;
+                let verificationCleared = false;
+                while (true) {
+                  let readiness;
+                  try {
+                    readiness = await page.evaluate(inspectJournalArticleInPage);
+                  } catch (error) {
+                    // A successful site check can reload the authenticated tab.
+                    // Keep waiting across that document replacement, within the same budget.
+                    if (
+                      error instanceof Error &&
+                      /Execution context was destroyed|Cannot find context with specified id|Cannot find a context with specified id/.test(
+                        error.message,
+                      ) &&
+                      !page.isClosed()
+                    ) {
+                      if (Date.now() >= Math.max(contentDeadline, verificationDeadline ?? 0))
+                        throw new TimeoutError("Article document changed during loading.");
+                      await delay(100);
+                      continue;
+                    }
+                    throw error;
+                  }
+                  if (readiness.challenge) {
+                    if (verificationDeadline === undefined) {
+                      verificationDeadline = Date.now() + this.verificationWaitMs;
+                      observer?.(
+                        "Contrôle du navigateur détecté (« Client challenge »). Attente dans la même session.",
+                      );
+                    }
+                    if (Date.now() >= verificationDeadline)
+                      throw articleChallengeError(blockedAjax, failedAjax);
+                  } else {
+                    if (verificationDeadline !== undefined && !verificationCleared) {
+                      verificationCleared = true;
+                      contentDeadline = Date.now() + this.timeoutMs;
+                      observer?.("L’écran de contrôle a disparu. Attente du contenu de l’article.");
+                    }
+                    if (readiness.ready) break;
+                    if (Date.now() >= contentDeadline)
+                      throw new TimeoutError("Article content did not appear.");
+                  }
+                  await delay(100);
+                }
                 await page.evaluate(async () => {
                   let previous = "";
                   let stableSince = performance.now();
@@ -727,6 +840,8 @@ export class JournalLoginBrowser {
                   throw new Error("Unstable article");
                 });
                 await assertArticleAccess(page, login, journalOrigin);
+                if ((await page.evaluate(inspectJournalArticleInPage)).challenge)
+                  throw articleChallengeError(blockedAjax, failedAjax);
                 const html = await page.content();
                 network?.assertWithinBudget();
                 if (Buffer.byteLength(html) > MAX_REMOTE_BYTES)
@@ -775,7 +890,7 @@ export class JournalLoginBrowser {
                   : "indéterminé";
               throw new AppError(
                 error.status,
-                `${error.message} Diagnostic : document ${status} ; texte visible : ${text} ; scripts en échec : ${failedScripts} ; feuilles de style en échec : ${failedStyles} ; erreurs JavaScript : ${javascriptErrors}.`,
+                `${error.message} Diagnostic : document ${status} ; texte visible : ${text} ; scripts en échec : ${failedScripts} ; feuilles de style en échec : ${failedStyles} ; erreurs JavaScript : ${javascriptErrors} ; AJAX bloquées par le projet : ${blockedAjax} ; AJAX en échec : ${failedAjax}.`,
                 error.code,
               );
             }

@@ -105,6 +105,20 @@ function respond(request: Http2ServerRequest, response: Http2ServerResponse, bod
       .end();
     return;
   }
+  if (path === "/_fs-ch-fixture/pat") {
+    if (request.method !== "POST" || cookie || body) {
+      response.writeHead(400).end("Invalid anonymous fixture check");
+      return;
+    }
+    response.setHeader("Content-Type", "application/json");
+    setTimeout(() => response.end('{"verified":true}'), 150);
+    return;
+  }
+  if (path === "/_fs-ch-fixture/assets/inter-var.woff2") {
+    response.setHeader("Content-Type", "font/woff2");
+    response.end("synthetic-font-response");
+    return;
+  }
   if (path === "/body") {
     response.setHeader("Access-Control-Allow-Origin", journalOrigin);
     response.setHeader("Access-Control-Allow-Credentials", "true");
@@ -133,6 +147,23 @@ function respond(request: Http2ServerRequest, response: Http2ServerResponse, bod
     response
       .writeHead(402)
       .end('<main><form id="challenge-form">Automated requests blocked</form></main>');
+    return;
+  }
+  if (path === "/article-challenge") {
+    response.end("<title>Client Challenge</title><body></body>");
+    return;
+  }
+  if (path === "/article-challenge-pat") {
+    response.end(`<title>Client Challenge</title><body><article class="full-body"></article></body><script>
+      new FontFace('ChallengeFixture', 'url(/_fs-ch-fixture/assets/inter-var.woff2)').load().catch(()=>{});
+      fetch('/_fs-ch-fixture/pat?token=cookie-bearing',{method:'POST'}).catch(()=>{});
+      fetch('/_fs-ch-fixture/pat?token=synthetic-page-generated-token',{method:'POST',credentials:'omit',headers:{'Content-Type':'application/json'}})
+        .then(r=>r.json()).then(data=>{if(data.verified){
+          document.title='Article'; document.querySelector('article').innerText=${JSON.stringify(fullText)};
+          fetch('/_fs-ch-fixture/pat?token=outside-challenge',{method:'POST',credentials:'omit'}).catch(()=>{});
+          fetch('/mutate-after-challenge',{method:'POST',body:'must-not-send'}).catch(()=>{});
+        }});
+    </script>`);
     return;
   }
   if (path === "/article-bot") {
@@ -283,6 +314,37 @@ const networkFactory =
   };
 const nativeBrowser = (trustFixture = true) =>
   new JournalLoginBrowser(undefined, 5000, networkFactory(trustFixture));
+
+test("a native HTTP 200 challenge performs only its anonymous PAT check and keeps subscriber access", async () => {
+  const start = requests.length;
+  await new JournalLoginBrowser(undefined, 5000, networkFactory(true), undefined, 1000).withSession(
+    "publisher.test",
+    credentials,
+    async (read) => {
+      expect((await read(`${journalOrigin}/article-challenge-pat`)).contentHtml).toContain(
+        fullText,
+      );
+      await assert.rejects(read(`${journalOrigin}/article-challenge`), (error: unknown) => {
+        expect(error).toMatchObject({ code: "JOURNAL_ARTICLE_BROWSER_CHALLENGE" });
+        expect(String(error)).not.toContain("synthetic-page-generated-token");
+        return true;
+      });
+      expect((await read(`${journalOrigin}/article-full`)).contentHtml).toContain(fullText);
+    },
+  );
+  const sent = requests.slice(start);
+  const pat = sent.filter((request) => request.path === "/_fs-ch-fixture/pat");
+  expect(pat).toHaveLength(1);
+  expect(pat[0]).toMatchObject({ method: "POST", body: "", protocol: "2.0" });
+  expect(pat[0]?.cookie).toBeUndefined();
+  expect(sent.some((request) => request.path === "/_fs-ch-fixture/assets/inter-var.woff2")).toBe(
+    true,
+  );
+  expect(sent.some((request) => request.path === "/mutate-after-challenge")).toBe(false);
+  expect(
+    sent.filter((request) => request.method === "POST").map((request) => request.path),
+  ).toEqual(["/authenticate", "/_fs-ch-fixture/pat"]);
+}, 45000);
 
 test("journal authentication and article hydration use native Chromium HTTP/2 with cookies and the same tab storage", async () => {
   const refused = await new Promise<number | undefined>((resolve, reject) => {
