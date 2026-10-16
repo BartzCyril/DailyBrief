@@ -46,7 +46,7 @@ export function sourceWorkflowRouter(
     const collected =
       source.type === "RSS"
         ? await rss.collect(source.url, Boolean(source.articleLinkSelector))
-        : await scraping.collect(source.url, scrapingSchema.parse(source.scrapingConfig));
+        : await scraping.preview(source.url, scrapingSchema.parse(source.scrapingConfig));
     const inventory =
       source.type === "RSS" && source.articleLinkSelector
         ? await journals.inventory(userId, collected.articles, source.articleLinkSelector)

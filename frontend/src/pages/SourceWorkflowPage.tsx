@@ -109,8 +109,9 @@ export function SourceWorkflowPage() {
           </h1>
           <CardDescription>
             Récupérez les articles et testez leur résumé à partir de leur page complète. Les
-            articles déjà traités restent disponibles ici. Aucun mail n'est envoyé et les données de
-            collecte restent inchangées.
+            articles déjà traités restent disponibles ici. Le test d'une source de scraping parcourt
+            au maximum 5 pages, 5 scrolls ou 5 clics sur « Charger plus ». Aucun mail n'est envoyé
+            et les données de collecte restent inchangées.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

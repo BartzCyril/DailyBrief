@@ -25,6 +25,8 @@ describe("source workflow tests", () => {
   let needsBrowser = false;
   let manyScrapingArticles = false;
   let buttonScraping = false;
+  let paginatedScraping = false;
+  const scrapingPages: number[] = [];
   const previews: WorkflowPreview[] = [];
   const fullText =
     "Cette information détaillée provient de la page complète et ne figure pas dans la description RSS. ".repeat(
@@ -36,6 +38,11 @@ describe("source workflow tests", () => {
       return `<rss><channel><item><title>Déjà livré</title><link>${privatePage ? "http://127.0.0.1/private" : "https://example.com/one"}</link><description>Extrait court</description></item><item><title>Nouveau</title><link>https://example.com/two</link></item><item><title>Sans lien</title></item></channel></rss>`;
     }),
     scraping: new ScrapingService(async (url) => {
+      if (paginatedScraping) {
+        const number = Number(new URL(url).searchParams.get("page"));
+        scrapingPages.push(number);
+        return `<article><h2>Article ${number}</h2><a href="/scraped/${number}">Lire</a></article>`;
+      }
       if (buttonScraping) {
         if (url.endsWith("/button-batch"))
           return JSON.stringify({
@@ -145,6 +152,8 @@ describe("source workflow tests", () => {
     summaryUrls = [];
     manyScrapingArticles = false;
     buttonScraping = false;
+    paginatedScraping = false;
+    scrapingPages.length = 0;
     previews.length = 0;
   });
   afterEach(async () => {
@@ -299,7 +308,30 @@ describe("source workflow tests", () => {
       await db.user.delete({ where: { id: other.id } });
     }
   });
-  test("shows every paginated article and summarizes an item beyond index 499 without production writes", async () => {
+  test("workflow previews at most five pages without updating the saved configuration", async () => {
+    paginatedScraping = true;
+    const scrapingConfig = {
+      articleSelector: "article",
+      titleSelector: "h2",
+      linkSelector: "a",
+      mode: "PAGINATE",
+      pagination: { strategy: "QUERY_PARAM", queryParam: "page", startPage: 0 },
+    };
+    await db.source.update({
+      where: { id: sourceId },
+      data: { type: "SCRAPING", scrapingConfig },
+    });
+    const preview = await collect();
+    expect(scrapingPages).toEqual([0, 1, 2, 3, 4]);
+    expect(preview.articles).toHaveLength(5);
+    expect(preview.warnings?.join(" ")).toContain("Test limité à 5 pages");
+    expect((await db.source.findUniqueOrThrow({ where: { id: sourceId } })).scrapingConfig).toEqual(
+      scrapingConfig,
+    );
+    expect(await db.article.count({ where: { userId } })).toBe(1);
+    expect(emails).toBe(0);
+  }, 15000);
+  test("shows every article within the previewed pages and summarizes beyond index 499 without production writes", async () => {
     manyScrapingArticles = true;
     await db.source.update({
       where: { id: sourceId },

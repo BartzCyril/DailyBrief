@@ -254,7 +254,7 @@ describe("source URL editing", () => {
       .send({ url: "https://fixture.example/scroll", config: automatic });
     expect(preview.status).toBe(200);
     expect(preview.body.articles[0]?.description).toBe("Description");
-  });
+  }, 15000);
   test("retains activation for legacy sources but requires a date when editing their URL", async () => {
     const { descriptionSelector: _description, dateSelector: _date, ...legacy } = scrapingConfig;
     await db.source.update({

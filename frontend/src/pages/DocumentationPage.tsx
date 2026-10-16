@@ -368,7 +368,8 @@ export function DocumentationPage() {
               </li>
               <li>
                 Cliquez sur <b>Tester</b>, vérifiez plusieurs articles de l’aperçu, puis sur{" "}
-                <b>Enregistrer la source</b>.
+                <b>Enregistrer la source</b>. Le test parcourt au maximum 5 pages de pagination, 5
+                scrolls ou 5 clics sur « Charger plus », selon le mode choisi.
               </li>
             </Steps>
             <Table

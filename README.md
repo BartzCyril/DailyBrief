@@ -118,12 +118,14 @@ et zstd avant de lire le texte, même si un site compresse malgré la demande
 XML et des BOM UTF-8/UTF-16. Les réponses compressées corrompues et les encodages
 invalides ont des erreurs distinctes du XML mal formé.
 Puppeteer bloque WebSockets, service workers, téléchargements et mutations HTTP. Le
-scraping utilise au maximum 2 navigateurs simultanés. La pagination continue
+scraping utilise au maximum 2 navigateurs simultanés. Lors d'une collecte complète, la pagination continue
 jusqu'à une page sans article, sans plafond de pages, d'articles par page ou
 d'articles au total. Une page déjà rencontrée (même si l'ordre change) arrête
 la pagination avec un avertissement pour éviter une boucle. Les chevauchements
-entre pages sont dédupliqués ; une erreur réseau ou un sélecteur de titre sans
-résultat dans des blocs présents provoque une erreur, pas un aperçu partiel.
+entre pages sont dédupliqués. Après une page valide, des blocs sans titre ni lien
+d'article indiquent aussi la fin de pagination, même si un conteneur vide correspond
+encore au sélecteur. Une erreur réseau ou des liens d'articles encore présents sans
+titre exploitable restent des erreurs ; la première page reste strictement vérifiée.
 Une réponse HTTP 404 ou 410 sur la page demandée après des pages ayant fourni des
 articles termine la pagination avec un avertissement et conserve les résultats.
 Une erreur sur la première page, une redirection vers une autre page absente ou
@@ -558,9 +560,11 @@ paramètres de scroll, de pagination ou du bouton de chargement pour une source 
 Une modification invalide l'aperçu. À la création comme à l'édition, l'enregistrement
 vérifie uniquement la première page configurée (le numéro de départ en pagination),
 sans parcourir les pages suivantes, effectuer de scroll supplémentaire ou cliquer sur le bouton.
-Les sélecteurs et l'accès réseau restent vérifiés. « Tester », le workflow de A à Z
-et la collecte continuent à parcourir toutes les pages, effectuer les scrolls configurés
-ou cliquer sur le bouton jusqu'à la fin des articles.
+Les sélecteurs et l'accès réseau restent vérifiés. « Tester » et « Tester le résumé d'un article »
+parcourent au maximum 5 pages à partir de la page de départ, 5 scrolls (sans dépasser le nombre
+configuré) ou 5 clics sur « Charger plus ». L'aperçu indique quand cette limite est atteinte.
+La collecte complète conserve son parcours habituel jusqu'à la fin des pages ou des chargements,
+avec le nombre de scrolls configuré. Ces limites de test ne modifient pas la configuration enregistrée.
 Une erreur de récupération ou une adresse déjà utilisée laisse la source existante
 inchangée. « Annuler » et « Retour aux sources » reviennent à l’onglet RSS ou SCRAPING
 sans enregistrer. Une sauvegarde réussie revient au même onglet avec une notification.
@@ -752,7 +756,7 @@ Dans la liste des sources, « Tester le résumé d'un article » ouvre une liste
 fraîche des articles RSS ou scraping, y compris ceux déjà résumés ou livrés.
 Les sources désactivées peuvent aussi être testées. Tous les résultats du
 collecteur sont affichés : le RSS direct conserve sa limite de 500 entrées, tandis que
-le scraping paginé parcourt la source jusqu'à une page vide ou répétée.
+le scraping parcourt au maximum 5 pages, 5 scrolls ou 5 clics sur « Charger plus ».
 « Faire le résumé avec l'IA » télécharge à nouveau la page
 de l'article, affiche les étapes en direct, puis son titre IA, son résumé,
 ses points clés et le texte extrait consultable. Chaque résumé peut être

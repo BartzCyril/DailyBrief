@@ -111,6 +111,10 @@ export function ScrapingForm() {
         <fieldset disabled={pending} className="space-y-5">
           <ScrapingFields draft={draft} update={update} />
         </fieldset>
+        <p className="text-sm text-muted-foreground">
+          Le test parcourt au maximum 5 pages, 5 scrolls ou 5 clics sur « Charger plus », selon le
+          mode choisi.
+        </p>
         <div className="flex flex-wrap gap-3">
           <Button type="submit" disabled={pending}>
             {busy === "test" && <LoaderCircle className="animate-spin" />}

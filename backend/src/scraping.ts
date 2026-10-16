@@ -67,6 +67,7 @@ async function extract(
   page: Page,
   config: ScrapingConfig,
   timezone = "UTC",
+  allowEmptyBlocks = false,
 ): Promise<ArticlePreview[]> {
   const reference = new Date();
   const entries = await page.evaluate(
@@ -119,7 +120,11 @@ async function extract(
       }),
     config,
   );
-  if (entries.length && !entries.some((item) => item.title))
+  if (
+    entries.length &&
+    !entries.some((item) => item.title) &&
+    (!allowEmptyBlocks || entries.some((item) => item.url?.trim()))
+  )
     throw new AppError(
       422,
       "Aucun article avec un titre trouvé dans les blocs de cette page. Vérifiez le sélecteur du titre.",
@@ -153,23 +158,32 @@ export class ScrapingService {
     input: ScrapingConfig,
     options?: RecentArticleOptions,
   ): Promise<SourcePreview> {
-    return this.scrape(url, input, false, options);
+    return this.scrape(url, input, "collect", options);
+  }
+  async preview(url: string, input: ScrapingConfig): Promise<SourcePreview> {
+    return this.scrape(url, input, "preview");
   }
   async validateFirstPage(
     url: string,
     input: ScrapingConfig,
     onDiagnostic?: ScrapingDiagnosticObserver,
   ): Promise<void> {
-    await this.scrape(url, input, true, undefined, onDiagnostic);
+    await this.scrape(url, input, "validate", undefined, onDiagnostic);
   }
   private async scrape(
     url: string,
     input: ScrapingConfig,
-    firstPageOnly: boolean,
+    purpose: "collect" | "preview" | "validate",
     options?: RecentArticleOptions,
     onDiagnostic?: ScrapingDiagnosticObserver,
   ): Promise<SourcePreview> {
     const config = scrapingSchema.parse(input);
+    const pageLimit = purpose === "validate" ? 1 : purpose === "preview" ? 5 : Infinity;
+    const clickLimit = purpose === "validate" ? 0 : purpose === "preview" ? 5 : Infinity;
+    const scrollLimit =
+      purpose === "validate"
+        ? 0
+        : Math.min(config.scroll?.maxScrolls ?? 0, purpose === "preview" ? 5 : Infinity);
     return this.limiter.run(async () => {
       const network = this.fetchText ? undefined : await this.createNetwork();
       let browser;
@@ -567,10 +581,10 @@ export class ScrapingService {
               "SCRAPING_PAGE_BLOCKED",
             );
         };
-        const readArticles = async () => {
+        const readArticles = async (allowEmptyBlocks = false) => {
           phase = "extraction";
           network?.assertWithinBudget();
-          const entries = await extract(page, config, options?.window.timezone);
+          const entries = await extract(page, config, options?.window.timezone, allowEmptyBlocks);
           network?.assertWithinBudget();
           return entries;
         };
@@ -609,7 +623,8 @@ export class ScrapingService {
           const initial = await readArticles();
           articles.push(...initial);
           let stop = reachedArchives(initial);
-          for (let i = 0; !stop && i < (firstPageOnly ? 0 : config.scroll!.maxScrolls); i++) {
+          let scrolls = 0;
+          for (; !stop && scrolls < scrollLimit; scrolls++) {
             network?.beginLoad();
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
             await delay(config.scroll!.waitAfterScrollMs);
@@ -617,6 +632,10 @@ export class ScrapingService {
             articles.push(...entries);
             stop = reachedArchives(entries);
           }
+          if (purpose === "preview" && scrolls === 5 && !stop)
+            warnings.push(
+              "Test limité à 5 scrolls. La collecte complète suit les paramètres de la source.",
+            );
         } else if (config.mode === "LOAD_MORE") {
           await navigate(url);
           await prepareInitialArticles();
@@ -638,7 +657,7 @@ export class ScrapingService {
           const seen = new Set(articles.map(previewKey));
           let clicks = 0;
           let stop = reachedArchives(initial);
-          while (!firstPageOnly && !stop) {
+          while (clicks < clickLimit && !stop) {
             const visibleButtons = await page.$$eval(buttonSelector, (elements) =>
               elements
                 .filter((element) => {
@@ -864,10 +883,15 @@ export class ScrapingService {
             }
             stop = reachedArchives(entries);
           }
+          if (purpose === "preview" && clicks === clickLimit && !stop)
+            warnings.push(
+              "Test limité à 5 clics sur « Charger plus ». La collecte complète peut poursuivre le chargement.",
+            );
         } else {
           const seenPages = new Set<string>();
           const seenArticles = new Set<string>();
-          for (let number = config.pagination!.startPage; ; number++) {
+          const startPage = config.pagination!.startPage;
+          for (let number = startPage; number - startPage < pageLimit; number++) {
             currentPageNumber = number;
             const target = paginationUrl(url, config, number);
             try {
@@ -888,8 +912,17 @@ export class ScrapingService {
               throw error;
             }
             await prepareInitialArticles();
-            const entries = await readArticles();
-            if (!entries.length) break;
+            // A list wrapper or an empty-result placeholder can still match the article
+            // selector after the last page. Previously validated selectors remain valid;
+            // retain title errors when configured article links are still present.
+            const entries = await readArticles(articles.length > 0);
+            if (!entries.length) {
+              if (articles.length)
+                warnings.push(
+                  `Fin de pagination à la page ${number} : aucun article trouvé. Les articles des pages précédentes sont conservés.`,
+                );
+              break;
+            }
             // Ignore ordering changes when a site repeats a page or cycles through
             // previous pages instead of honouring the requested page number.
             const fingerprint = createHash("sha256")
@@ -908,7 +941,11 @@ export class ScrapingService {
               seenArticles.add(key);
               articles.push(article);
             }
-            if (firstPageOnly || reachedArchives(entries)) break;
+            if (reachedArchives(entries)) break;
+            if (purpose === "preview" && number - startPage + 1 === pageLimit)
+              warnings.push(
+                "Test limité à 5 pages de pagination. La collecte complète peut parcourir les pages suivantes.",
+              );
           }
         }
         const result = deduplicatePreviews(articles);

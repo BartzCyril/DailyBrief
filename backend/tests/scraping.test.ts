@@ -430,6 +430,7 @@ describe("scraping source routes", () => {
   const app = createApp(db, redis, config, {
     scraping: new ScrapingService(async (url) => {
       requests.push(url);
+      if (url.includes("preview-limit")) return html(new URL(url).searchParams.get("page")!);
       if (url.endsWith("/button-batch")) return JSON.stringify({ html: html("button-next") });
       if (url.endsWith("/button-source"))
         return `${html("button-first")}<button id="more">Plus</button><script>document.querySelector('#more').onclick=async()=>{const data=await (await fetch('/button-batch')).json();document.querySelector('#more').insertAdjacentHTML('beforebegin',data.html);document.querySelector('#more').remove();};</script>`;
@@ -489,6 +490,22 @@ describe("scraping source routes", () => {
     expect(saved.status).toBe(201);
     expect(saved.body.userId).toBe(userId);
     expect(saved.body.scrapingConfig.mode).toBe("SCROLL");
+  }, 15000);
+  test("scraping preview endpoint requests at most five pages", async () => {
+    const before = requests.length;
+    const preview = await agent.post("/sources/scraping/test").send({
+      url: "https://fixture.example/preview-limit",
+      config: paginate,
+    });
+    expect(preview.status).toBe(200);
+    expect(preview.body.articles).toHaveLength(5);
+    expect(requests.slice(before).map((url) => new URL(url).searchParams.get("page"))).toEqual([
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+    ]);
   }, 15000);
   test("accepts and saves paginated sources without retaining a legacy page cap", async () => {
     const legacy = {

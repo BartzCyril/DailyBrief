@@ -86,7 +86,7 @@ export function sourcesRouter(db: Db, rss: RssService, scraping: ScrapingService
       .object({ url: urlSchema, config: scrapingInputSchema })
       .strict()
       .parse(req.body);
-    const result = await scraping.collect(input.url, input.config);
+    const result = await scraping.preview(input.url, input.config);
     res.json({ ...result, articles: result.articles.slice(0, 50) });
   });
   router.delete("/:id", async (req, res) => {
