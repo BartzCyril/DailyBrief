@@ -426,6 +426,42 @@ ils peuvent être retentés. Les résumés sont persistés avant l'envoi SMTP.
 Un échec SMTP laisse la newsletter `FAILED` et les articles réutilisables sans
 nouvelle génération IA. Aucun email vide n'est envoyé.
 
+### Vider l’historique en conservant les comptes et la configuration
+
+Depuis la racine du projet, après `git pull`, **arrêtez `npm run dev` ainsi que toute
+autre instance de l’API et des workers**. Laissez PostgreSQL et Redis démarrés.
+La commande utilise `DATABASE_URL`, `REDIS_URL` et `QUEUE_PREFIX` du `.env` : elle
+concerne **tous les utilisateurs de cette base**.
+
+Afficher un aperçu sans rien modifier :
+
+```sh
+npm run db:reset-history
+```
+
+Supprimer définitivement l’historique :
+
+```sh
+npm run db:reset-history -- --yes
+```
+
+La commande conserve les utilisateurs et leurs mots de passe, les sources, les
+réglages de collecte et centres d’intérêt, ainsi que les accès et sélecteurs des
+journaux. Elle supprime les articles et leurs résumés, les newsletters et leurs
+associations, les Daily Briefs, toutes les exécutions et les jobs BullMQ. Les files
+du préfixe courant et des anciens préfixes enregistrés dans les exécutions sont
+vidées ; les sessions Redis et les files sans lien avec cette base sont conservées.
+Les verrous de collecte devenus inutiles sont également effacés.
+
+Un worker encore connecté bloque la suppression. Redis est vidé avant la transaction
+PostgreSQL ; si cette dernière échoue, les suppressions SQL sont annulées. La commande
+retourne une erreur en cas d’échec : corrigez la cause et relancez-la avant de redémarrer
+l’application. Elle peut aussi être relancée sur un historique déjà vide.
+
+`lastCollectionAt` est effacé ; les horaires, l’activation et `nextCollectionAt` sont
+conservés. Après `npm run dev`, une collecte automatique en retard peut donc repartir
+immédiatement et créer un nouvel historique.
+
 Le bouton « Récupérer maintenant » affiche un journal en direct : récupération de
 chaque source, nombre d'articles, sauvegarde et doublons, téléchargement de la
 page de chaque article et nombre de caractères extraits, portions envoyées à
