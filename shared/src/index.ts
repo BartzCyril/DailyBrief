@@ -156,6 +156,7 @@ export type ArticleJobResult = {
   articleId: string;
   status: "completed" | "skipped" | "failed";
   newSummary: boolean;
+  attempts?: number;
   skipReason?: string;
   failure?: CollectionFailure;
 };

@@ -8,6 +8,7 @@ export type NewsletterMessage = {
   subject: string;
   html: string;
   text: string;
+  attachments?: { filename: string; content: Buffer; contentType: string }[];
 };
 export interface NewsletterSender {
   send(message: NewsletterMessage): Promise<void>;
@@ -28,6 +29,7 @@ export class NewsletterEmailService implements NewsletterSender {
         subject: message.subject,
         html: message.html,
         text: message.text,
+        attachments: message.attachments?.map((attachment) => ({ ...attachment })),
         messageId: `<${message.newsletterId}@dailybrief.local>`,
         disableFileAccess: true,
         disableUrlAccess: true,

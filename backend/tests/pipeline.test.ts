@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import request from "supertest";
 import nodemailer from "nodemailer";
+import ExcelJS from "exceljs";
 import type { ArticlePreview, SourcePreview, CollectionProgress } from "@dailybrief/shared";
 import { DailyBriefPipelineService } from "../src/pipeline";
 import { SourceCollector } from "../src/collection";
@@ -113,6 +114,13 @@ test("Nodemailer service uses account recipient and includes both bodies", async
     subject: "Test",
     html: "<p>Test</p>",
     text: "Test",
+    attachments: [
+      {
+        filename: "rapport.xlsx",
+        content: Buffer.from("fixture-report"),
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      },
+    ],
   });
   expect(spy).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -120,6 +128,14 @@ test("Nodemailer service uses account recipient and includes both bodies", async
       html: "<p>Test</p>",
       text: "Test",
       disableFileAccess: true,
+      disableUrlAccess: true,
+      attachments: [
+        expect.objectContaining({
+          filename: "rapport.xlsx",
+          content: Buffer.from("fixture-report").toString("base64"),
+          encoding: "base64",
+        }),
+      ],
     }),
   );
   spy.mockRestore();
@@ -389,6 +405,32 @@ describe("DailyBrief pipeline", () => {
     expect(sends).toHaveLength(0);
     expect(await db.newsletter.count({ where: { userId } })).toBe(0);
   });
+  test("the report explains skipped journals without exposing their previously saved summaries", async () => {
+    followDocument = true;
+    await db.source.update({
+      where: { id: sourceId },
+      data: { articleLinkSelector: "a.primarydoc" },
+    });
+    const access = await db.journalAccess.create({
+      data: { userId, domain: "publisher.example", enabled: true },
+    });
+    failEmail = true;
+    expect((await runner.run(userId)).status).toBe("FAILED");
+    await db.journalAccess.update({ where: { id: access.id }, data: { enabled: false } });
+    failEmail = false;
+    expect((await runner.run(userId)).status).toBe("SENT");
+    expect(
+      (await db.article.findFirstOrThrow({ where: { userId, sourceId } })).summary,
+    ).not.toBeNull();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(new Uint8Array(sends[0]!.attachments![0]!.content).buffer);
+    const report = workbook.getWorksheet("Articles")!;
+    expect(report.getCell("A2").value).toBe("Titre one");
+    expect(report.getCell("G2").value).toBe("Ignoré");
+    expect(String(report.getCell("H2").value)).toContain("désactivé");
+    expect(report.getCell("K2").value).toBe("");
+    expect(report.getCell("M2").value).toBe(report.getCell("H2").value);
+  });
   test("refetches and regenerates only pending RSS content when its document selector changes", async () => {
     failEmail = true;
     expect((await runner.run(userId)).status).toBe("FAILED");
@@ -427,6 +469,24 @@ describe("DailyBrief pipeline", () => {
     expect(sends[0]?.text).toContain("À retenir aujourd’hui");
     expect(sends[0]?.text).toContain("Une synthèse croisée des articles pertinents.");
     expect(sends[0]?.text).not.toContain("Résumé Les détails du texte complet");
+    const attachment = sends[0]!.attachments![0]!;
+    expect(attachment.filename).toEndWith(".xlsx");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(new Uint8Array(attachment.content).buffer);
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      "Articles",
+      "Sources",
+      "Exécution",
+    ]);
+    const report = workbook.getWorksheet("Articles")!;
+    expect(report.rowCount).toBe(3);
+    expect(report.getCell("G2").value).toBe("Terminé");
+    const savedReportArticle = await db.article.findFirstOrThrow({
+      where: { userId, title: "Titre one" },
+    });
+    expect(report.getCell("K2").value).toBe(savedReportArticle.summary);
+    expect(sends[0]!.text).not.toContain(savedReportArticle.summary!);
+    expect(report.getCell("N2").value).toBe("Oui");
     expect(pageFetches).toHaveLength(2);
     expect(summaryInputs.every((content) => content.includes("Les détails du texte complet"))).toBe(
       true,
@@ -588,6 +648,14 @@ describe("DailyBrief pipeline", () => {
     expect(excluded.analyzedAt).not.toBeNull();
     expect(briefInputs[0]!.articles.map((item) => item.title)).toEqual(["Titre two"]);
     expect(sends[0]!.text).not.toContain("Titre one");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(new Uint8Array(sends[0]!.attachments![0]!.content).buffer);
+    const report = workbook.getWorksheet("Articles")!;
+    expect(report.getCell("A2").value).toBe("Titre one");
+    expect(report.getCell("G2").value).toBe("Ignoré");
+    expect(report.getCell("H2").value).toBe("Sujet hors des centres d’intérêt.");
+    expect(report.getCell("K2").value).toBe("");
+    expect(report.getCell("M2").value).toBe("Sujet hors des centres d’intérêt.");
     await db.dailyBriefSettings.update({
       where: { userId },
       data: { interestPrompt: "Tous les sujets." },
@@ -699,6 +767,15 @@ describe("DailyBrief pipeline", () => {
     const result = await runner.run(userId);
     expect(result.newArticles).toBe(1);
     expect(summaries).toBe(1);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(new Uint8Array(sends[0]!.attachments![0]!.content).buffer);
+    const report = workbook.getWorksheet("Articles")!;
+    expect(report.rowCount).toBe(3);
+    expect(report.getCell("B2").value).toBe("https://example.com/feed");
+    expect(report.getCell("B3").value).toBe("https://example.com/page");
+    expect(report.getCell("O2").value).toBe("Non");
+    expect(report.getCell("O3").value).toBe("Oui");
+    expect(report.getCell("S2").value).toBe(report.getCell("S3").value);
   });
   test("SMTP failure preserves summaries and retries without recreating or resummarizing", async () => {
     failEmail = true;
@@ -729,6 +806,14 @@ describe("DailyBrief pipeline", () => {
     expect(failed.contentError).toBe("Page indisponible.");
     expect(failed.contentFetchedAt).toBeNull();
     expect(failed.summary).toBeNull();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(new Uint8Array(sends[0]!.attachments![0]!.content).buffer);
+    const report = workbook.getWorksheet("Articles")!;
+    expect(report.getCell("A2").value).toBe("Titre one");
+    expect(report.getCell("G2").value).toBe("Échec");
+    expect(report.getCell("H2").value).toBe("Page indisponible.");
+    expect(report.getCell("M2").value).toBe("Page indisponible.");
+    expect(report.getCell("Q2").value).toBe("Page indisponible.");
     expect(summaries).toBe(1);
     expect(sends[0]?.text).not.toContain("Titre one");
     expect(events.some((event) => event.stage === "content" && event.status === "failed")).toBe(
@@ -835,6 +920,38 @@ describe("DailyBrief pipeline", () => {
     expect(JSON.stringify(events)).not.toContain("secret");
     expect(summaries).toBe(0);
     expect(sends).toHaveLength(0);
+  });
+  test("the attachment lists source failures alongside successfully collected articles", async () => {
+    sourceError = true;
+    expect((await runner.run(userId)).status).toBe("SENT");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(new Uint8Array(sends[0]!.attachments![0]!.content).buffer);
+    const report = workbook.getWorksheet("Sources")!;
+    expect(report.rowCount).toBe(3);
+    expect(report.getCell("A2").value).toBe("https://example.com/feed");
+    expect(report.getCell("C2").value).toBe("Échec");
+    expect(report.getCell("F2").value).toBe("Le flux est inaccessible.");
+    expect(report.getCell("C3").value).toBe("Terminée");
+    expect(workbook.getWorksheet("Articles")!.getCell("A2").value).toBe("Titre two");
+  });
+  test("a workbook failure sends no incomplete email and preserves summaries for retry", async () => {
+    const writer = spyOn(ExcelJS.Workbook.prototype, "addWorksheet").mockImplementation(() => {
+      throw new Error("Workbook unavailable");
+    });
+    try {
+      expect(await runner.run(userId)).toMatchObject({
+        status: "FAILED",
+        failure: { stage: "newsletter" },
+      });
+      expect(sends).toHaveLength(0);
+      expect(await db.article.count({ where: { userId, summary: { not: null } } })).toBe(2);
+    } finally {
+      writer.mockRestore();
+    }
+    expect((await runner.run(userId)).status).toBe("SENT");
+    expect(summaries).toBe(2);
+    expect(sends).toHaveLength(1);
+    expect(sends[0]!.attachments![0]!.filename).toEndWith(".xlsx");
   });
   test("a failing progress subscriber cannot prevent delivery", async () => {
     expect(

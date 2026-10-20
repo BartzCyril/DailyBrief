@@ -533,6 +533,8 @@ export class JobsManager {
               },
             };
           }
+          const completedJob = await this.summaries.getJob(job.id!);
+          outcome.attempts = completedJob?.attemptsMade ?? job.attemptsMade;
           completed++;
           if (outcome.status === "failed") failed++;
           if (outcome.status === "skipped") skipped++;

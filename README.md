@@ -352,7 +352,28 @@ connecté. Aucun article pertinent et résumé disponible pour la période donne
 `EMPTY`, sans appel IA de synthèse ni email vide.
 L’email utilise cette même revue : **À retenir aujourd’hui**, **Autres informations
 intéressantes** et **Tendances du jour**, avec les liens des articles cités. Les rubriques
-vides sont omises ; les résumés individuels ne sont pas concaténés dans le mail.
+vides sont omises ; les résumés individuels ne sont pas concaténés dans le corps du mail.
+
+Chaque newsletter envoyée contient aussi un **rapport Excel `.xlsx` en pièce jointe**,
+ouvrable dans Excel, LibreOffice ou importable dans Google Sheets, sans compte Google
+à configurer dans DailyBrief. Le classeur contient trois onglets :
+
+- **Articles** : titres, sources, liens, dates, descriptions, statuts, décisions de pertinence,
+  raisons d’exclusion ou d’échec, résumés, points clés, motif d’absence de résumé, présence
+  dans le Daily Brief et nombre de tentatives du job lorsqu’il est disponible.
+- **Sources** : résultat de chaque source, nombre d’articles récupérés, durée, erreurs
+  et avertissements de collecte.
+- **Exécution** : identifiant, date, fuseau, démarrage, centres d’intérêt et compteurs.
+
+Le rapport inclut aussi les articles ignorés, les doublons récupérés depuis plusieurs
+sources, les articles repris en base et les résumés réutilisés pour l’édition. Les dates
+écartées avant la collecte (anciennes, futures ou inexploitables) sont comptabilisées dans
+les avertissements des sources ; leurs articles ne sont pas inventés dans le rapport.
+Les champs très longs se poursuivent dans des colonnes supplémentaires, sans troncature.
+La pièce jointe utilise les données déjà enregistrées, sans nouvelle génération IA.
+Elle est préparée avant SMTP : si sa génération échoue, le mail n’est pas envoyé sans
+son rapport. Les règles habituelles restent applicables : aucun mail vide ou envoyé une
+seconde fois après une livraison réussie ou incertaine.
 La date est celle de l’édition enregistrée, même après une reprise plus tardive.
 Un échec de génération donne un brief `FAILED` avec une erreur ; aucun email à l’ancien
 format n’est envoyé et les résumés déjà sauvegardés restent consultables. Une reprise réutilise un brief terminé au lieu de le générer deux fois.

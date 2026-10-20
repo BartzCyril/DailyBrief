@@ -27,6 +27,8 @@ import type { ArticleJobResult } from "@dailybrief/shared";
 import type { DailyBriefSnapshot } from "@dailybrief/shared";
 import { DailyBriefService } from "./daily-brief";
 import { recentArticleWindow } from "./recent-articles";
+import { buildCollectionReport, type CollectedReportEntry } from "./collection-report";
+import { createCollectionWorkbook } from "./collection-workbook";
 export type ArticleDispatcher = (
   userId: string,
   runId: string,
@@ -53,7 +55,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
     private dispatch?: ArticleDispatcher,
     private dispatchBrief?: BriefDispatcher,
   ) {}
-  private async persist(userId: string, article: CollectedArticle): Promise<boolean> {
+  private async persist(userId: string, article: CollectedArticle) {
     const identity = articleIdentity(article);
     const where: Prisma.ArticleWhereInput = {
       userId,
@@ -64,9 +66,10 @@ export class DailyBriefPipelineService implements CollectionRunner {
         ...(identity.guid ? [{ sourceId: article.sourceId, guid: identity.guid }] : []),
       ],
     };
-    if (await this.db.article.findFirst({ where })) return false;
+    const existing = await this.db.article.findFirst({ where, select: { id: true } });
+    if (existing) return { id: existing.id, created: false };
     try {
-      await this.db.article.create({
+      const stored = await this.db.article.create({
         data: {
           userId,
           sourceId: article.sourceId,
@@ -79,14 +82,12 @@ export class DailyBriefPipelineService implements CollectionRunner {
           ...identity,
         },
       });
-      return true;
+      return { id: stored.id, created: true };
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002" &&
-        (await this.db.article.findFirst({ where }))
-      )
-        return false;
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        const duplicate = await this.db.article.findFirst({ where, select: { id: true } });
+        if (duplicate) return { id: duplicate.id, created: false };
+      }
       throw error;
     }
   }
@@ -278,7 +279,12 @@ export class DailyBriefPipelineService implements CollectionRunner {
           message: "Détection des doublons et sauvegarde des articles.",
         });
         let newArticles = 0;
-        for (const article of articles) if (await this.persist(userId, article)) newArticles++;
+        const collectedReport: CollectedReportEntry[] = [];
+        for (const article of articles) {
+          const stored = await this.persist(userId, article);
+          if (stored.created) newArticles++;
+          collectedReport.push({ articleId: stored.id, article, alreadyStored: !stored.created });
+        }
         result.newArticles = (previous?.newArticles ?? 0) + newArticles;
         report({
           stage,
@@ -393,12 +399,17 @@ export class DailyBriefPipelineService implements CollectionRunner {
             },
           });
         // Recheck persisted settings after potentially long downloads/AI calls.
+        const exclusions = new Map<string, string>();
         for (let index = included.length - 1; index >= 0; index--) {
           const article = included[index]!;
           const source = await this.db.source.findFirst({
             where: { id: article.sourceId, userId, enabled: true },
           });
           if (!source) {
+            exclusions.set(
+              article.id,
+              "La source a été désactivée ou supprimée pendant l’exécution.",
+            );
             included.splice(index, 1);
             report({
               stage: "newsletter",
@@ -408,6 +419,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
             continue;
           }
           if (source.type === "RSS" && source.articleLinkSelector !== article.contentLinkSelector) {
+            exclusions.set(article.id, "La source a changé. Relancez la récupération.");
             included.splice(index, 1);
             summaryFailure ??= {
               stage: "content",
@@ -428,6 +440,7 @@ export class DailyBriefPipelineService implements CollectionRunner {
           } catch (error) {
             included.splice(index, 1);
             const failure = failureFor(error, "content");
+            exclusions.set(article.id, failure.message);
             if (failure.code !== "JOURNAL_DISABLED") summaryFailure ??= failure;
             report({
               stage: "newsletter",
@@ -515,6 +528,26 @@ export class DailyBriefPipelineService implements CollectionRunner {
             url: article.contentUrl ?? article.url,
           })),
         );
+        report({
+          stage,
+          status: "running",
+          message: "Préparation du rapport Excel de tous les articles.",
+        });
+        const collectionReport = await buildCollectionReport(this.db, {
+          userId,
+          runId: run.id,
+          date: brief.date,
+          timezone: window.timezone,
+          startedAt: run.startedAt,
+          interestPrompt,
+          collected: collectedReport,
+          pendingIds: pending.map((article) => article.id),
+          briefArticleIds: edition.articleIds,
+          outcomes,
+          exclusions,
+          sources,
+        });
+        const attachment = await createCollectionWorkbook(collectionReport);
         const newsletter = await this.db.newsletter.create({
           data: {
             userId,
@@ -545,7 +578,12 @@ export class DailyBriefPipelineService implements CollectionRunner {
           data: { status: "SENDING" },
         });
         report({ stage, status: "running", message: "Envoi de la newsletter au serveur mail." });
-        await this.email.send({ ...rendered, to: user.email, newsletterId });
+        await this.email.send({
+          ...rendered,
+          to: user.email,
+          newsletterId,
+          attachments: [attachment],
+        });
         accepted = true;
         await this.db.newsletter.update({
           where: { id: newsletterId },
