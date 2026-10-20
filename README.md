@@ -313,14 +313,23 @@ directement le JSON final. Un contenu de raisonnement seul ne sert jamais de ré
 Les réponses vides, interrompues par la limite de génération ou mal formatées sont
 signalées séparément dans le journal de collecte ; les articles restent réessayables.
 
-En collecte, l’analyse demande la **pertinence et le résumé éventuel ensemble** :
-`{relevant, reason, summary}`. Si `relevant=false`, `summary` doit être `null` ; aucun résumé
-n’est produit et l’article est persisté comme non pertinent avec sa raison et `analyzedAt`.
+En collecte, un **tri rapide sur le titre et la description uniquement** demande
+`{decision, reason}` : `relevant`, `irrelevant` ou `needs_context`. Aucun texte complet ni
+résumé n’est envoyé ou produit lors de ce premier appel. Un article clairement retenu est
+ensuite résumé à partir de tout son contenu. Au moindre doute, l’IA doit choisir
+`needs_context` : le texte complet est alors analysé avant de décider de la pertinence et
+de produire un résumé éventuel. Une description absente ou dépassant 2 000 caractères
+(ou `AI_MAX_INPUT_CHARS` si inférieur) déclenche directement cette analyse complète, sans
+tronquer les données. Sans centres d’intérêt, le tri est évité et tous les articles sont résumés.
+Le résultat final reste `{relevant, reason, summary}`. Si `relevant=false`, `summary` vaut
+`null` ; l’article est persisté comme non pertinent avec sa raison et `analyzedAt`.
 Ces articles apparaissent comme ignorés dans l’historique et ne sont pas retraités à chaque
-collecte. Pour un article pertinent, le même résultat contient le titre du résumé, le texte
+collecte. Pour un article pertinent, le résultat contient le titre du résumé, le texte
 et les points clés. Les longues pages restent traitées intégralement par portions : la
 décision et la synthèse suivent le mécanisme de découpage existant. Un JSON invalide,
-une pertinence ambiguë ou une synthèse tronquée échouent explicitement et restent réessayables.
+une décision invalide ou une synthèse tronquée échouent explicitement et restent réessayables.
+Le contenu complet reste récupéré et sauvegardé avant l’étape IA ; l’optimisation porte sur
+les données envoyées au modèle et le nombre de générations longues, pas sur le téléchargement.
 Les identifiants de journaux et les cookies ne sont jamais inclus dans ces prompts.
 
 Après la fin de toutes les tâches d’article, une **tâche finale Daily Brief** produit une revue

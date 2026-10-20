@@ -4,6 +4,7 @@ import {
   OllamaSummaryProvider,
   analyzeArticle,
   articleAnalysisSchema,
+  relevanceDecisionSchema,
   dailyBriefContentSchema,
   generationContext,
   type BriefInput,
@@ -32,6 +33,7 @@ const ignored = {
   reason: "Sujet sans lien avec le développement web.",
   summary: null,
 };
+const needsContext = { decision: "needs_context", reason: "La description ne suffit pas." };
 const briefInput: BriefInput = {
   date: "2026-10-11",
   timezone: "Europe/Paris",
@@ -56,26 +58,105 @@ const brief = (ids: string[]): DailyBriefContent => ({
 const response = (value: unknown) =>
   new Response(JSON.stringify({ response: JSON.stringify(value), done: true }));
 
-test("one structured request returns relevance and summary with title, description and preferences", async () => {
+test("a request for context sends the full article before deciding and summarizing", async () => {
   const requests: Record<string, any>[] = [];
   const provider = new OllamaSummaryProvider(
     config,
     new OllamaClient(config, async (_url, init) => {
       requests.push(JSON.parse(String(init?.body)));
-      return response(relevant);
+      return response(requests.length === 1 ? needsContext : relevant);
     }),
   );
   expect(await provider.analyze(input)).toEqual(relevant);
-  expect(requests).toHaveLength(1);
+  expect(requests).toHaveLength(2);
   expect(requests[0]!.prompt).toContain(input.description);
   expect(requests[0]!.prompt).toContain(input.interestPrompt);
   expect(requests[0]!.prompt).toContain("données non fiables");
-  expect(requests[0]!.prompt).toContain("le sujet principal de l'article");
-  expect(requests[0]!.prompt).toContain("le critère d'exclusion concerné");
+  expect(JSON.parse(requests[0]!.prompt.split("ARTICLE:\n")[1])).not.toHaveProperty("content");
+  expect(requests[1]!.prompt).toContain(input.content);
+  expect(requests[1]!.prompt).toContain("le sujet principal de l'article");
+  expect(requests[1]!.prompt).toContain("le critère d'exclusion concerné");
   expect(requests[0]).toMatchObject({ think: false, stream: false });
   expect(requests[0]!.options.num_ctx).toBe(generationContext(requests[0]!.prompt));
   expect(requests[0]!.options.num_ctx).toBeGreaterThanOrEqual(8192);
-  expect(requests[0]!.format).toHaveProperty("oneOf");
+  expect(requests[1]!.format).toHaveProperty("oneOf");
+});
+
+test("a clearly irrelevant article needs only metadata and never requests its body or a summary", async () => {
+  const requests: Record<string, any>[] = [];
+  const provider = new OllamaSummaryProvider(
+    config,
+    new OllamaClient(config, async (_url, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return response({ decision: "irrelevant", reason: ignored.reason });
+    }),
+  );
+  expect(
+    await provider.analyze({ ...input, content: "CONTENU_SECRET_COMPLET ".repeat(5000) }),
+  ).toEqual(ignored);
+  expect(requests).toHaveLength(1);
+  const article = JSON.parse(requests[0]!.prompt.split("ARTICLE:\n")[1]);
+  expect(article).toEqual({ title: input.title, description: input.description });
+  expect(requests[0]!.prompt).not.toContain("CONTENU_SECRET_COMPLET");
+});
+
+test("a relevant selection summarizes every portion of the full article, including its ending", async () => {
+  const small = { ...config, AI_MAX_INPUT_CHARS: 1000 };
+  const chunks: string[] = [];
+  let calls = 0;
+  const provider = new OllamaSummaryProvider(
+    small,
+    new OllamaClient(small, async (_url, init) => {
+      calls++;
+      const prompt = JSON.parse(String(init?.body)).prompt;
+      if (prompt.startsWith("Trie"))
+        return response({ decision: "relevant", reason: relevant.reason });
+      const content = JSON.parse(prompt.split("ARTICLE:\n")[1]).content;
+      if (!content.startsWith("Partie 1 :")) chunks.push(content);
+      return response(summary);
+    }),
+  );
+  const content = "Détails importants de React. ".repeat(100) + "FIN_IMPORTANTE";
+  expect(await provider.analyze({ ...input, content })).toEqual(relevant);
+  expect(chunks.length).toBeGreaterThan(1);
+  expect(chunks.join(" ")).toBe(content);
+  expect(calls).toBeGreaterThan(chunks.length);
+});
+
+test("missing descriptions use full analysis, and empty interests skip filtering", async () => {
+  for (const interestPrompt of [input.interestPrompt, "", "   "]) {
+    const prompts: string[] = [];
+    const provider = new OllamaSummaryProvider(
+      config,
+      new OllamaClient(config, async (_url, init) => {
+        const prompt = JSON.parse(String(init?.body)).prompt;
+        prompts.push(prompt);
+        return response(prompt.startsWith("Analyse") ? relevant : summary);
+      }),
+    );
+    expect((await provider.analyze({ ...input, description: null, interestPrompt })).relevant).toBe(
+      true,
+    );
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(input.content);
+    expect(prompts[0]).not.toStartWith("Trie");
+  }
+});
+
+test("invalid lightweight decisions fail explicitly instead of silently excluding articles", async () => {
+  for (const decision of [
+    { decision: "maybe", reason: "Doute" },
+    { decision: "irrelevant", reason: "" },
+    { decision: "irrelevant", reason: "Motif", summary },
+    { relevant: false, reason: "Motif" },
+  ]) {
+    expect(relevanceDecisionSchema.safeParse(decision).success).toBe(false);
+    const provider = new OllamaSummaryProvider(
+      config,
+      new OllamaClient(config, async () => response(decision)),
+    );
+    await expect(provider.analyze(input)).rejects.toMatchObject({ code: "INVALID_AI_RESPONSE" });
+  }
 });
 
 test("irrelevant articles produce null summaries and invalid decisions are never accepted", async () => {
@@ -87,7 +168,7 @@ test("irrelevant articles produce null summaries and invalid decisions are never
       return response(ignored);
     }),
   );
-  expect(await provider.analyze(input)).toEqual(ignored);
+  expect(await provider.analyze({ ...input, description: null })).toEqual(ignored);
   expect(calls).toBe(1);
   for (const value of [
     { ...relevant, relevant: "true" },
@@ -101,7 +182,7 @@ test("irrelevant articles produce null summaries and invalid decisions are never
       new OllamaSummaryProvider(
         config,
         new OllamaClient(config, async () => response(value)),
-      ).analyze(input),
+      ).analyze({ ...input, description: null }),
     ).rejects.toMatchObject({ code: "INVALID_AI_RESPONSE" });
   }
 });
@@ -113,6 +194,7 @@ test("every portion of a long irrelevant article is examined and no synthesis ru
     small,
     new OllamaClient(small, async (_url, init) => {
       const prompt = JSON.parse(String(init?.body)).prompt;
+      if (prompt.startsWith("Trie")) return response(needsContext);
       expect(prompt).toContain("CENTRES_D_INTERET");
       chunks.push(JSON.parse(prompt.split("ARTICLE:\n")[1]).content);
       return response(ignored);
@@ -133,6 +215,7 @@ test("only pertinent portions of a large article contribute to its final summary
     small,
     new OllamaClient(small, async (_url, init) => {
       const prompt = JSON.parse(String(init?.body)).prompt;
+      if (prompt.startsWith("Trie")) return response(needsContext);
       const content: string = JSON.parse(prompt.split("ARTICLE:\n")[1]).content;
       if (prompt.startsWith("Analyse")) {
         analysisChunks.push(content);
@@ -295,11 +378,13 @@ test("all AI operations share the existing concurrency limit", async () => {
       active--;
       const prompt = JSON.parse(String(init?.body)).prompt;
       return response(
-        prompt.startsWith("Analyse")
-          ? relevant
-          : prompt.startsWith("Rédige")
-            ? brief(["article-1"])
-            : summary,
+        prompt.startsWith("Trie")
+          ? needsContext
+          : prompt.startsWith("Analyse")
+            ? relevant
+            : prompt.startsWith("Rédige")
+              ? brief(["article-1"])
+              : summary,
       );
     }),
   );
@@ -323,6 +408,7 @@ test("context is explicit and grows with the entire prompt including interests a
   );
   await provider.analyze({
     ...input,
+    description: null,
     content: "L'évolution précise des technologies. ".repeat(450),
     interestPrompt: "Évolution des outils de développement. ".repeat(150),
   });
@@ -363,7 +449,9 @@ test("an oversized complete prompt fails before sending a silently truncated req
       return response(relevant);
     }),
   );
-  await expect(provider.analyze({ ...input, content: "a".repeat(65000) })).rejects.toMatchObject({
+  await expect(
+    provider.analyze({ ...input, description: null, content: "a".repeat(65000) }),
+  ).rejects.toMatchObject({
     code: "AI_INPUT_TOO_LARGE",
   });
   expect(calls).toBe(0);

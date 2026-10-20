@@ -766,10 +766,12 @@ export function DocumentationPage() {
               <code>{`Je suis développeur web. Je souhaite suivre l’IA, React, Node.js, TypeScript et les outils pour développeurs. Ignore les faits divers et les actualités généralistes sans lien avec ces sujets.`}</code>
             </pre>
             <p>
-              L’IA compare ce texte au titre, à la description et au contenu de chaque article. Elle
-              résume uniquement les articles jugés pertinents. Laissez le champ vide pour suivre
-              tous les sujets de vos sources. Les articles déjà analysés conservent leur résultat ;
-              une modification du prompt s’applique aux articles restant à analyser.
+              L’IA trie d’abord les articles à partir du titre et de la description. Si elle manque
+              de contexte ou si la description est absente, elle examine le contenu complet avant de
+              décider. Elle résume ensuite les articles pertinents à partir de leur texte complet.
+              Laissez le champ vide pour suivre tous les sujets de vos sources. Les articles déjà
+              analysés conservent leur résultat ; une modification du prompt s’applique aux articles
+              restant à analyser.
             </p>
             <Screenshot
               name="settings"
@@ -853,8 +855,9 @@ export function DocumentationPage() {
               Chaque article récent à analyser correspond à une tâche de récupération du contenu, de
               vérification de pertinence et de résumé éventuel. Si deux sources apportent 10 et 5
               articles distincts à traiter, la collecte comporte 15 tâches d’article, puis une étape
-              finale de génération du Daily Brief. La pertinence et le résumé sont demandés ensemble
-              à l’IA ; un article non pertinent ne reçoit pas de résumé et n’est pas analysé à
+              finale de génération du Daily Brief. L’IA commence par un tri sur le titre et la
+              description, puis consulte le contenu complet pour les résumés et en cas de doute sur
+              la pertinence. Un article non pertinent ne reçoit pas de résumé et n’est pas analysé à
               nouveau aux collectes suivantes.
             </p>
             <Screenshot
