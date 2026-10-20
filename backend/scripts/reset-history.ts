@@ -7,7 +7,7 @@ const usage = `Vider l'historique DailyBrief (tous les utilisateurs de DATABASE_
 Arrêtez l'API et les workers ; laissez PostgreSQL et Redis démarrés.
 
   npm run db:reset-history           Aperçu, sans suppression
-  npm run db:reset-history -- --yes  Suppression définitive
+  npm run db:reset-history:confirm  Suppression définitive
 
 Conserve les utilisateurs, sources, réglages et accès aux journaux.
 Supprime articles/résumés, newsletters, Daily Briefs, exécutions et jobs Redis.
@@ -53,7 +53,7 @@ async function main() {
     console.log(
       args.includes("--yes")
         ? "Historique vidé. Vous pouvez redémarrer l'application."
-        : "Aucune donnée modifiée. Arrêtez l'API et les workers, puis ajoutez --yes pour supprimer.",
+        : "Aucune donnée modifiée. Arrêtez l'API et les workers, puis lancez npm run db:reset-history:confirm pour supprimer.",
     );
   } finally {
     await db.$disconnect();

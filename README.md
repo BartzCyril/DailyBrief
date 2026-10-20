@@ -442,8 +442,12 @@ npm run db:reset-history
 Supprimer définitivement l’historique :
 
 ```sh
-npm run db:reset-history -- --yes
+npm run db:reset-history:confirm
 ```
+
+Cette commande inclut la confirmation dans le script pour fonctionner aussi lorsque
+PowerShell/npm ne transmet pas les arguments placés après `--`. L’ancienne forme
+`npm run db:reset-history -- --yes` reste utilisable si les arguments sont bien transmis.
 
 La commande conserve les utilisateurs et leurs mots de passe, les sources, les
 réglages de collecte et centres d’intérêt, ainsi que les accès et sélecteurs des

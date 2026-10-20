@@ -26,8 +26,8 @@ describe("history reset on an isolated database", () => {
   let settings: Awaited<ReturnType<Db["dailyBriefSettings"]["findMany"]>>;
   let journals: Awaited<ReturnType<Db["journalAccess"]["findMany"]>>;
 
-  const command = (...args: string[]) =>
-    spawnSync("npm", ["run", "db:reset-history", "--", ...args], {
+  const runScript = (script: string, ...args: string[]) =>
+    spawnSync("npm", ["run", script, ...(args.length ? ["--", ...args] : [])], {
       cwd: resolve(import.meta.dir, "../.."),
       env: {
         ...process.env,
@@ -39,6 +39,7 @@ describe("history reset on an isolated database", () => {
       encoding: "utf8",
       timeout: 30000,
     });
+  const command = (...args: string[]) => runScript("db:reset-history", ...args);
 
   beforeAll(async () => {
     const target = process.env.TEST_DATABASE_URL;
@@ -164,6 +165,7 @@ describe("history reset on an isolated database", () => {
     const result = command();
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Aucune donnée modifiée");
+    expect(result.stdout).toContain("npm run db:reset-history:confirm");
     expect(result.stdout).toContain(oldPrefix);
     expect(await db.article.count()).toBe(2);
     expect((await redis.keys(`${prefix}*`)).sort()).toEqual(keys);
@@ -224,7 +226,8 @@ describe("history reset on an isolated database", () => {
       if (attempt >= 50) throw new Error("Test worker did not disconnect");
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    const result = command("--yes");
+    // No forwarded arguments: confirmation is part of the package script itself.
+    const result = runScript("db:reset-history:confirm");
     expect({ status: result.status, stderr: result.stderr }).toEqual({ status: 0, stderr: "" });
     expect(result.stdout).toContain("Historique vidé");
     for (const count of await Promise.all([
